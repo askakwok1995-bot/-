@@ -1,0 +1,13 @@
+{
+  "name": "sales-tool",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "http-server . -a localhost -p 5173 -c-1",
+    "check": "npm run check:js",
+    "check:js": "node --check main.js && node --check storage.js && node --check products.js && node --check records.js && node --check targets.js && node --check reports.js"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

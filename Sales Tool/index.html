@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>医药代表销售汇报工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="runtime-mode-error" class="runtime-mode-error" role="alert" hidden>
+      <div class="runtime-mode-error__title">检测到文件直开（file://），请使用本地服务访问。</div>
+      <p class="runtime-mode-error__desc">启动命令：</p>
+      <pre class="runtime-mode-error__cmd"><code>python3 -m http.server 5173 --directory "/Users/askakwok/Documents/Vibe Coding/Sales Tool"</code></pre>
+      <p class="runtime-mode-error__desc">
+        访问地址：
+        <a href="http://localhost:5173" target="_blank" rel="noreferrer">http://localhost:5173</a>
+      </p>
+    </div>
+    <main class="container">
+      <h1>医药代表销售汇报工具</h1>
+
+      <section class="card">
+        <h2>录入区</h2>
+        <details class="sub-card sub-card-product">
+          <summary>
+            <h3>产品配置</h3>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="product-layout">
+              <form id="product-form" class="product-form-pane" novalidate>
+                <div class="product-form-stack">
+                  <label>
+                    产品/规格
+                    <input id="product-name" name="productName" type="text" placeholder="如：阿莫西林 0.25g*24粒" required />
+                  </label>
+
+                  <label>
+                    单盒考核价
+                    <input id="unit-price" name="unitPrice" type="text" inputmode="decimal" placeholder="请输入数字" required />
+                  </label>
+
+                  <button class="product-submit-btn" type="submit">新增产品</button>
+                </div>
+                <p id="product-error" class="error" role="alert" aria-live="polite"></p>
+              </form>
+
+              <div class="product-table-pane">
+                <div class="table-wrap">
+                  <table class="product-table">
+                    <thead>
+                      <tr>
+                        <th>产品/规格</th>
+                        <th>单盒考核价</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="product-master-body">
+                      <tr>
+                        <td colspan="3" class="empty">暂无产品配置</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="sub-card sub-card-sales">
+          <summary>
+            <h3>销售录入</h3>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <form id="sales-form" novalidate>
+              <div class="form-grid">
+                <label>
+                  日期
+                  <input id="date" name="date" type="date" required />
+                </label>
+
+                <label>
+                  产品/规格
+                  <select id="product-id" name="productId" required>
+                    <option value="">请选择产品/规格</option>
+                  </select>
+                </label>
+
+                <label>
+                  医院
+                  <input id="hospital" name="hospital" type="text" placeholder="如：XX 人民医院" required />
+                </label>
+
+                <label>
+                  采购数量（盒）
+                  <input id="quantity" name="quantity" type="text" inputmode="decimal" placeholder="请输入整数（可负数）" required />
+                </label>
+
+                <label>
+                  考核金额（自动计算）
+                  <input id="amount" name="amount" type="text" readonly placeholder="自动计算" />
+                </label>
+
+                <label>
+                  配送
+                  <input id="delivery" name="delivery" type="text" placeholder="如：国控" required />
+                </label>
+              </div>
+
+              <p id="sales-tip" class="hint"></p>
+              <p id="form-error" class="error" role="alert" aria-live="polite"></p>
+              <div class="form-actions">
+                <button id="sales-submit-btn" type="submit">新增记录</button>
+                <button id="clear-sales-draft-btn" class="secondary-btn" type="button">清除草稿</button>
+              </div>
+            </form>
+          </div>
+        </details>
+
+        <details class="sub-card sub-card-report">
+          <summary>
+            <h3>指标录入</h3>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="target-panel">
+              <div class="target-toolbar">
+                <label class="inline-field target-year-field" for="target-year-select">
+                  指标年份
+                  <select id="target-year-select" aria-label="选择指标年份"></select>
+                </label>
+                <span class="target-metric-tip">口径：考核金额（元）</span>
+                <span id="target-status" class="target-status" aria-live="polite"></span>
+                <button id="target-clear-page-btn" class="secondary-btn target-clear-btn" type="button">清空本页数据</button>
+              </div>
+              <p id="target-error" class="error" role="alert" aria-live="polite"></p>
+              <div class="table-wrap target-table-wrap">
+                <table class="target-table">
+                  <thead>
+                    <tr>
+                      <th>季度</th>
+                      <th>季度指标（元）</th>
+                      <th>月度指标 1</th>
+                      <th>月度指标 2</th>
+                      <th>月度指标 3</th>
+                      <th>月度合计（元）</th>
+                      <th>校验</th>
+                    </tr>
+                  </thead>
+                  <tbody id="target-input-body">
+                    <tr>
+                      <td colspan="7" class="empty">指标区加载中...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <section class="target-product-allocation" aria-label="按产品分配指标">
+                <div class="target-product-allocation-head">
+                  <h4 class="target-product-allocation-title">按产品分配指标（非必填项）</h4>
+                </div>
+                <div class="target-product-allocation-body">
+                  <div class="target-product-allocation-toolbar">
+                    <label class="inline-field target-product-allocation-quarter-field" for="target-product-alloc-quarter">
+                      选择季度
+                      <select id="target-product-alloc-quarter" aria-label="选择产品分配季度"></select>
+                    </label>
+                    <span id="target-product-alloc-summary" class="target-product-allocation-summary" aria-live="polite"></span>
+                    <button
+                      id="target-product-alloc-clear-page-btn"
+                      class="secondary-btn target-clear-btn"
+                      type="button"
+                    >
+                      清空本页数据
+                    </button>
+                  </div>
+                  <p id="target-product-alloc-hint" class="hint target-product-allocation-hint" aria-live="polite"></p>
+                  <div class="table-wrap target-product-allocation-table-wrap">
+                    <table class="target-product-allocation-table">
+                      <thead>
+                        <tr>
+                          <th>产品/规格</th>
+                          <th id="target-product-alloc-month-col-1">分配金额（1月）</th>
+                          <th id="target-product-alloc-month-col-2">分配金额（2月）</th>
+                          <th id="target-product-alloc-month-col-3">分配金额（3月）</th>
+                          <th>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody id="target-product-alloc-body">
+                        <tr>
+                          <td colspan="5" class="empty">产品分配区加载中...</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <details class="sub-card sub-card-list">
+          <summary>
+            <h2 class="section-title-inline">列表区</h2>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <p id="list-error" class="error" role="alert" aria-live="polite"></p>
+            <div id="import-result" class="import-result" hidden></div>
+            <div class="multi-select-tools">
+              <button id="multi-select-toggle-btn" class="secondary-btn" type="button">多选</button>
+              <button id="select-current-page-btn" class="secondary-btn" type="button" hidden>全选当前页</button>
+              <button id="delete-selected-btn" class="danger-btn" type="button" hidden>删除已选(0)</button>
+              <button id="clear-all-records-btn" class="danger-btn" type="button" hidden>清空全部记录</button>
+              <div class="import-tools">
+                <button id="download-template-btn" class="secondary-btn" type="button">下载导入模板</button>
+                <button id="import-excel-btn" type="button">导入 Excel</button>
+                <input id="import-file-input" type="file" accept=".xlsx" hidden />
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead id="records-head">
+                  <tr>
+                    <th>日期</th>
+                    <th>产品/规格</th>
+                    <th>医院</th>
+                    <th>采购数量</th>
+                    <th>考核金额</th>
+                    <th>配送</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="records-body">
+                  <tr>
+                    <td colspan="7" class="empty">暂无记录</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pagination-bar">
+              <div class="pagination-side"></div>
+              <div class="pagination-nav">
+                <button id="prev-page-btn" class="secondary-btn" type="button">上一页</button>
+                <span id="page-info" class="pagination-info">第 1 / 1 页</span>
+                <button id="next-page-btn" class="secondary-btn" type="button">下一页</button>
+              </div>
+              <label class="inline-field pagination-size" for="page-size-select">
+                每页显示
+                <select id="page-size-select">
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>报表区</h2>
+        <details class="sub-card sub-card-report">
+          <summary>
+            <h3>销售分析</h3>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="report-panel">
+              <div class="report-toolbar">
+                <label class="inline-field report-month-field" for="report-start-month">
+                  起始月
+                  <input id="report-start-month" type="month" aria-label="选择起始月份" />
+                </label>
+                <label class="inline-field report-month-field" for="report-end-month">
+                  结束月
+                  <input id="report-end-month" type="month" aria-label="选择结束月份" />
+                </label>
+                <button id="export-report-tables-btn" class="secondary-btn report-export-btn" type="button">
+                  导出销售分析（XLSX）
+                </button>
+              </div>
+
+              <p id="report-hint" class="hint report-hint"></p>
+              <p id="report-empty" class="empty report-empty" hidden>暂无可分析数据</p>
+
+              <div class="report-block">
+                <h4 class="report-block-title">总览（按月）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th>月份</th>
+                        <th>指标金额</th>
+                        <th>实际金额</th>
+                        <th>达成率</th>
+                        <th>金额同比</th>
+                        <th>金额环比</th>
+                        <th>实际数量</th>
+                        <th>数量同比</th>
+                        <th>数量环比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-month-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">总览（按季度）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th>季度</th>
+                        <th>指标金额</th>
+                        <th>实际金额</th>
+                        <th>达成率</th>
+                        <th>金额同比</th>
+                        <th>金额环比</th>
+                        <th>实际数量</th>
+                        <th>数量同比</th>
+                        <th>数量环比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-quarter-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">产品分析</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table report-product-table">
+                    <thead>
+                      <tr>
+                        <th>产品/规格</th>
+                        <th>实际金额</th>
+                        <th>指标金额</th>
+                        <th>达成率</th>
+                        <th>金额占比</th>
+                        <th>金额同比</th>
+                        <th>实际数量</th>
+                        <th>数量占比</th>
+                        <th>数量同比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-product-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">医院分析（按销售金额 Top20）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table report-hospital-table">
+                    <thead>
+                      <tr>
+                        <th>医院</th>
+                        <th>销售金额</th>
+                        <th>金额占比</th>
+                        <th>金额同比</th>
+                        <th>采购数量</th>
+                        <th>数量占比</th>
+                        <th>数量同比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-hospital-body">
+                      <tr>
+                        <td colspan="7" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details id="report-visual-board" class="sub-card sub-card-report">
+          <summary>
+            <h3>可视化图表</h3>
+            <span class="fold-tip">点击展开/收起</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="report-charts-panel">
+              <p class="hint report-charts-intro">图表口径与销售分析表一致，时间范围跟随起始月/结束月。</p>
+              <div class="report-charts-toolbar">
+                <label class="inline-field report-chart-palette-field" for="report-chart-palette-select">
+                  配色方案
+                  <select id="report-chart-palette-select" aria-label="选择图表配色方案">
+                    <option value="">加载中...</option>
+                  </select>
+                </label>
+              </div>
+              <p id="report-charts-hint" class="hint report-charts-hint"></p>
+              <div class="report-charts-grid">
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">月度趋势</h4>
+                    <button id="export-chart-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                  </header>
+                  <div id="chart-monthly-trend" class="report-chart-canvas" aria-label="月度趋势图"></div>
+                </section>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">季度趋势</h4>
+                    <button id="export-chart-quarterly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                  </header>
+                  <div id="chart-quarterly-trend" class="report-chart-canvas" aria-label="季度趋势图"></div>
+                </section>
+
+                <div class="report-chart-row-product">
+                  <section class="report-chart-card report-chart-card-product-pie">
+                    <header class="report-chart-card-head">
+                      <h4 class="report-chart-card-title">产品 Top10 金额占比</h4>
+                      <button id="export-chart-product-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                    </header>
+                    <div id="chart-product-top" class="report-chart-canvas" aria-label="产品金额占比图"></div>
+                  </section>
+
+                  <section class="report-chart-card report-chart-card-product-performance">
+                    <header class="report-chart-card-head">
+                      <h4 class="report-chart-card-title">产品达成与增长（Top10）</h4>
+                      <button id="export-chart-product-performance-btn" class="secondary-btn" type="button">导出 PNG</button>
+                    </header>
+                    <div id="chart-product-performance" class="report-chart-canvas" aria-label="产品达成与增长图"></div>
+                  </section>
+                </div>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">产品月度变化趋势（Top10）</h4>
+                    <button id="export-chart-product-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                  </header>
+                  <div id="chart-product-monthly-trend" class="report-chart-canvas" aria-label="产品月度变化趋势图"></div>
+                </section>
+
+                <section class="report-chart-card">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">医院 Top10 销售金额</h4>
+                    <button id="export-chart-hospital-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                  </header>
+                  <div id="chart-hospital-top" class="report-chart-canvas" aria-label="医院销售金额图"></div>
+                </section>
+
+                <section class="report-chart-card">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">TOP10医院销售金额占比</h4>
+                    <button id="export-chart-hospital-share-btn" class="secondary-btn" type="button">导出 PNG</button>
+                  </header>
+                  <div id="chart-hospital-share" class="report-chart-canvas" aria-label="医院销售金额占比图"></div>
+                </section>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head report-chart-card-head-with-tools">
+                    <h4 class="report-chart-card-title">医院月度趋势与增长率（Top10可选）</h4>
+                    <div class="report-chart-card-tools">
+                      <label class="inline-field report-hospital-trend-field" for="chart-hospital-trend-select">
+                        医院
+                        <select id="chart-hospital-trend-select" aria-label="选择医院趋势图医院">
+                          <option value="">加载中...</option>
+                        </select>
+                      </label>
+                      <button id="export-chart-hospital-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                    </div>
+                  </header>
+                  <div id="chart-hospital-trend" class="report-chart-canvas" aria-label="医院月度趋势与增长率图"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
+    </main>
+
+    <script src="./vendor/xlsx.full.min.js"></script>
+    <script src="./vendor/exceljs.min.js"></script>
+    <script src="./vendor/echarts.min.js"></script>
+    <script>
+      (() => {
+        const isFileMode = window.location.protocol === "file:";
+        const runtimeError = document.getElementById("runtime-mode-error");
+        const appRoot = document.querySelector("main.container");
+
+        if (isFileMode) {
+          window.__SALES_TOOL_MODULE_BOOTED__ = false;
+          window.__SALES_TOOL_MODULE_BOOT_ERROR__ = true;
+
+          if (runtimeError instanceof HTMLElement) {
+            runtimeError.hidden = false;
+          }
+
+          if (appRoot instanceof HTMLElement) {
+            appRoot.classList.add("runtime-blocked");
+            const controls = appRoot.querySelectorAll("input, select, button, textarea");
+            controls.forEach((control) => {
+              if (
+                control instanceof HTMLInputElement ||
+                control instanceof HTMLSelectElement ||
+                control instanceof HTMLButtonElement ||
+                control instanceof HTMLTextAreaElement
+              ) {
+                control.disabled = true;
+                control.setAttribute("aria-disabled", "true");
+              }
+            });
+          }
+
+          console.error("[Sales Tool] 检测到 file:// 打开方式，ES Module 已阻断。请使用 http://localhost:5173 访问。");
+          return;
+        }
+
+        const entry = document.createElement("script");
+        entry.type = "module";
+        entry.src = "./main.js";
+        document.body.appendChild(entry);
+      })();
+    </script>
+  </body>
+</html>

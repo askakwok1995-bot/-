@@ -1,0 +1,2417 @@
+const MONTH_RE = /^(\d{4})-(\d{2})$/;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const HOSPITAL_TOP_LIMIT = 20;
+const PRODUCT_CHART_TOP_LIMIT = 10;
+const HOSPITAL_CHART_TOP_LIMIT = 10;
+const CHART_RENDERER = "canvas";
+const CHART_EMPTY_TEXT = "暂无可视化数据";
+const CHART_KEYS = {
+  monthlyTrend: "monthly-trend",
+  quarterlyTrend: "quarterly-trend",
+  productPerformance: "product-performance",
+  productMonthlyTrend: "product-monthly-trend",
+  productTop: "product-top",
+  hospitalTop: "hospital-top",
+  hospitalShare: "hospital-share",
+  hospitalTrend: "hospital-trend",
+};
+export const DEFAULT_REPORT_CHART_PALETTE_ID = "classic";
+export const REPORT_CHART_PALETTES = [
+  {
+    id: "classic",
+    label: "经典蓝绿",
+    canvasBg: "#ffffff",
+    axisTextColor: "#4b5563",
+    axisLineColor: "#94a3b8",
+    splitLineColor: "#e2e8f0",
+    legendTextColor: "#334155",
+    tooltipBg: "#ffffff",
+    tooltipBorder: "#cbd5e1",
+    tooltipTextColor: "#1f2937",
+    series: {
+      trend4: ["#2268b5", "#7baaf2", "#2f9e44", "#f59f00"],
+      productMonthlyLines: [
+        "#2268b5",
+        "#2f9e44",
+        "#7baaf2",
+        "#f59f00",
+        "#7c3aed",
+        "#ec4899",
+        "#14b8a6",
+        "#f43f5e",
+        "#84cc16",
+        "#0ea5e9",
+      ],
+      productPie: ["#2268b5", "#2f9e44", "#7baaf2", "#f59f00", "#7c3aed", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#0ea5e9"],
+      hospitalSharePie: ["#2268b5", "#2f9e44", "#7baaf2", "#f59f00", "#7c3aed", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#0ea5e9"],
+      hospitalTopBar: ["#355e8f"],
+      hospitalTrend2: ["#355e8f", "#f59f00"],
+    },
+  },
+  {
+    id: "ocean",
+    label: "深海蓝",
+    canvasBg: "#f8fbff",
+    axisTextColor: "#3d4f63",
+    axisLineColor: "#8aa3bf",
+    splitLineColor: "#d9e6f3",
+    legendTextColor: "#1f3f5b",
+    tooltipBg: "#f8fbff",
+    tooltipBorder: "#b7cbe0",
+    tooltipTextColor: "#17324a",
+    series: {
+      trend4: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259"],
+      productMonthlyLines: ["#0f4c81", "#1f7a8c", "#4f86c6", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
+      productPie: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
+      hospitalSharePie: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
+      hospitalTopBar: ["#0f4c81"],
+      hospitalTrend2: ["#0f4c81", "#f4a259"],
+    },
+  },
+  {
+    id: "mint",
+    label: "薄荷清新",
+    canvasBg: "#f7fffb",
+    axisTextColor: "#40585a",
+    axisLineColor: "#8fb8b2",
+    splitLineColor: "#d9efe9",
+    legendTextColor: "#21514b",
+    tooltipBg: "#f7fffb",
+    tooltipBorder: "#b7ddd4",
+    tooltipTextColor: "#173f3a",
+    series: {
+      trend4: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b"],
+      productMonthlyLines: ["#0f766e", "#2e7d32", "#5eead4", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
+      productPie: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
+      hospitalSharePie: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
+      hospitalTopBar: ["#0f766e"],
+      hospitalTrend2: ["#0f766e", "#f59e0b"],
+    },
+  },
+  {
+    id: "sunset",
+    label: "日落暖调",
+    canvasBg: "#fffaf6",
+    axisTextColor: "#5d4b45",
+    axisLineColor: "#c1a79a",
+    splitLineColor: "#f0e0d5",
+    legendTextColor: "#6b3f2e",
+    tooltipBg: "#fffaf6",
+    tooltipBorder: "#e3c9b9",
+    tooltipTextColor: "#4a2d21",
+    series: {
+      trend4: ["#c2410c", "#fb923c", "#b45309", "#7c3aed"],
+      productMonthlyLines: ["#c2410c", "#b45309", "#fb923c", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
+      productPie: ["#c2410c", "#fb923c", "#b45309", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
+      hospitalSharePie: ["#c2410c", "#fb923c", "#b45309", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
+      hospitalTopBar: ["#c2410c"],
+      hospitalTrend2: ["#c2410c", "#7c3aed"],
+    },
+  },
+  {
+    id: "lavender",
+    label: "薰衣草",
+    canvasBg: "#faf9ff",
+    axisTextColor: "#524d6b",
+    axisLineColor: "#b6afd3",
+    splitLineColor: "#e8e2f6",
+    legendTextColor: "#4c3f74",
+    tooltipBg: "#faf9ff",
+    tooltipBorder: "#d3c9ec",
+    tooltipTextColor: "#362b57",
+    series: {
+      trend4: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b"],
+      productMonthlyLines: ["#6d28d9", "#8b5cf6", "#a78bfa", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
+      productPie: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
+      hospitalSharePie: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
+      hospitalTopBar: ["#6d28d9"],
+      hospitalTrend2: ["#6d28d9", "#f59e0b"],
+    },
+  },
+  {
+    id: "graphite",
+    label: "石墨灰",
+    canvasBg: "#f8f9fb",
+    axisTextColor: "#4b5563",
+    axisLineColor: "#9ca3af",
+    splitLineColor: "#e5e7eb",
+    legendTextColor: "#374151",
+    tooltipBg: "#f8f9fb",
+    tooltipBorder: "#d1d5db",
+    tooltipTextColor: "#1f2937",
+    series: {
+      trend4: ["#374151", "#6b7280", "#2563eb", "#f59e0b"],
+      productMonthlyLines: ["#374151", "#2563eb", "#6b7280", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
+      productPie: ["#374151", "#6b7280", "#2563eb", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
+      hospitalSharePie: ["#374151", "#6b7280", "#2563eb", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
+      hospitalTopBar: ["#374151"],
+      hospitalTrend2: ["#374151", "#f59e0b"],
+    },
+  },
+  {
+    id: "forest",
+    label: "森林绿",
+    canvasBg: "#f6fff8",
+    axisTextColor: "#415148",
+    axisLineColor: "#99b29f",
+    splitLineColor: "#dceadf",
+    legendTextColor: "#2b4d39",
+    tooltipBg: "#f6fff8",
+    tooltipBorder: "#bdd5c4",
+    tooltipTextColor: "#1f3a2a",
+    series: {
+      trend4: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00"],
+      productMonthlyLines: ["#1b5e20", "#2e7d32", "#4caf50", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
+      productPie: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
+      hospitalSharePie: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
+      hospitalTopBar: ["#1b5e20"],
+      hospitalTrend2: ["#1b5e20", "#f59f00"],
+    },
+  },
+  {
+    id: "coral",
+    label: "珊瑚橙",
+    canvasBg: "#fff9f8",
+    axisTextColor: "#5f4a46",
+    axisLineColor: "#c5a7a0",
+    splitLineColor: "#f1dfdc",
+    legendTextColor: "#6d3f36",
+    tooltipBg: "#fff9f8",
+    tooltipBorder: "#e4c4be",
+    tooltipTextColor: "#4a2b24",
+    series: {
+      trend4: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed"],
+      productMonthlyLines: ["#e76f51", "#2a9d8f", "#f4a261", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
+      productPie: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
+      hospitalSharePie: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
+      hospitalTopBar: ["#e76f51"],
+      hospitalTrend2: ["#e76f51", "#7c3aed"],
+    },
+  },
+  {
+    id: "amber",
+    label: "琥珀金",
+    canvasBg: "#fffdf7",
+    axisTextColor: "#5c5441",
+    axisLineColor: "#c2b79b",
+    splitLineColor: "#efe7d2",
+    legendTextColor: "#6a5b2a",
+    tooltipBg: "#fffdf7",
+    tooltipBorder: "#dfd2ad",
+    tooltipTextColor: "#473d1e",
+    series: {
+      trend4: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb"],
+      productMonthlyLines: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
+      productPie: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
+      hospitalSharePie: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
+      hospitalTopBar: ["#b45309"],
+      hospitalTrend2: ["#b45309", "#2563eb"],
+    },
+  },
+  {
+    id: "mono",
+    label: "黑白灰",
+    canvasBg: "#fcfcfd",
+    axisTextColor: "#4b5563",
+    axisLineColor: "#9ca3af",
+    splitLineColor: "#e5e7eb",
+    legendTextColor: "#374151",
+    tooltipBg: "#ffffff",
+    tooltipBorder: "#d1d5db",
+    tooltipTextColor: "#111827",
+    series: {
+      trend4: ["#111827", "#374151", "#6b7280", "#9ca3af"],
+      productMonthlyLines: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
+      productPie: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
+      hospitalSharePie: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
+      hospitalTopBar: ["#1f2937"],
+      hospitalTrend2: ["#1f2937", "#6b7280"],
+    },
+  },
+];
+
+const reportChartInstances = new Map();
+let isChartEventsBound = false;
+let isChartResizeBound = false;
+let latestChartRange = null;
+
+function normalizeReportChartPaletteId(raw) {
+  const value = String(raw || "").trim();
+  if (REPORT_CHART_PALETTES.some((palette) => palette.id === value)) {
+    return value;
+  }
+  return DEFAULT_REPORT_CHART_PALETTE_ID;
+}
+
+function getReportChartPaletteById(id) {
+  const normalizedId = normalizeReportChartPaletteId(id);
+  return REPORT_CHART_PALETTES.find((palette) => palette.id === normalizedId) || REPORT_CHART_PALETTES[0];
+}
+
+function getActiveReportChartPalette(state) {
+  const paletteId = normalizeReportChartPaletteId(state.reportChartPaletteId);
+  state.reportChartPaletteId = paletteId;
+  return getReportChartPaletteById(paletteId);
+}
+
+function renderReportChartPaletteSelect(state, dom) {
+  if (!(dom.reportChartPaletteSelect instanceof HTMLSelectElement)) return;
+
+  const paletteId = normalizeReportChartPaletteId(state.reportChartPaletteId);
+  state.reportChartPaletteId = paletteId;
+
+  const expectedOptions = REPORT_CHART_PALETTES.length;
+  if (dom.reportChartPaletteSelect.options.length !== expectedOptions) {
+    dom.reportChartPaletteSelect.innerHTML = REPORT_CHART_PALETTES.map(
+      (palette) => `<option value="${palette.id}">${palette.label}</option>`,
+    ).join("");
+  }
+
+  dom.reportChartPaletteSelect.value = paletteId;
+}
+
+function buildThemedTooltipBase(palette) {
+  return {
+    backgroundColor: palette.tooltipBg,
+    borderColor: palette.tooltipBorder,
+    textStyle: {
+      color: palette.tooltipTextColor,
+    },
+  };
+}
+
+function buildAxisLineTheme(palette) {
+  return {
+    lineStyle: {
+      color: palette.axisLineColor,
+    },
+  };
+}
+
+function buildSplitLineTheme(palette) {
+  return {
+    lineStyle: {
+      color: palette.splitLineColor,
+    },
+  };
+}
+
+export function getDefaultReportRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+
+  return {
+    startYm: `${year}-01`,
+    endYm: `${year}-${String(month).padStart(2, "0")}`,
+  };
+}
+
+export function normalizeReportRange(state, dom, deps) {
+  const defaults = getDefaultReportRange();
+
+  const startInput = dom.reportStartMonthInput instanceof HTMLInputElement ? dom.reportStartMonthInput : null;
+  const endInput = dom.reportEndMonthInput instanceof HTMLInputElement ? dom.reportEndMonthInput : null;
+
+  let startYm = normalizeYm(state.reportStartYm) || normalizeYm(startInput ? startInput.value : "") || defaults.startYm;
+  let endYm = normalizeYm(state.reportEndYm) || normalizeYm(endInput ? endInput.value : "") || defaults.endYm;
+
+  if (compareYm(startYm, endYm) > 0) {
+    state.reportStartYm = startYm;
+    state.reportEndYm = endYm;
+    state.reportRangeError = "起始月不能晚于结束月";
+
+    if (startInput) startInput.value = startYm;
+    if (endInput) endInput.value = endYm;
+
+    return {
+      startYm,
+      endYm,
+      error: state.reportRangeError,
+    };
+  }
+
+  state.reportRangeError = "";
+  state.reportStartYm = startYm;
+  state.reportEndYm = endYm;
+
+  if (startInput) startInput.value = startYm;
+  if (endInput) endInput.value = endYm;
+  if (typeof deps.saveReportRange === "function") {
+    deps.saveReportRange({ startYm, endYm });
+  }
+
+  return {
+    startYm,
+    endYm,
+    error: "",
+  };
+}
+
+export function buildReportSnapshot(state, deps, range) {
+  const monthKeys = listYmRange(range.startYm, range.endYm);
+  const monthSet = new Set(monthKeys);
+
+  const monthlyTotals = new Map();
+  const productMonthlyTotals = new Map();
+  const productNames = new Map();
+  const hospitalMonthlyTotals = new Map();
+  const hospitalNames = new Map();
+
+  for (const record of state.records) {
+    const parsed = parseRecordDate(record.date, deps);
+    if (!parsed) continue;
+
+    const ym = `${parsed.year}-${String(parsed.month).padStart(2, "0")}`;
+    const amount = Number(record.amount);
+    const quantity = Number(record.quantity);
+    if (!Number.isFinite(amount) || !Number.isFinite(quantity)) continue;
+
+    addValue(monthlyTotals, ym, amount, quantity);
+
+    const productName = String(record.productName || "").trim() || "未命名产品";
+    const productKey = buildProductKey(record, deps);
+    if (!productNames.has(productKey)) {
+      productNames.set(productKey, productName);
+    }
+    addNestedValue(productMonthlyTotals, productKey, ym, amount, quantity);
+
+    const hospitalName = String(record.hospital || "").trim() || "未命名医院";
+    const hospitalKey = deps.normalizeText(record.hospital) || "未命名医院";
+    if (!hospitalNames.has(hospitalKey)) {
+      hospitalNames.set(hospitalKey, hospitalName);
+    }
+    addNestedValue(hospitalMonthlyTotals, hospitalKey, ym, amount, quantity);
+  }
+
+  const targetCache = new Map();
+  const productTargetCache = new Map();
+  const targetUnavailableYears = new Set();
+
+  const getMonthTarget = (ym) => {
+    const parsedYm = parseYm(ym);
+    if (!parsedYm) return null;
+
+    if (!targetCache.has(parsedYm.year)) {
+      const yearTargetMap = typeof deps.getEffectiveMonthlyTargetMap === "function" ? deps.getEffectiveMonthlyTargetMap(parsedYm.year) : null;
+      targetCache.set(parsedYm.year, yearTargetMap);
+      if (!yearTargetMap) {
+        targetUnavailableYears.add(parsedYm.year);
+      }
+    }
+
+    const monthMap = targetCache.get(parsedYm.year);
+    if (!monthMap) return null;
+
+    const targetValue = Number(monthMap[ym]);
+    if (!Number.isFinite(targetValue)) return null;
+
+    return deps.roundMoney(targetValue);
+  };
+
+  const getProductMonthAllocation = (ym, productId) => {
+    const safeProductId = String(productId || "").trim();
+    if (!safeProductId) return null;
+
+    const parsedYm = parseYm(ym);
+    if (!parsedYm) return 0;
+
+    if (!productTargetCache.has(parsedYm.year)) {
+      const yearAllocationMap =
+        typeof deps.getProductMonthlyAllocationMap === "function" ? deps.getProductMonthlyAllocationMap(parsedYm.year) : null;
+      productTargetCache.set(parsedYm.year, yearAllocationMap);
+    }
+
+    const monthMap = productTargetCache.get(parsedYm.year);
+    if (!monthMap || typeof monthMap !== "object") return 0;
+
+    const monthProductMap = monthMap[ym];
+    if (!monthProductMap || typeof monthProductMap !== "object") return 0;
+
+    const value = Number(monthProductMap[safeProductId]);
+    if (!Number.isFinite(value)) return 0;
+    return deps.roundMoney(value);
+  };
+
+  const monthRows = monthKeys.map((ym) => {
+    const actual = readValue(monthlyTotals, ym, deps);
+    const targetAmount = getMonthTarget(ym);
+
+    const yoyYm = addYearsToYm(ym, -1);
+    const prevYm = addMonthsToYm(ym, -1);
+
+    const yoy = readValue(monthlyTotals, yoyYm, deps);
+    const prev = readValue(monthlyTotals, prevYm, deps);
+
+    return {
+      ym,
+      targetAmount,
+      amount: actual.amount,
+      quantity: actual.quantity,
+      amountAchievement: calcRate(actual.amount, targetAmount),
+      amountYoy: calcGrowth(actual.amount, yoy.amount),
+      amountMom: calcGrowth(actual.amount, prev.amount),
+      quantityYoy: calcGrowth(actual.quantity, yoy.quantity),
+      quantityMom: calcGrowth(actual.quantity, prev.quantity),
+    };
+  });
+
+  const completeQuarters = buildCompleteQuarters(monthKeys, monthSet);
+  const quarterRows = completeQuarters.map((quarter) => {
+    const actual = sumMonths(monthlyTotals, quarter.months, deps);
+
+    const targetMonthValues = quarter.months.map((ym) => getMonthTarget(ym));
+    const targetAmount = targetMonthValues.some((value) => value === null)
+      ? null
+      : deps.roundMoney(targetMonthValues.reduce((sum, value) => sum + Number(value), 0));
+
+    const yoyQuarterMonths = quarter.months.map((ym) => addYearsToYm(ym, -1));
+    const prevQuarterMonths = buildQuarterMonths(quarter.prevYear, quarter.prevQuarter);
+
+    const yoy = sumMonths(monthlyTotals, yoyQuarterMonths, deps);
+    const prev = sumMonths(monthlyTotals, prevQuarterMonths, deps);
+
+    return {
+      label: `${quarter.year} Q${quarter.quarter}`,
+      targetAmount,
+      amount: actual.amount,
+      quantity: actual.quantity,
+      amountAchievement: calcRate(actual.amount, targetAmount),
+      amountYoy: calcGrowth(actual.amount, yoy.amount),
+      amountQoq: calcGrowth(actual.amount, prev.amount),
+      quantityYoy: calcGrowth(actual.quantity, yoy.quantity),
+      quantityQoq: calcGrowth(actual.quantity, prev.quantity),
+    };
+  });
+
+  const prevYearMonthSet = new Set(monthKeys.map((ym) => addYearsToYm(ym, -1)));
+  const productRows = [];
+  const hospitalRows = [];
+
+  let rangeAmountTotal = 0;
+  let rangeQuantityTotal = 0;
+  let hasRangeRecords = false;
+
+  for (const ym of monthKeys) {
+    const current = readValue(monthlyTotals, ym, deps);
+    if (current.count > 0) {
+      hasRangeRecords = true;
+    }
+    rangeAmountTotal += current.amount;
+    rangeQuantityTotal += current.quantity;
+  }
+
+  rangeAmountTotal = deps.roundMoney(rangeAmountTotal);
+  rangeQuantityTotal = deps.roundMoney(rangeQuantityTotal);
+
+  for (const [productKey, byMonthMap] of productMonthlyTotals.entries()) {
+    const current = sumMonths(byMonthMap, monthKeys, deps);
+    if (current.count === 0) continue;
+
+    const previous = sumMonths(byMonthMap, prevYearMonthSet, deps);
+    const productId = parseProductIdFromKey(productKey);
+
+    let targetAmount = null;
+    if (productId) {
+      let targetSum = 0;
+      for (const ym of monthKeys) {
+        targetSum += Number(getProductMonthAllocation(ym, productId) || 0);
+      }
+      targetAmount = deps.roundMoney(targetSum);
+    }
+
+    productRows.push({
+      productKey,
+      productName: productNames.get(productKey) || "未命名产品",
+      amount: current.amount,
+      targetAmount,
+      amountAchievement: calcRate(current.amount, targetAmount),
+      quantity: current.quantity,
+      amountShare: calcRate(current.amount, rangeAmountTotal),
+      quantityShare: calcRate(current.quantity, rangeQuantityTotal),
+      amountYoy: calcGrowth(current.amount, previous.amount),
+      quantityYoy: calcGrowth(current.quantity, previous.quantity),
+    });
+  }
+
+  productRows.sort((a, b) => b.amount - a.amount);
+
+  for (const [hospitalKey, byMonthMap] of hospitalMonthlyTotals.entries()) {
+    const current = sumMonths(byMonthMap, monthKeys, deps);
+    if (current.count === 0) continue;
+
+    const previous = sumMonths(byMonthMap, prevYearMonthSet, deps);
+    hospitalRows.push({
+      hospitalKey,
+      hospitalName: hospitalNames.get(hospitalKey) || "未命名医院",
+      amount: current.amount,
+      quantity: current.quantity,
+      amountShare: calcRate(current.amount, rangeAmountTotal),
+      quantityShare: calcRate(current.quantity, rangeQuantityTotal),
+      amountYoy: calcGrowth(current.amount, previous.amount),
+      quantityYoy: calcGrowth(current.quantity, previous.quantity),
+    });
+  }
+
+  hospitalRows.sort((a, b) => {
+    if (a.amount !== b.amount) return b.amount - a.amount;
+    if (a.quantity !== b.quantity) return b.quantity - a.quantity;
+    return a.hospitalName.localeCompare(b.hospitalName, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+  });
+
+  const productMonthlySeries = {};
+  for (const row of productRows) {
+    const safeProductKey = String(row.productKey || "").trim();
+    if (!safeProductKey) continue;
+
+    const byMonthMap = productMonthlyTotals.get(safeProductKey);
+    if (!(byMonthMap instanceof Map)) continue;
+
+    const series = {};
+    for (const ym of monthKeys) {
+      const monthMetric = readValue(byMonthMap, ym, deps);
+      series[ym] = monthMetric.amount;
+    }
+    productMonthlySeries[safeProductKey] = series;
+  }
+
+  const hospitalTopRows = hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  const hospitalMonthlySeries = {};
+  for (const row of hospitalTopRows) {
+    const safeHospitalKey = String(row.hospitalKey || "").trim();
+    if (!safeHospitalKey) continue;
+
+    const byMonthMap = hospitalMonthlyTotals.get(safeHospitalKey);
+    if (!(byMonthMap instanceof Map)) continue;
+
+    const series = {};
+    for (const ym of monthKeys) {
+      const currentMetric = readValue(byMonthMap, ym, deps);
+      series[ym] = currentMetric.amount;
+
+      const yoyYm = addYearsToYm(ym, -1);
+      if (yoyYm && !(yoyYm in series)) {
+        const yoyMetric = readValue(byMonthMap, yoyYm, deps);
+        series[yoyYm] = yoyMetric.amount;
+      }
+    }
+
+    hospitalMonthlySeries[safeHospitalKey] = series;
+  }
+
+  return {
+    monthRows,
+    quarterRows,
+    productRows,
+    productMonthlySeries,
+    hospitalTopRows,
+    hospitalMonthlySeries,
+    hospitalRows: hospitalRows.slice(0, HOSPITAL_TOP_LIMIT),
+    hospitalTotalCount: hospitalRows.length,
+    hasRangeRecords,
+    hasTargetGap: targetUnavailableYears.size > 0,
+    targetGapYears: Array.from(targetUnavailableYears).sort((a, b) => a - b),
+  };
+}
+
+export function renderReportSection(state, dom, deps) {
+  if (!(dom.reportHintEl instanceof HTMLElement)) return;
+  if (!(dom.reportMonthBody instanceof HTMLElement)) return;
+  if (!(dom.reportQuarterBody instanceof HTMLElement)) return;
+  if (!(dom.reportProductBody instanceof HTMLElement)) return;
+  if (!(dom.reportHospitalBody instanceof HTMLElement)) return;
+  if (!(dom.reportEmptyEl instanceof HTMLElement)) return;
+  renderReportChartPaletteSelect(state, dom);
+
+  try {
+    const range = normalizeReportRange(state, dom, deps);
+
+    if (range.error) {
+      dom.reportHintEl.textContent = range.error;
+      dom.reportHintEl.classList.add("report-hint-error");
+
+      dom.reportEmptyEl.hidden = false;
+      dom.reportEmptyEl.textContent = "暂无可分析数据";
+      renderEmptyRows(dom);
+      setChartsUnavailableState(dom, range.error || CHART_EMPTY_TEXT);
+      return;
+    }
+
+    const snapshot = buildReportSnapshot(state, deps, range);
+    if (!snapshot.hasRangeRecords) {
+      dom.reportHintEl.textContent = "报表由销售记录自动生成，当前范围暂无销售数据。";
+      dom.reportHintEl.classList.remove("report-hint-error");
+
+      dom.reportEmptyEl.hidden = false;
+      dom.reportEmptyEl.textContent = "暂无可分析数据";
+      renderEmptyRows(dom);
+      setChartsUnavailableState(dom, CHART_EMPTY_TEXT);
+      return;
+    }
+
+    dom.reportEmptyEl.hidden = true;
+    dom.reportHintEl.classList.remove("report-hint-error");
+
+    if (snapshot.hasTargetGap) {
+      const yearsText = snapshot.targetGapYears.join("、");
+      dom.reportHintEl.textContent = `所涉年份总指标未生效，月/季度达成率按缺省展示；产品指标按分配展示（${yearsText}年）。`;
+    } else {
+      dom.reportHintEl.textContent = "报表由销售记录自动生成，金额单位：元。";
+    }
+
+    dom.reportMonthBody.innerHTML = snapshot.monthRows
+      .map(
+        (row) => `
+      <tr>
+        <td>${deps.escapeHtml(formatMonthLabel(row.ym))}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.targetAmount, deps))}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.amount, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountAchievement))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountMom))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityMom))}</td>
+      </tr>
+    `,
+      )
+      .join("");
+
+    dom.reportQuarterBody.innerHTML = snapshot.quarterRows.length
+      ? snapshot.quarterRows
+          .map(
+            (row) => `
+      <tr>
+        <td>${deps.escapeHtml(row.label)}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.targetAmount, deps))}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.amount, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountAchievement))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountQoq))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityQoq))}</td>
+      </tr>
+    `,
+          )
+          .join("")
+      : `
+      <tr>
+        <td colspan="9" class="empty">当前范围不包含完整季度</td>
+      </tr>
+    `;
+
+    dom.reportProductBody.innerHTML = snapshot.productRows.length
+      ? snapshot.productRows
+          .map(
+            (row) => `
+      <tr>
+        <td>${deps.escapeHtml(row.productName)}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.amount, deps))}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.targetAmount, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountAchievement))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountShare))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityShare))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
+      </tr>
+    `,
+          )
+          .join("")
+      : `
+      <tr>
+        <td colspan="9" class="empty">当前范围无产品销售数据</td>
+      </tr>
+    `;
+
+    dom.reportHospitalBody.innerHTML = snapshot.hospitalRows.length
+      ? snapshot.hospitalRows
+          .map(
+            (row) => `
+      <tr>
+        <td>${deps.escapeHtml(row.hospitalName)}</td>
+        <td>${deps.escapeHtml(formatMoneyCell(row.amount, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountShare))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityShare))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
+      </tr>
+    `,
+          )
+          .join("")
+      : `
+      <tr>
+        <td colspan="7" class="empty">当前范围无医院销售数据</td>
+      </tr>
+    `;
+
+    renderReportCharts(state, dom, deps, snapshot, range);
+  } catch (error) {
+    console.error("[Sales Tool] 报表渲染失败，已降级为空态。", error);
+    dom.reportHintEl.textContent = "报表计算异常，请刷新页面后重试。";
+    dom.reportHintEl.classList.add("report-hint-error");
+    dom.reportEmptyEl.hidden = false;
+    dom.reportEmptyEl.textContent = "暂无可分析数据";
+    renderEmptyRows(dom);
+    setChartsUnavailableState(dom, "图表计算异常，请刷新页面后重试。");
+  }
+}
+
+export function bindReportEvents(state, dom, deps) {
+  bindReportTableExportEvents(state, dom, deps);
+  bindChartExportEvents(state, dom);
+  renderReportChartPaletteSelect(state, dom);
+
+  if (dom.reportChartPaletteSelect instanceof HTMLSelectElement) {
+    dom.reportChartPaletteSelect.addEventListener("change", () => {
+      const nextPaletteId = normalizeReportChartPaletteId(dom.reportChartPaletteSelect.value);
+      state.reportChartPaletteId = nextPaletteId;
+      if (typeof deps.saveReportChartPalette === "function") {
+        deps.saveReportChartPalette(nextPaletteId);
+      }
+      renderReportSection(state, dom, deps);
+    });
+  }
+
+  if (dom.hospitalTrendSelect instanceof HTMLSelectElement) {
+    dom.hospitalTrendSelect.addEventListener("change", () => {
+      state.activeHospitalChartKey = String(dom.hospitalTrendSelect.value || "").trim();
+      renderReportSection(state, dom, deps);
+    });
+  }
+
+  if (dom.reportStartMonthInput instanceof HTMLInputElement) {
+    const rerender = () => {
+      state.reportStartYm = String(dom.reportStartMonthInput.value || "").trim();
+      renderReportSection(state, dom, deps);
+    };
+
+    dom.reportStartMonthInput.addEventListener("input", rerender);
+    dom.reportStartMonthInput.addEventListener("change", rerender);
+  }
+
+  if (dom.reportEndMonthInput instanceof HTMLInputElement) {
+    const rerender = () => {
+      state.reportEndYm = String(dom.reportEndMonthInput.value || "").trim();
+      renderReportSection(state, dom, deps);
+    };
+
+    dom.reportEndMonthInput.addEventListener("input", rerender);
+    dom.reportEndMonthInput.addEventListener("change", rerender);
+  }
+
+  if (dom.reportChartsDetails instanceof HTMLDetailsElement) {
+    dom.reportChartsDetails.addEventListener("toggle", () => {
+      if (dom.reportChartsDetails.open) {
+        setTimeout(() => {
+          resizeReportCharts();
+        }, 0);
+      }
+    });
+  }
+}
+
+function bindReportTableExportEvents(state, dom, deps) {
+  if (!(dom.exportReportTablesBtn instanceof HTMLButtonElement)) return;
+
+  dom.exportReportTablesBtn.addEventListener("click", () => {
+    downloadReportTablesXlsx(state, dom, deps);
+  });
+}
+
+function downloadReportTablesXlsx(state, dom, deps) {
+  if (!isXlsxReadyForReportExport()) {
+    showReportExportHint(dom, "导出组件未加载，请刷新后重试。", true);
+    return;
+  }
+
+  const range = normalizeReportRange(state, dom, deps);
+  if (range.error) {
+    showReportExportHint(dom, "起始月不能晚于结束月。", true);
+    return;
+  }
+
+  try {
+    const snapshot = buildReportSnapshot(state, deps, range);
+    if (!snapshot.hasRangeRecords) {
+      showReportExportHint(dom, "当前范围暂无可导出数据。", true);
+      return;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const sheets = buildReportExportSheets(snapshot, deps);
+
+    for (const sheet of sheets) {
+      const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+    }
+
+    const safeStart = sanitizeFilePart(range.startYm || "start");
+    const safeEnd = sanitizeFilePart(range.endYm || "end");
+    const fileName = `sales-analysis-${safeStart}_to_${safeEnd}.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+    showReportExportHint(dom, `导出成功：${fileName}`, false);
+  } catch (error) {
+    console.error("[Sales Tool] 销售分析导出失败。", error);
+    showReportExportHint(dom, "导出失败，请稍后重试。", true);
+  }
+}
+
+function buildReportExportSheets(snapshot, deps) {
+  const monthRows = [
+    ["月份", "指标金额", "实际金额", "达成率", "金额同比", "金额环比", "实际数量", "数量同比", "数量环比"],
+    ...snapshot.monthRows.map((row) => [
+      formatMonthLabel(row.ym),
+      toExportCell(row.targetAmount, "money", deps),
+      toExportCell(row.amount, "money", deps),
+      toExportCell(row.amountAchievement, "percent", deps),
+      toExportCell(row.amountYoy, "percent", deps),
+      toExportCell(row.amountMom, "percent", deps),
+      toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityYoy, "percent", deps),
+      toExportCell(row.quantityMom, "percent", deps),
+    ]),
+  ];
+
+  const quarterRows = [
+    ["季度", "指标金额", "实际金额", "达成率", "金额同比", "金额环比", "实际数量", "数量同比", "数量环比"],
+    ...snapshot.quarterRows.map((row) => [
+      row.label,
+      toExportCell(row.targetAmount, "money", deps),
+      toExportCell(row.amount, "money", deps),
+      toExportCell(row.amountAchievement, "percent", deps),
+      toExportCell(row.amountYoy, "percent", deps),
+      toExportCell(row.amountQoq, "percent", deps),
+      toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityYoy, "percent", deps),
+      toExportCell(row.quantityQoq, "percent", deps),
+    ]),
+  ];
+
+  const productRows = [
+    ["产品/规格", "实际金额", "指标金额", "达成率", "金额占比", "金额同比", "实际数量", "数量占比", "数量同比"],
+    ...snapshot.productRows.map((row) => [
+      toExportCell(row.productName, "text", deps),
+      toExportCell(row.amount, "money", deps),
+      toExportCell(row.targetAmount, "money", deps),
+      toExportCell(row.amountAchievement, "percent", deps),
+      toExportCell(row.amountShare, "percent", deps),
+      toExportCell(row.amountYoy, "percent", deps),
+      toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityShare, "percent", deps),
+      toExportCell(row.quantityYoy, "percent", deps),
+    ]),
+  ];
+
+  const hospitalRows = [
+    ["医院", "销售金额", "金额占比", "金额同比", "采购数量", "数量占比", "数量同比"],
+    ...snapshot.hospitalRows.map((row) => [
+      toExportCell(row.hospitalName, "text", deps),
+      toExportCell(row.amount, "money", deps),
+      toExportCell(row.amountShare, "percent", deps),
+      toExportCell(row.amountYoy, "percent", deps),
+      toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityShare, "percent", deps),
+      toExportCell(row.quantityYoy, "percent", deps),
+    ]),
+  ];
+
+  return [
+    { name: "总览-按月", rows: monthRows },
+    { name: "总览-按季度", rows: quarterRows },
+    { name: "产品分析", rows: productRows },
+    { name: "医院分析", rows: hospitalRows },
+  ];
+}
+
+function toExportCell(value, type, deps) {
+  if (type === "text") {
+    const text = String(value || "").trim();
+    return text || "--";
+  }
+
+  if (type === "percent") {
+    return formatPercentCell(value);
+  }
+
+  if (type === "money" || type === "quantity") {
+    if (!Number.isFinite(value)) return "--";
+    return deps.formatMoney(deps.roundMoney(Number(value)));
+  }
+
+  return value ?? "--";
+}
+
+function showReportExportHint(dom, message, isError) {
+  if (!(dom.reportHintEl instanceof HTMLElement)) return;
+
+  dom.reportHintEl.textContent = String(message || "").trim();
+  dom.reportHintEl.classList.toggle("report-hint-error", Boolean(isError));
+}
+
+function isXlsxReadyForReportExport() {
+  return typeof XLSX !== "undefined" && XLSX && XLSX.utils && typeof XLSX.utils.book_new === "function";
+}
+
+function renderReportCharts(state, dom, deps, snapshot, range) {
+  latestChartRange = {
+    startYm: range.startYm,
+    endYm: range.endYm,
+  };
+  const palette = getActiveReportChartPalette(state);
+
+  if (!isEchartsReady()) {
+    setChartsUnavailableState(dom, "图表组件未加载，仅显示数据表。");
+    return;
+  }
+
+  if (!snapshot || !snapshot.hasRangeRecords) {
+    setChartsUnavailableState(dom, CHART_EMPTY_TEXT);
+    return;
+  }
+
+  try {
+    renderHospitalTrendSelect(state, dom, snapshot, deps);
+
+    const monthlyTrendChart = ensureChartInstance(CHART_KEYS.monthlyTrend, dom.chartMonthlyTrendEl);
+    const quarterlyTrendChart = ensureChartInstance(CHART_KEYS.quarterlyTrend, dom.chartQuarterlyTrendEl);
+    const productPerformanceChart = ensureChartInstance(CHART_KEYS.productPerformance, dom.chartProductPerformanceEl);
+    const productMonthlyTrendChart = ensureChartInstance(CHART_KEYS.productMonthlyTrend, dom.chartProductMonthlyTrendEl);
+    const productTopChart = ensureChartInstance(CHART_KEYS.productTop, dom.chartProductTopEl);
+    const hospitalTopChart = ensureChartInstance(CHART_KEYS.hospitalTop, dom.chartHospitalTopEl);
+    const hospitalShareChart = ensureChartInstance(CHART_KEYS.hospitalShare, dom.chartHospitalShareEl);
+    const hospitalTrendChart = ensureChartInstance(CHART_KEYS.hospitalTrend, dom.chartHospitalTrendEl);
+
+    updateMonthlyTrendChart(monthlyTrendChart, snapshot, deps, palette);
+    updateQuarterlyTrendChart(quarterlyTrendChart, snapshot, deps, palette);
+    updateProductPerformanceChart(productPerformanceChart, snapshot, deps, palette);
+    updateProductMonthlyTrendChart(productMonthlyTrendChart, snapshot, deps, palette);
+    updateProductTopChart(productTopChart, snapshot, deps, palette);
+    updateHospitalTopChart(hospitalTopChart, snapshot, deps, palette);
+    updateHospitalShareChart(hospitalShareChart, snapshot, deps, palette);
+    updateHospitalTrendChart(hospitalTrendChart, snapshot, state, deps, palette);
+
+    setChartButtonsDisabled(dom, false);
+
+    if (dom.reportChartsHintEl instanceof HTMLElement) {
+      if (snapshot.hasTargetGap) {
+        const yearsText = snapshot.targetGapYears.join("、");
+        dom.reportChartsHintEl.textContent = `部分年份总指标未生效，月/季度目标图按缺省值展示；产品分配指标图按可用数据展示（${yearsText}年）。`;
+      } else {
+        dom.reportChartsHintEl.textContent = "图表口径与销售分析表一致，金额单位：元。";
+      }
+      dom.reportChartsHintEl.classList.remove("report-hint-error");
+    }
+
+    resizeReportCharts();
+  } catch (error) {
+    console.error("[Sales Tool] 图表渲染失败，已降级为空态。", error);
+    setChartsUnavailableState(dom, "图表渲染异常，请刷新页面后重试。");
+  }
+}
+
+function isEchartsReady() {
+  return typeof window !== "undefined" && window.echarts && typeof window.echarts.init === "function";
+}
+
+function getChartHostElements(dom) {
+  return [
+    dom.chartMonthlyTrendEl,
+    dom.chartQuarterlyTrendEl,
+    dom.chartProductPerformanceEl,
+    dom.chartProductMonthlyTrendEl,
+    dom.chartProductTopEl,
+    dom.chartHospitalTopEl,
+    dom.chartHospitalShareEl,
+    dom.chartHospitalTrendEl,
+  ].filter(
+    (element) => element instanceof HTMLElement,
+  );
+}
+
+function setChartsUnavailableState(dom, message) {
+  const text = String(message || CHART_EMPTY_TEXT).trim() || CHART_EMPTY_TEXT;
+  const isError = text.includes("异常") || text.includes("失败") || text.includes("不能");
+
+  if (dom.reportChartsHintEl instanceof HTMLElement) {
+    dom.reportChartsHintEl.textContent = text;
+    dom.reportChartsHintEl.classList.toggle("report-hint-error", isError);
+  }
+
+  setHospitalTrendSelectUnavailable(dom, "暂无可选医院");
+  setChartButtonsDisabled(dom, true);
+
+  const chartHosts = getChartHostElements(dom);
+  if (chartHosts.length === 0) return;
+
+  if (!isEchartsReady()) {
+    for (const host of chartHosts) {
+      host.classList.add("report-chart-canvas-empty");
+      host.textContent = text;
+    }
+    return;
+  }
+
+  for (const host of chartHosts) {
+    const chartKey = host.id.replace("chart-", "");
+    const chartInstance = ensureChartInstance(chartKey, host);
+    renderEmptyChart(chartInstance, text);
+  }
+}
+
+function resolveActiveHospitalChartKey(state, snapshot) {
+  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+  if (!rows.length) {
+    state.activeHospitalChartKey = "";
+    return "";
+  }
+
+  const activeKey = String(state.activeHospitalChartKey || "").trim();
+  if (activeKey && rows.some((row) => row.hospitalKey === activeKey)) {
+    return activeKey;
+  }
+
+  const fallbackKey = String(rows[0].hospitalKey || "").trim();
+  state.activeHospitalChartKey = fallbackKey;
+  return fallbackKey;
+}
+
+function renderHospitalTrendSelect(state, dom, snapshot, deps) {
+  if (!(dom.hospitalTrendSelect instanceof HTMLSelectElement)) return;
+
+  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+  if (!rows.length) {
+    setHospitalTrendSelectUnavailable(dom, "暂无可选医院");
+    return;
+  }
+
+  const selectedKey = resolveActiveHospitalChartKey(state, snapshot);
+  dom.hospitalTrendSelect.disabled = false;
+  dom.hospitalTrendSelect.innerHTML = rows
+    .map((row) => {
+      const optionLabel = `${row.hospitalName}（${deps.formatMoney(row.amount)}）`;
+      return `<option value="${deps.escapeHtml(row.hospitalKey)}">${deps.escapeHtml(optionLabel)}</option>`;
+    })
+    .join("");
+
+  dom.hospitalTrendSelect.value = selectedKey;
+}
+
+function setHospitalTrendSelectUnavailable(dom, placeholderText) {
+  if (!(dom.hospitalTrendSelect instanceof HTMLSelectElement)) return;
+
+  const text = String(placeholderText || "暂无可选医院").trim() || "暂无可选医院";
+  dom.hospitalTrendSelect.disabled = true;
+  dom.hospitalTrendSelect.innerHTML = `<option value="">${text}</option>`;
+  dom.hospitalTrendSelect.value = "";
+}
+
+function clearChartFallbackText(element) {
+  if (!(element instanceof HTMLElement)) return;
+  if (!element.classList.contains("report-chart-canvas-empty")) return;
+
+  element.classList.remove("report-chart-canvas-empty");
+  element.textContent = "";
+}
+
+function ensureChartInstance(key, element) {
+  if (!(element instanceof HTMLElement)) return null;
+  if (!isEchartsReady()) return null;
+
+  clearChartFallbackText(element);
+
+  const existing = reportChartInstances.get(key);
+  if (existing) {
+    const disposed = typeof existing.isDisposed === "function" ? existing.isDisposed() : false;
+    if (!disposed && typeof existing.getDom === "function" && existing.getDom() === element) {
+      return existing;
+    }
+    if (!disposed && typeof existing.dispose === "function") {
+      existing.dispose();
+    }
+  }
+
+  const instance = window.echarts.init(element, null, { renderer: CHART_RENDERER });
+  reportChartInstances.set(key, instance);
+  return instance;
+}
+
+function renderEmptyChart(instance, message) {
+  if (!instance || typeof instance.setOption !== "function") return;
+
+  instance.setOption(
+    {
+      animation: false,
+      grid: { left: 20, right: 20, top: 20, bottom: 20 },
+      xAxis: { type: "value", show: false },
+      yAxis: { type: "category", show: false, data: [] },
+      series: [],
+      graphic: [
+        {
+          type: "text",
+          left: "center",
+          top: "middle",
+          style: {
+            text: message || CHART_EMPTY_TEXT,
+            fill: "#6b7280",
+            fontSize: 13,
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateMonthlyTrendChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
+  if (!labels.length) {
+    renderEmptyChart(instance, CHART_EMPTY_TEXT);
+    return;
+  }
+
+  const actualAmountData = snapshot.monthRows.map((row) => (Number.isFinite(row.amount) ? row.amount : 0));
+  const targetAmountData = snapshot.monthRows.map((row) => (Number.isFinite(row.targetAmount) ? row.targetAmount : null));
+  const achievementData = snapshot.monthRows.map((row) =>
+    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
+  );
+  const amountYoyData = snapshot.monthRows.map((row) => (Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null));
+  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
+  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
+  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
+  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
+  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.trend4,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const lines = params.map((item) => {
+            const value = Number(item.value);
+            if (!Number.isFinite(value)) {
+              return `${item.marker}${item.seriesName}：--`;
+            }
+
+            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            if (isPercent) {
+              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+            }
+
+            return `${item.marker}${item.seriesName}：${deps.formatMoney(value)}`;
+          });
+          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
+          return [title, ...lines].join("<br/>");
+        },
+      },
+      legend: {
+        top: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      grid: {
+        left: 56,
+        right: 60,
+        top: 44,
+        bottom: 36,
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLabel: {
+          color: palette.axisTextColor,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      yAxis: [
+        {
+          type: "value",
+          name: "金额（元）",
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => deps.formatMoney(value),
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+        {
+          type: "value",
+          name: "比率（%）",
+          min: negativeFloor,
+          max: positiveCeil,
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => `${Number(value).toFixed(2)}%`,
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+      ],
+      series: [
+        {
+          name: "达成金额",
+          type: "bar",
+          barMaxWidth: 22,
+          yAxisIndex: 0,
+          data: actualAmountData,
+        },
+        {
+          name: "指标金额",
+          type: "bar",
+          barMaxWidth: 22,
+          yAxisIndex: 0,
+          data: targetAmountData,
+        },
+        {
+          name: "达成率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: achievementData,
+          lineStyle: {
+            width: 2,
+          },
+        },
+        {
+          name: "金额同比增长率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: amountYoyData,
+          lineStyle: {
+            type: "dashed",
+            width: 2,
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateQuarterlyTrendChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const labels = snapshot.quarterRows.map((row) => String(row.label || "").trim());
+  if (!labels.length) {
+    renderEmptyChart(instance, CHART_EMPTY_TEXT);
+    return;
+  }
+
+  const actualAmountData = snapshot.quarterRows.map((row) => (Number.isFinite(row.amount) ? row.amount : 0));
+  const targetAmountData = snapshot.quarterRows.map((row) => (Number.isFinite(row.targetAmount) ? row.targetAmount : null));
+  const achievementData = snapshot.quarterRows.map((row) =>
+    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
+  );
+  const amountYoyData = snapshot.quarterRows.map((row) =>
+    Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null,
+  );
+  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
+  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
+  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
+  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
+  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.trend4,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const lines = params.map((item) => {
+            const value = Number(item.value);
+            if (!Number.isFinite(value)) {
+              return `${item.marker}${item.seriesName}：--`;
+            }
+
+            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            if (isPercent) {
+              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+            }
+
+            return `${item.marker}${item.seriesName}：${deps.formatMoney(value)}`;
+          });
+          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
+          return [title, ...lines].join("<br/>");
+        },
+      },
+      legend: {
+        top: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      grid: {
+        left: 56,
+        right: 60,
+        top: 44,
+        bottom: 36,
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLabel: {
+          color: palette.axisTextColor,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      yAxis: [
+        {
+          type: "value",
+          name: "金额（元）",
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => deps.formatMoney(value),
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+        {
+          type: "value",
+          name: "比率（%）",
+          min: negativeFloor,
+          max: positiveCeil,
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => `${Number(value).toFixed(2)}%`,
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+      ],
+      series: [
+        {
+          name: "达成金额",
+          type: "bar",
+          barMaxWidth: 22,
+          yAxisIndex: 0,
+          data: actualAmountData,
+        },
+        {
+          name: "指标金额",
+          type: "bar",
+          barMaxWidth: 22,
+          yAxisIndex: 0,
+          data: targetAmountData,
+        },
+        {
+          name: "达成率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: achievementData,
+          lineStyle: {
+            width: 2,
+          },
+        },
+        {
+          name: "金额同比增长率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: amountYoyData,
+          lineStyle: {
+            type: "dashed",
+            width: 2,
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateProductPerformanceChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const rows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+  if (!rows.length) {
+    renderEmptyChart(instance, "当前范围无产品销售数据");
+    return;
+  }
+
+  const labels = rows.map((row) => row.productName);
+  const actualAmountData = rows.map((row) => (Number.isFinite(row.amount) ? row.amount : 0));
+  const targetAmountData = rows.map((row) => (Number.isFinite(row.targetAmount) ? row.targetAmount : null));
+  const achievementData = rows.map((row) =>
+    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
+  );
+  const amountYoyData = rows.map((row) => (Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null));
+
+  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
+  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
+  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
+  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
+  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.trend4,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const lines = params.map((item) => {
+            const value = Number(item.value);
+            if (!Number.isFinite(value)) {
+              return `${item.marker}${item.seriesName}：--`;
+            }
+
+            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            if (isPercent) {
+              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+            }
+            return `${item.marker}${item.seriesName}：${deps.formatMoney(value)}`;
+          });
+
+          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
+          return [title, ...lines].join("<br/>");
+        },
+      },
+      legend: {
+        type: "scroll",
+        top: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      grid: {
+        left: 56,
+        right: 60,
+        top: 52,
+        bottom: 52,
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLabel: {
+          color: palette.axisTextColor,
+          interval: 0,
+          rotate: labels.length > 5 ? 20 : 0,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      yAxis: [
+        {
+          type: "value",
+          name: "金额（元）",
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => deps.formatMoney(value),
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+        {
+          type: "value",
+          name: "比率（%）",
+          min: negativeFloor,
+          max: positiveCeil,
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => `${Number(value).toFixed(2)}%`,
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+      ],
+      series: [
+        {
+          name: "实际金额",
+          type: "bar",
+          barMaxWidth: 20,
+          yAxisIndex: 0,
+          data: actualAmountData,
+        },
+        {
+          name: "指标金额",
+          type: "bar",
+          barMaxWidth: 20,
+          yAxisIndex: 0,
+          data: targetAmountData,
+        },
+        {
+          name: "达成率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: achievementData,
+        },
+        {
+          name: "金额同比增长率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: amountYoyData,
+          lineStyle: {
+            type: "dashed",
+            width: 2,
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateProductMonthlyTrendChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
+  const monthKeys = snapshot.monthRows.map((row) => row.ym);
+  const topRows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+
+  if (!labels.length || !topRows.length) {
+    renderEmptyChart(instance, "当前范围无产品销售数据");
+    return;
+  }
+
+  const productMonthlySeries = snapshot.productMonthlySeries && typeof snapshot.productMonthlySeries === "object"
+    ? snapshot.productMonthlySeries
+    : {};
+
+  const series = topRows.map((row) => {
+    const safeProductKey = String(row.productKey || "").trim();
+    const monthlyMap = safeProductKey ? productMonthlySeries[safeProductKey] : null;
+    const data = monthKeys.map((ym) => {
+      if (!monthlyMap || typeof monthlyMap !== "object") return 0;
+      const value = Number(monthlyMap[ym]);
+      return Number.isFinite(value) ? value : 0;
+    });
+
+    return {
+      name: row.productName,
+      type: "line",
+      smooth: true,
+      showSymbol: false,
+      connectNulls: false,
+      data,
+    };
+  });
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.productMonthlyLines,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
+          const lines = params.map((item) => {
+            const value = Number(item.value);
+            if (!Number.isFinite(value)) {
+              return `${item.marker}${item.seriesName}：--`;
+            }
+            return `${item.marker}${item.seriesName}：${deps.formatMoney(value)}`;
+          });
+          return [title, ...lines].join("<br/>");
+        },
+      },
+      legend: {
+        type: "scroll",
+        top: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      grid: {
+        left: 56,
+        right: 24,
+        top: 52,
+        bottom: 36,
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLabel: {
+          color: palette.axisTextColor,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      yAxis: {
+        type: "value",
+        name: "金额（元）",
+        nameTextStyle: {
+          color: palette.axisTextColor,
+        },
+        axisLabel: {
+          color: palette.axisTextColor,
+          formatter: (value) => deps.formatMoney(value),
+        },
+        axisLine: buildAxisLineTheme(palette),
+        splitLine: buildSplitLineTheme(palette),
+      },
+      series,
+    },
+    true,
+  );
+}
+
+function updateProductTopChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const rows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+  if (!rows.length) {
+    renderEmptyChart(instance, "当前范围无产品销售数据");
+    return;
+  }
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.productPie,
+      tooltip: {
+        trigger: "item",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const value = Number(params.value);
+          const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
+          return `${params.name}<br/>金额：${deps.formatMoney(value)}<br/>占比：${percent}`;
+        },
+      },
+      legend: {
+        type: "scroll",
+        bottom: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      series: [
+        {
+          name: "产品金额占比",
+          type: "pie",
+          radius: ["48%", "72%"],
+          center: ["50%", "46%"],
+          label: {
+            formatter: "{b}",
+          },
+          data: rows.map((row) => ({
+            name: row.productName,
+            value: row.amount,
+          })),
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateHospitalTopChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const rows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  if (!rows.length) {
+    renderEmptyChart(instance, "当前范围无医院销售数据");
+    return;
+  }
+
+  const labels = rows.map((row) => row.hospitalName);
+  const values = rows.map((row) => row.amount);
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.hospitalTopBar,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        axisPointer: { type: "shadow" },
+        valueFormatter: (value) => (Number.isFinite(value) ? deps.formatMoney(value) : "--"),
+      },
+      grid: {
+        left: 140,
+        right: 24,
+        top: 20,
+        bottom: 20,
+      },
+      xAxis: {
+        type: "value",
+        axisLabel: {
+          color: palette.axisTextColor,
+          formatter: (value) => deps.formatMoney(value),
+        },
+        axisLine: buildAxisLineTheme(palette),
+        splitLine: buildSplitLineTheme(palette),
+      },
+      yAxis: {
+        type: "category",
+        data: labels,
+        inverse: true,
+        axisLabel: {
+          color: palette.axisTextColor,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      series: [
+        {
+          name: "销售金额",
+          type: "bar",
+          barMaxWidth: 22,
+          data: values,
+          label: {
+            show: true,
+            position: "right",
+            formatter: (params) => deps.formatMoney(params.value),
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateHospitalShareChart(instance, snapshot, deps, palette) {
+  if (!instance) return;
+
+  const topRows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  if (!topRows.length) {
+    renderEmptyChart(instance, "当前范围无医院销售数据");
+    return;
+  }
+
+  const rows = topRows.filter((row) => Number.isFinite(row.amount) && row.amount > 0);
+
+  if (!rows.length) {
+    renderEmptyChart(instance, "当前范围无可展示占比数据");
+    return;
+  }
+
+  const pieColors =
+    palette && palette.series && Array.isArray(palette.series.hospitalSharePie) && palette.series.hospitalSharePie.length
+      ? palette.series.hospitalSharePie
+      : palette && palette.series && Array.isArray(palette.series.productPie)
+        ? palette.series.productPie
+        : undefined;
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: pieColors,
+      tooltip: {
+        trigger: "item",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const value = Number(params.value);
+          const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
+          return `${params.name}<br/>金额：${deps.formatMoney(value)}<br/>占比：${percent}`;
+        },
+      },
+      legend: {
+        type: "scroll",
+        bottom: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      series: [
+        {
+          name: "医院金额占比",
+          type: "pie",
+          radius: ["48%", "72%"],
+          center: ["50%", "46%"],
+          label: {
+            formatter: "{b}",
+          },
+          data: rows.map((row) => ({
+            name: row.hospitalName,
+            value: row.amount,
+          })),
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function updateHospitalTrendChart(instance, snapshot, state, deps, palette) {
+  if (!instance) return;
+
+  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+  const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
+  const monthKeys = snapshot.monthRows.map((row) => row.ym);
+  if (!rows.length || !labels.length) {
+    renderEmptyChart(instance, "当前范围无医院销售数据");
+    return;
+  }
+
+  const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot);
+  if (!activeHospitalKey) {
+    renderEmptyChart(instance, "当前范围无医院销售数据");
+    return;
+  }
+
+  const selectedRow = rows.find((row) => row.hospitalKey === activeHospitalKey) || rows[0];
+  const monthlySeriesMap =
+    snapshot.hospitalMonthlySeries && typeof snapshot.hospitalMonthlySeries === "object"
+      ? snapshot.hospitalMonthlySeries[activeHospitalKey]
+      : null;
+
+  const amountData = monthKeys.map((ym) => {
+    if (!monthlySeriesMap || typeof monthlySeriesMap !== "object") return 0;
+    const value = Number(monthlySeriesMap[ym]);
+    return Number.isFinite(value) ? value : 0;
+  });
+
+  const amountYoyData = monthKeys.map((ym) => {
+    if (!monthlySeriesMap || typeof monthlySeriesMap !== "object") return null;
+    const current = Number(monthlySeriesMap[ym]);
+    const baseline = Number(monthlySeriesMap[addYearsToYm(ym, -1)]);
+    const ratio = calcGrowth(current, baseline);
+    return Number.isFinite(ratio) ? Number((ratio * 100).toFixed(2)) : null;
+  });
+
+  const percentCandidates = amountYoyData.filter((value) => Number.isFinite(value));
+  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
+  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
+  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
+  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
+
+  instance.setOption(
+    {
+      animationDuration: 300,
+      backgroundColor: palette.canvasBg,
+      color: palette.series.hospitalTrend2,
+      tooltip: {
+        trigger: "axis",
+        ...buildThemedTooltipBase(palette),
+        formatter: (params) => {
+          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
+          const lines = params.map((item) => {
+            const value = Number(item.value);
+            if (!Number.isFinite(value)) {
+              return `${item.marker}${item.seriesName}：--`;
+            }
+
+            if (item.seriesName === "金额同比增长率") {
+              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+            }
+
+            return `${item.marker}${item.seriesName}：${deps.formatMoney(value)}`;
+          });
+          return [title, ...lines].join("<br/>");
+        },
+      },
+      legend: {
+        top: 0,
+        textStyle: {
+          color: palette.legendTextColor,
+        },
+      },
+      grid: {
+        left: 56,
+        right: 60,
+        top: 48,
+        bottom: 36,
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLabel: {
+          color: palette.axisTextColor,
+        },
+        axisLine: buildAxisLineTheme(palette),
+      },
+      yAxis: [
+        {
+          type: "value",
+          name: "金额（元）",
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => deps.formatMoney(value),
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+        {
+          type: "value",
+          name: "比率（%）",
+          min: negativeFloor,
+          max: positiveCeil,
+          nameTextStyle: {
+            color: palette.axisTextColor,
+          },
+          axisLabel: {
+            color: palette.axisTextColor,
+            formatter: (value) => `${Number(value).toFixed(2)}%`,
+          },
+          axisLine: buildAxisLineTheme(palette),
+          splitLine: buildSplitLineTheme(palette),
+        },
+      ],
+      series: [
+        {
+          name: "销售金额",
+          type: "bar",
+          barMaxWidth: 24,
+          yAxisIndex: 0,
+          data: amountData,
+        },
+        {
+          name: "金额同比增长率",
+          type: "line",
+          smooth: true,
+          connectNulls: false,
+          yAxisIndex: 1,
+          data: amountYoyData,
+          lineStyle: {
+            width: 2,
+          },
+        },
+      ],
+      title: {
+        text: selectedRow ? `${selectedRow.hospitalName}` : "",
+        left: "center",
+        top: 22,
+        textStyle: {
+          fontSize: 12,
+          fontWeight: 500,
+          color: palette.legendTextColor,
+        },
+      },
+    },
+    true,
+  );
+}
+
+function bindChartExportEvents(state, dom) {
+  if (!isChartEventsBound) {
+    bindChartExportButton(state, dom, dom.exportChartMonthlyTrendBtn, CHART_KEYS.monthlyTrend, "monthly-trend");
+    bindChartExportButton(state, dom, dom.exportChartQuarterlyTrendBtn, CHART_KEYS.quarterlyTrend, "quarterly-trend");
+    bindChartExportButton(
+      state,
+      dom,
+      dom.exportChartProductPerformanceBtn,
+      CHART_KEYS.productPerformance,
+      "product-performance",
+    );
+    bindChartExportButton(
+      state,
+      dom,
+      dom.exportChartProductMonthlyTrendBtn,
+      CHART_KEYS.productMonthlyTrend,
+      "product-monthly-trend",
+    );
+    bindChartExportButton(state, dom, dom.exportChartProductTopBtn, CHART_KEYS.productTop, "product-top");
+    bindChartExportButton(state, dom, dom.exportChartHospitalTopBtn, CHART_KEYS.hospitalTop, "hospital-top");
+    bindChartExportButton(state, dom, dom.exportChartHospitalShareBtn, CHART_KEYS.hospitalShare, "hospital-share");
+    bindChartExportButton(state, dom, dom.exportChartHospitalTrendBtn, CHART_KEYS.hospitalTrend, "hospital-trend");
+    isChartEventsBound = true;
+  }
+
+  if (!isChartResizeBound) {
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeReportCharts();
+      }, 120);
+    });
+    window.addEventListener("beforeunload", () => {
+      disposeReportCharts();
+    });
+    isChartResizeBound = true;
+  }
+}
+
+function bindChartExportButton(state, dom, button, chartKey, fileKey) {
+  if (!(button instanceof HTMLButtonElement)) return;
+
+  button.addEventListener("click", () => {
+    exportChartAsPng(state, dom, chartKey, fileKey);
+  });
+}
+
+function exportChartAsPng(state, dom, chartKey, fileKey) {
+  const chart = reportChartInstances.get(chartKey);
+  if (!chart || typeof chart.getDataURL !== "function") {
+    if (dom.reportChartsHintEl instanceof HTMLElement) {
+      dom.reportChartsHintEl.textContent = "当前图表暂无可导出内容。";
+      dom.reportChartsHintEl.classList.add("report-hint-error");
+    }
+    return;
+  }
+
+  try {
+    const palette = getActiveReportChartPalette(state);
+    const dataUrl = chart.getDataURL({
+      type: "png",
+      pixelRatio: 2,
+      backgroundColor: palette.canvasBg || "#ffffff",
+    });
+
+    const range = latestChartRange || {
+      startYm: String(state.reportStartYm || "start"),
+      endYm: String(state.reportEndYm || "end"),
+    };
+
+    const safeStart = sanitizeFilePart(range.startYm || "start");
+    const safeEnd = sanitizeFilePart(range.endYm || "end");
+    const fileName = `sales-chart-${fileKey}-${safeStart}_to_${safeEnd}.png`;
+
+    const anchor = document.createElement("a");
+    anchor.href = dataUrl;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  } catch (error) {
+    console.error("[Sales Tool] 导出 PNG 失败。", error);
+    if (dom.reportChartsHintEl instanceof HTMLElement) {
+      dom.reportChartsHintEl.textContent = "导出失败，请稍后重试。";
+      dom.reportChartsHintEl.classList.add("report-hint-error");
+    }
+  }
+}
+
+function sanitizeFilePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^0-9A-Za-z_-]/g, "-")
+    .replace(/-+/g, "-");
+}
+
+function setChartButtonsDisabled(dom, disabled) {
+  const buttons = [
+    dom.exportChartMonthlyTrendBtn,
+    dom.exportChartQuarterlyTrendBtn,
+    dom.exportChartProductPerformanceBtn,
+    dom.exportChartProductMonthlyTrendBtn,
+    dom.exportChartProductTopBtn,
+    dom.exportChartHospitalTopBtn,
+    dom.exportChartHospitalShareBtn,
+    dom.exportChartHospitalTrendBtn,
+  ];
+
+  for (const button of buttons) {
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = disabled;
+    }
+  }
+}
+
+function resizeReportCharts() {
+  for (const chart of reportChartInstances.values()) {
+    if (!chart) continue;
+    const disposed = typeof chart.isDisposed === "function" ? chart.isDisposed() : false;
+    if (disposed) continue;
+    if (typeof chart.resize === "function") {
+      chart.resize();
+    }
+  }
+}
+
+function disposeReportCharts() {
+  for (const chart of reportChartInstances.values()) {
+    if (!chart) continue;
+    const disposed = typeof chart.isDisposed === "function" ? chart.isDisposed() : false;
+    if (!disposed && typeof chart.dispose === "function") {
+      chart.dispose();
+    }
+  }
+  reportChartInstances.clear();
+}
+
+function normalizeYm(raw) {
+  const value = String(raw || "").trim();
+  const matched = value.match(MONTH_RE);
+  if (!matched) return "";
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return "";
+  if (year < 1900 || year > 9999) return "";
+  if (month < 1 || month > 12) return "";
+
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function parseYm(ym) {
+  const normalized = normalizeYm(ym);
+  if (!normalized) return null;
+
+  const matched = normalized.match(MONTH_RE);
+  if (!matched) return null;
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  return {
+    year,
+    month,
+    index: year * 12 + (month - 1),
+  };
+}
+
+function compareYm(left, right) {
+  const leftParsed = parseYm(left);
+  const rightParsed = parseYm(right);
+  if (!leftParsed || !rightParsed) return 0;
+
+  return leftParsed.index - rightParsed.index;
+}
+
+function addMonthsToYm(ym, offset) {
+  const parsed = parseYm(ym);
+  if (!parsed || !Number.isInteger(offset)) return "";
+
+  const totalMonthIndex = parsed.year * 12 + (parsed.month - 1) + offset;
+  const nextYear = Math.floor(totalMonthIndex / 12);
+  const nextMonth = (totalMonthIndex % 12 + 12) % 12;
+  return `${nextYear}-${String(nextMonth + 1).padStart(2, "0")}`;
+}
+
+function addYearsToYm(ym, offsetYears) {
+  const parsed = parseYm(ym);
+  if (!parsed || !Number.isInteger(offsetYears)) return "";
+
+  return `${parsed.year + offsetYears}-${String(parsed.month).padStart(2, "0")}`;
+}
+
+function listYmRange(startYm, endYm) {
+  const start = parseYm(startYm);
+  const end = parseYm(endYm);
+  if (!start || !end || start.index > end.index) return [];
+
+  const result = [];
+  for (let index = start.index; index <= end.index; index += 1) {
+    const year = Math.floor(index / 12);
+    const month = (index % 12) + 1;
+    result.push(`${year}-${String(month).padStart(2, "0")}`);
+  }
+
+  return result;
+}
+
+function parseRecordDate(rawDate, deps) {
+  const value = String(rawDate || "").trim();
+  const matched = value.match(DATE_RE);
+  if (!matched) return null;
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  if (!deps.isValidDateParts(year, month, day)) return null;
+
+  return { year, month, day };
+}
+
+function buildProductKey(record, deps) {
+  const productId = String(record.productId || "").trim();
+  if (productId) return `id:${productId}`;
+
+  return `name:${deps.normalizeText(record.productName)}`;
+}
+
+function parseProductIdFromKey(productKey) {
+  const key = String(productKey || "").trim();
+  if (!key.startsWith("id:")) return "";
+
+  return String(key.slice(3) || "").trim();
+}
+
+function createEmptyMetric() {
+  return {
+    amount: 0,
+    quantity: 0,
+    count: 0,
+  };
+}
+
+function addValue(map, key, amount, quantity) {
+  const previous = map.get(key) || createEmptyMetric();
+  previous.amount += amount;
+  previous.quantity += quantity;
+  previous.count += 1;
+  map.set(key, previous);
+}
+
+function addNestedValue(outerMap, outerKey, innerKey, amount, quantity) {
+  let innerMap = outerMap.get(outerKey);
+  if (!innerMap) {
+    innerMap = new Map();
+    outerMap.set(outerKey, innerMap);
+  }
+
+  addValue(innerMap, innerKey, amount, quantity);
+}
+
+function readValue(map, key, deps) {
+  const value = map instanceof Map ? map.get(key) : null;
+  if (!value) return createEmptyMetric();
+
+  return {
+    amount: deps.roundMoney(value.amount),
+    quantity: deps.roundMoney(value.quantity),
+    count: value.count,
+  };
+}
+
+function sumMonths(map, months, deps) {
+  let amount = 0;
+  let quantity = 0;
+  let count = 0;
+
+  const iterable = months instanceof Set ? months.values() : months;
+  for (const month of iterable) {
+    const value = readValue(map, month, deps);
+    amount += value.amount;
+    quantity += value.quantity;
+    count += value.count;
+  }
+
+  return {
+    amount: deps.roundMoney(amount),
+    quantity: deps.roundMoney(quantity),
+    count,
+  };
+}
+
+function buildCompleteQuarters(monthKeys, monthSet) {
+  if (!monthKeys.length) return [];
+
+  const first = parseYm(monthKeys[0]);
+  const last = parseYm(monthKeys[monthKeys.length - 1]);
+  if (!first || !last) return [];
+
+  const result = [];
+  for (let year = first.year; year <= last.year; year += 1) {
+    for (let quarter = 1; quarter <= 4; quarter += 1) {
+      const months = buildQuarterMonths(year, quarter);
+      const isComplete = months.every((monthKey) => monthSet.has(monthKey));
+      if (!isComplete) continue;
+
+      const previousQuarter = quarter === 1 ? 4 : quarter - 1;
+      const previousYear = quarter === 1 ? year - 1 : year;
+
+      result.push({
+        year,
+        quarter,
+        months,
+        prevYear: previousYear,
+        prevQuarter: previousQuarter,
+      });
+    }
+  }
+
+  return result;
+}
+
+function buildQuarterMonths(year, quarter) {
+  const startMonth = (quarter - 1) * 3 + 1;
+  return [0, 1, 2].map((offset) => `${year}-${String(startMonth + offset).padStart(2, "0")}`);
+}
+
+function calcRate(numerator, denominator) {
+  const a = Number(numerator);
+  const b = Number(denominator);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return null;
+
+  return roundRatio(a / b);
+}
+
+function calcGrowth(current, baseline) {
+  const currentNum = Number(current);
+  const baselineNum = Number(baseline);
+  if (!Number.isFinite(currentNum) || !Number.isFinite(baselineNum) || baselineNum === 0) return null;
+
+  return roundRatio((currentNum - baselineNum) / Math.abs(baselineNum));
+}
+
+function roundRatio(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+function formatMonthLabel(ym) {
+  const parsed = parseYm(ym);
+  if (!parsed) return ym;
+
+  return `${parsed.year}-${String(parsed.month).padStart(2, "0")}`;
+}
+
+function formatMoneyCell(value, deps) {
+  if (!Number.isFinite(value)) return "--";
+  return deps.formatMoney(deps.roundMoney(value));
+}
+
+function formatQuantityCell(value, deps) {
+  if (!Number.isFinite(value)) return "--";
+  return deps.formatMoney(deps.roundMoney(value));
+}
+
+function formatPercentCell(value) {
+  if (!Number.isFinite(value)) return "--";
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function renderEmptyRows(dom) {
+  dom.reportMonthBody.innerHTML = `
+    <tr>
+      <td colspan="9" class="empty">暂无可分析数据</td>
+    </tr>
+  `;
+
+  dom.reportQuarterBody.innerHTML = `
+    <tr>
+      <td colspan="9" class="empty">暂无可分析数据</td>
+    </tr>
+  `;
+
+  dom.reportProductBody.innerHTML = `
+    <tr>
+      <td colspan="9" class="empty">暂无可分析数据</td>
+    </tr>
+  `;
+
+  dom.reportHospitalBody.innerHTML = `
+    <tr>
+      <td colspan="7" class="empty">暂无可分析数据</td>
+    </tr>
+  `;
+}
