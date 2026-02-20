@@ -1,0 +1,1643 @@
+const IMPORT_HEADERS = ["日期", "产品/规格", "医院", "采购数量（盒）", "配送"];
+const IMPORT_TEMPLATE_VERSION = "v2";
+const IMPORT_GUIDE_ROW = [
+  `格式：YYYY-MM-DD（模板${IMPORT_TEMPLATE_VERSION}）`,
+  "必填，建议与产品配置一致",
+  "必填，填写医院全称",
+  "必填，非 0 整数（可为负数）",
+  "必填，填写配送公司",
+];
+const IMPORT_DATA_START_ROW = 3;
+const IMPORT_DATA_START_INDEX = IMPORT_DATA_START_ROW - 1;
+const TEMPLATE_INPUT_AREA_START_ROW = IMPORT_DATA_START_ROW + 1;
+const TEMPLATE_INPUT_AREA_ROW_COUNT = 30;
+const TEMPLATE_INPUT_AREA_END_ROW = TEMPLATE_INPUT_AREA_START_ROW + TEMPLATE_INPUT_AREA_ROW_COUNT - 1;
+const TEMPLATE_SAMPLE_ROW = ["2026-01-01", "阿莫西林 0.25g*24粒", "XX人民医院", 12, "国控"];
+const TEMPLATE_COL_CONFIG = [
+  { wch: 18, align: "center", numFmt: "yyyy-mm-dd" },
+  { wch: 34, align: "left" },
+  { wch: 28, align: "left" },
+  { wch: 16, align: "center", numFmt: "0" },
+  { wch: 20, align: "left" },
+];
+const TEMPLATE_FILE_NAME = "销售数据导入模板.xlsx";
+const IMPORT_DETAIL_PREVIEW_LIMIT = 10;
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
+export const DEFAULT_PAGE_SIZE = 20;
+const SORTABLE_RECORD_FIELDS = new Set(["date", "productName", "hospital", "quantity", "amount", "delivery"]);
+
+let state;
+let dom;
+let deps;
+
+function bindContext(nextState, nextDom, nextDeps) {
+  if (nextState) state = nextState;
+  if (nextDom) dom = nextDom;
+  if (nextDeps) deps = nextDeps;
+}
+
+function renderReportsIfAvailable() {
+  if (typeof deps.renderReports === "function") {
+    deps.renderReports();
+  }
+}
+
+function createEmptySalesDraft() {
+  return {
+    date: "",
+    productId: "",
+    hospital: "",
+    quantity: "",
+    delivery: "",
+  };
+}
+
+function readSalesFormDraftFromDom() {
+  return {
+    date: String(dom.dateInput.value || "").trim(),
+    productId: String(dom.productSelect.value || "").trim(),
+    hospital: String(dom.hospitalInput.value || "").trim(),
+    quantity: String(dom.quantityInput.value || "").trim(),
+    delivery: String(dom.deliveryInput.value || "").trim(),
+  };
+}
+
+function applySalesDraftToDom(draft) {
+  const normalizedDraft = {
+    ...createEmptySalesDraft(),
+    ...(draft && typeof draft === "object" ? draft : {}),
+  };
+
+  const hasValidProduct = state.products.some((item) => item.id === normalizedDraft.productId);
+  if (!hasValidProduct) {
+    normalizedDraft.productId = "";
+  }
+
+  dom.dateInput.value = String(normalizedDraft.date || "");
+  dom.productSelect.value = String(normalizedDraft.productId || "");
+  dom.hospitalInput.value = String(normalizedDraft.hospital || "");
+  dom.quantityInput.value = String(normalizedDraft.quantity || "");
+  dom.deliveryInput.value = String(normalizedDraft.delivery || "");
+  deps.updateComputedAmount();
+
+  if (typeof deps.saveSalesDraft === "function") {
+    deps.saveSalesDraft(normalizedDraft);
+  }
+}
+
+function persistSalesDraftFromDom() {
+  if (typeof deps.saveSalesDraft !== "function") return;
+  deps.saveSalesDraft(readSalesFormDraftFromDom());
+}
+
+function resetSalesFormAndDraft() {
+  dom.dateInput.value = "";
+  dom.productSelect.value = "";
+  dom.hospitalInput.value = "";
+  dom.quantityInput.value = "";
+  dom.deliveryInput.value = "";
+  deps.clearSalesError();
+  if (typeof deps.clearSalesDraft === "function") {
+    deps.clearSalesDraft();
+  }
+  if (typeof deps.updateSalesFormAvailability === "function") {
+    deps.updateSalesFormAvailability();
+  }
+  deps.updateComputedAmount();
+}
+
+function bindSalesDraftEvents() {
+  dom.dateInput.addEventListener("change", () => {
+    persistSalesDraftFromDom();
+  });
+
+  dom.hospitalInput.addEventListener("input", () => {
+    persistSalesDraftFromDom();
+  });
+
+  dom.deliveryInput.addEventListener("input", () => {
+    persistSalesDraftFromDom();
+  });
+
+  if (dom.clearSalesDraftBtn instanceof HTMLButtonElement) {
+    dom.clearSalesDraftBtn.addEventListener("click", () => {
+      resetSalesFormAndDraft();
+    });
+  }
+}
+
+export function bindRecordEvents(nextState, nextDom, nextDeps) {
+bindContext(nextState, nextDom, nextDeps);
+if (typeof deps.loadSalesDraft === "function") {
+  applySalesDraftToDom(deps.loadSalesDraft());
+}
+bindSalesDraftEvents();
+dom.salesForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  deps.clearSalesError();
+
+  const data = {
+    date: String(dom.dateInput.value || "").trim(),
+    productId: String(dom.productSelect.value || "").trim(),
+    hospital: String(dom.hospitalInput.value || "").trim(),
+    quantity: String(dom.quantityInput.value || "").trim(),
+    delivery: String(dom.deliveryInput.value || "").trim(),
+  };
+
+  const selectedProduct = state.products.find((item) => item.id === data.productId);
+  const validationError = deps.validateSalesInput(data, selectedProduct);
+  if (validationError) {
+    deps.showSalesError(validationError);
+    return;
+  }
+
+  const quantityNum = Number(data.quantity);
+  const amount = deps.roundMoney(selectedProduct.unitPrice * quantityNum);
+
+  state.records.unshift({
+    id: deps.buildId(),
+    date: data.date,
+    productId: selectedProduct.id,
+    productName: selectedProduct.productName,
+    unitPriceSnapshot: selectedProduct.unitPrice,
+    hospital: data.hospital,
+    quantity: quantityNum,
+    amount,
+    delivery: data.delivery,
+  });
+
+  state.editingRowId = "";
+  deps.saveRecords();
+  renderRecords();
+  deps.updateComputedAmount();
+  persistSalesDraftFromDom();
+  deps.clearListError();
+  renderReportsIfAvailable();
+});
+
+dom.downloadTemplateBtn.addEventListener("click", async () => {
+  deps.clearListError();
+
+  try {
+    if (isExcelJsReady()) {
+      await downloadTemplateWithExcelJs();
+      return;
+    }
+    if (!isXlsxReady()) return;
+
+    const worksheet = XLSX.utils.aoa_to_sheet([IMPORT_HEADERS, IMPORT_GUIDE_ROW, TEMPLATE_SAMPLE_ROW]);
+    decorateImportTemplateSheet(worksheet);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "销售数据");
+    XLSX.writeFile(workbook, TEMPLATE_FILE_NAME);
+  } catch (_error) {
+    deps.showListError("模板生成失败，请稍后重试。");
+  }
+});
+
+dom.importExcelBtn.addEventListener("click", () => {
+  deps.clearListError();
+  if (!isXlsxReady()) return;
+  dom.importFileInput.click();
+});
+
+dom.importFileInput.addEventListener("change", async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  deps.clearListError();
+
+  if (!isXlsxReady()) {
+    dom.importFileInput.value = "";
+    return;
+  }
+
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    const failure = createImportFailure("仅支持 .xlsx 文件导入。", 0, {});
+    setImportResult(failure);
+    deps.showListError("仅支持 .xlsx 文件导入。");
+    dom.importFileInput.value = "";
+    return;
+  }
+
+  state.editingRowId = "";
+  renderRecords();
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, {
+      type: "array",
+      raw: true,
+      cellDates: false,
+    });
+
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+      const failure = createImportFailure("Excel 中未找到工作表。", 0, {});
+      setImportResult(failure);
+      deps.showListError("Excel 中未找到工作表。");
+      return;
+    }
+
+    const sheet = workbook.Sheets[firstSheetName];
+    const rawRows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: true,
+      defval: "",
+      blankrows: false,
+    });
+
+    if (!Array.isArray(rawRows) || rawRows.length === 0) {
+      const failure = createImportFailure("Excel 中没有可导入的数据。", 0, {});
+      setImportResult(failure);
+      deps.showListError("Excel 中没有可导入的数据。");
+      return;
+    }
+
+    if (!isValidImportHeader(rawRows[0]) || !isValidImportGuideRow(rawRows[1])) {
+      const failure = createImportFailure("模板版本不匹配，请点击“下载导入模板”获取最新版本后重试。", 2, {
+        列头: rawRows[0],
+        填写指引: rawRows[1],
+        模板版本: IMPORT_TEMPLATE_VERSION,
+      });
+      setImportResult(failure);
+      deps.showListError("模板版本不匹配，请点击“下载导入模板”获取最新版本后重试。");
+      return;
+    }
+
+    const dataRows = rawRows
+      .slice(IMPORT_DATA_START_INDEX)
+      .map((row, index) => ({
+        rowNumber: index + IMPORT_DATA_START_ROW,
+        cells: IMPORT_HEADERS.map((_, cellIndex) => (Array.isArray(row) ? row[cellIndex] : "")),
+      }))
+      .filter((item) => !isImportRowEmpty(item.cells));
+
+    if (dataRows.length === 0) {
+      const failure = createImportFailure("Excel 中没有可导入的数据行。", 0, {});
+      setImportResult(failure);
+      deps.showListError("Excel 中没有可导入的数据行。");
+      return;
+    }
+
+    const processResult = processImportRows(dataRows);
+    const { nextProducts, nextRecords, ...summary } = processResult;
+    setImportResult(summary);
+
+    if (summary.successRows > 0) {
+      state.products = nextProducts;
+      state.records = nextRecords;
+      deps.saveProducts();
+      deps.saveRecords();
+      deps.renderProductMaster();
+      deps.renderProductSelectOptions();
+      deps.updateSalesFormAvailability();
+      deps.updateComputedAmount();
+      renderRecords();
+      deps.clearListError();
+      renderReportsIfAvailable();
+    } else {
+      deps.showListError("未导入任何记录，请根据失败明细修正后重试。");
+    }
+  } catch (_error) {
+    const failure = createImportFailure("文件解析失败，请确认文件格式和内容。", 0, {});
+    setImportResult(failure);
+    deps.showListError("文件解析失败，请确认文件格式和内容。");
+  } finally {
+    dom.importFileInput.value = "";
+  }
+});
+
+dom.importResultEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+
+  const clickable = target.closest("[data-jump-target]");
+  if (!(clickable instanceof HTMLElement)) return;
+  if (clickable.classList.contains("import-stat-disabled")) return;
+
+  const targetId = clickable.dataset.jumpTarget;
+  if (!targetId) return;
+
+  const detailSection = dom.importResultEl.querySelector(`#${targetId}`);
+  if (!(detailSection instanceof HTMLElement)) return;
+
+  detailSection.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+dom.pageSizeSelect.addEventListener("change", () => {
+  const nextPageSize = Number(dom.pageSizeSelect.value);
+  if (!PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
+    dom.pageSizeSelect.value = String(state.pageSize);
+    return;
+  }
+
+  state.pageSize = nextPageSize;
+  state.currentPage = 1;
+  renderRecords();
+});
+
+dom.multiSelectToggleBtn.addEventListener("click", () => {
+  toggleMultiSelectMode();
+});
+
+dom.selectCurrentPageBtn.addEventListener("click", () => {
+  const pageRecords = getPagedRecords();
+  const shouldSelectAll = !isAllCurrentPageSelected(pageRecords);
+  toggleSelectCurrentPage(shouldSelectAll);
+});
+
+dom.deleteSelectedBtn.addEventListener("click", () => {
+  handleBatchDelete();
+});
+
+dom.clearAllRecordsBtn.addEventListener("click", () => {
+  handleClearAllRecords();
+});
+
+dom.prevPageBtn.addEventListener("click", () => {
+  if (state.currentPage <= 1) return;
+  state.currentPage -= 1;
+  renderRecords();
+});
+
+dom.nextPageBtn.addEventListener("click", () => {
+  const totalPages = getTotalPages();
+  if (state.currentPage >= totalPages) return;
+  state.currentPage += 1;
+  renderRecords();
+});
+
+dom.recordsHead.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.id !== "head-select-checkbox") return;
+
+  toggleSelectCurrentPage(target.checked);
+});
+
+dom.recordsHead.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target instanceof HTMLInputElement) return;
+
+  const sortable = target.closest("[data-sort-field]");
+  if (!(sortable instanceof HTMLElement)) return;
+
+  const field = String(sortable.dataset.sortField || "").trim();
+  if (!SORTABLE_RECORD_FIELDS.has(field)) return;
+
+  toggleSort(field);
+});
+
+dom.productSelect.addEventListener("change", () => {
+  deps.clearSalesError();
+  deps.updateComputedAmount();
+  persistSalesDraftFromDom();
+});
+
+dom.quantityInput.addEventListener("input", () => {
+  deps.clearSalesError();
+  deps.updateComputedAmount();
+  persistSalesDraftFromDom();
+});
+
+dom.recordsBody.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+
+  const id = target.dataset.id;
+  if (!id) return;
+
+  if (target.classList.contains("delete-record-btn")) {
+    state.records = state.records.filter((item) => item.id !== id);
+    state.selectedRecordIds.delete(id);
+    if (state.editingRowId === id) {
+      state.editingRowId = "";
+    }
+    deps.saveRecords();
+    renderRecords();
+    deps.clearListError();
+    renderReportsIfAvailable();
+    return;
+  }
+
+  if (target.classList.contains("edit-record-btn")) {
+    state.editingRowId = id;
+    deps.clearListError();
+    renderRecords();
+    return;
+  }
+
+  if (target.classList.contains("cancel-record-btn")) {
+    state.editingRowId = "";
+    deps.clearListError();
+    renderRecords();
+    return;
+  }
+
+  if (target.classList.contains("save-record-btn")) {
+    saveInlineEdit(id, target);
+  }
+});
+
+dom.recordsBody.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (!target.classList.contains("row-edit-quantity") && !target.classList.contains("row-edit-product")) return;
+
+  const row = target.closest("tr");
+  if (!(row instanceof HTMLTableRowElement)) return;
+  deps.clearListError();
+  updateInlineAmount(row);
+});
+
+dom.recordsBody.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.classList.contains("record-select-checkbox")) {
+    const id = target.dataset.id;
+    if (!id) return;
+    toggleSelectOne(id);
+    return;
+  }
+  if (!target.classList.contains("row-edit-quantity") && !target.classList.contains("row-edit-product")) return;
+
+  const row = target.closest("tr");
+  if (!(row instanceof HTMLTableRowElement)) return;
+  deps.clearListError();
+  updateInlineAmount(row);
+});
+
+dom.recordsBody.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+
+  const row = target.closest('tr[data-editing="true"]');
+  if (!(row instanceof HTMLTableRowElement)) return;
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const saveBtn = row.querySelector(".save-record-btn");
+    if (!(saveBtn instanceof HTMLElement)) return;
+
+    const id = saveBtn.dataset.id;
+    if (!id) return;
+
+    saveInlineEdit(id, saveBtn);
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    state.editingRowId = "";
+    deps.clearListError();
+    renderRecords();
+  }
+});
+
+}
+
+export function renderRecords(nextState, nextDom, nextDeps) {
+  bindContext(nextState, nextDom, nextDeps);
+  clearInvalidSelections();
+  clampCurrentPage();
+
+  const pageRecords = getPagedRecords();
+  renderRecordsHead(pageRecords);
+  renderListToolsState(pageRecords);
+  renderPagination();
+
+  if (state.records.length === 0 || pageRecords.length === 0) {
+    dom.recordsBody.innerHTML = `
+      <tr>
+        <td colspan="${getRecordsColumnCount()}" class="empty">暂无记录</td>
+      </tr>
+    `;
+    return;
+  }
+
+  dom.recordsBody.innerHTML = pageRecords
+    .map((record) => {
+      if (!state.isMultiSelectMode && record.id === state.editingRowId) {
+        return renderEditingRow(record);
+      }
+
+      if (state.isMultiSelectMode) {
+        const isSelected = state.selectedRecordIds.has(record.id);
+        return `
+        <tr class="${isSelected ? "selected-row" : ""}">
+          <td class="select-col">
+            <input class="record-select-checkbox" type="checkbox" data-id="${deps.escapeHtml(record.id)}" ${
+              isSelected ? "checked" : ""
+            } />
+          </td>
+          <td>${deps.escapeHtml(record.date)}</td>
+          <td>${deps.escapeHtml(record.productName)}</td>
+          <td>${deps.escapeHtml(record.hospital)}</td>
+          <td>${deps.escapeHtml(String(record.quantity))} 盒</td>
+          <td>${deps.escapeHtml(deps.formatMoney(record.amount))}</td>
+          <td>${deps.escapeHtml(record.delivery)}</td>
+        </tr>
+      `;
+      }
+
+      return `
+      <tr>
+        <td>${deps.escapeHtml(record.date)}</td>
+        <td>${deps.escapeHtml(record.productName)}</td>
+        <td>${deps.escapeHtml(record.hospital)}</td>
+        <td>${deps.escapeHtml(String(record.quantity))} 盒</td>
+        <td>${deps.escapeHtml(deps.formatMoney(record.amount))}</td>
+        <td>${deps.escapeHtml(record.delivery)}</td>
+        <td>
+          <div class="action-group">
+            <button class="edit-btn edit-record-btn" type="button" data-id="${deps.escapeHtml(record.id)}">编辑</button>
+            <button class="delete-btn delete-record-btn" type="button" data-id="${deps.escapeHtml(record.id)}">删除</button>
+          </div>
+        </td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+function renderRecordsHead(pageRecords) {
+  if (state.isMultiSelectMode) {
+    const allSelected = isAllCurrentPageSelected(pageRecords);
+    dom.recordsHead.innerHTML = `
+      <tr>
+        <th class="select-col">
+          <input id="head-select-checkbox" type="checkbox" ${allSelected ? "checked" : ""} ${
+            pageRecords.length === 0 ? "disabled" : ""
+          } />
+        </th>
+        ${buildSortableHeadCell("日期", "date")}
+        ${buildSortableHeadCell("产品/规格", "productName")}
+        ${buildSortableHeadCell("医院", "hospital")}
+        ${buildSortableHeadCell("采购数量", "quantity")}
+        ${buildSortableHeadCell("考核金额", "amount")}
+        ${buildSortableHeadCell("配送", "delivery")}
+      </tr>
+    `;
+    return;
+  }
+
+  dom.recordsHead.innerHTML = `
+    <tr>
+      ${buildSortableHeadCell("日期", "date")}
+      ${buildSortableHeadCell("产品/规格", "productName")}
+      ${buildSortableHeadCell("医院", "hospital")}
+      ${buildSortableHeadCell("采购数量", "quantity")}
+      ${buildSortableHeadCell("考核金额", "amount")}
+      ${buildSortableHeadCell("配送", "delivery")}
+      <th>操作</th>
+    </tr>
+  `;
+}
+
+function buildSortableHeadCell(label, field) {
+  const isActive = state.sortField === field;
+  const direction = isActive && state.sortDirection ? state.sortDirection : "";
+  const indicator = direction === "asc" ? "↑" : direction === "desc" ? "↓" : "";
+  const thClass = `sortable-th${isActive ? " sortable-th-active" : ""}`;
+  const ariaSort = direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none";
+
+  return `
+    <th class="${thClass}" data-sort-field="${deps.escapeHtml(field)}" aria-sort="${ariaSort}">
+      ${deps.escapeHtml(label)}
+      <span class="sort-indicator">${deps.escapeHtml(indicator)}</span>
+    </th>
+  `;
+}
+
+function renderListToolsState(pageRecords) {
+  if (dom.pageSizeSelect instanceof HTMLSelectElement) {
+    dom.pageSizeSelect.value = String(state.pageSize);
+  }
+
+  dom.multiSelectToggleBtn.textContent = state.isMultiSelectMode ? "退出多选" : "多选";
+
+  if (!state.isMultiSelectMode) {
+    dom.selectCurrentPageBtn.hidden = true;
+    dom.deleteSelectedBtn.hidden = true;
+    dom.clearAllRecordsBtn.hidden = true;
+    return;
+  }
+
+  dom.selectCurrentPageBtn.hidden = false;
+  dom.deleteSelectedBtn.hidden = false;
+  dom.clearAllRecordsBtn.hidden = false;
+
+  const allCurrentPageSelected = isAllCurrentPageSelected(pageRecords);
+  dom.selectCurrentPageBtn.textContent = allCurrentPageSelected ? "取消全选当前页" : "全选当前页";
+  dom.selectCurrentPageBtn.disabled = pageRecords.length === 0;
+
+  const selectedCount = state.selectedRecordIds.size;
+  dom.deleteSelectedBtn.textContent = `删除已选(${selectedCount})`;
+  dom.deleteSelectedBtn.disabled = selectedCount === 0;
+  dom.clearAllRecordsBtn.disabled = state.records.length === 0;
+}
+
+function renderPagination() {
+  const hasRecords = state.records.length > 0;
+  const totalPages = getTotalPages();
+
+  dom.pageInfoEl.textContent = hasRecords ? `第 ${state.currentPage} / ${totalPages} 页` : "第 1 / 1 页";
+  dom.prevPageBtn.disabled = !hasRecords || state.currentPage <= 1;
+  dom.nextPageBtn.disabled = !hasRecords || state.currentPage >= totalPages;
+}
+
+function getTotalPages() {
+  const total = Math.ceil(state.records.length / state.pageSize);
+  return total > 0 ? total : 1;
+}
+
+function clampCurrentPage() {
+  const totalPages = getTotalPages();
+  if (state.currentPage < 1) {
+    state.currentPage = 1;
+  } else if (state.currentPage > totalPages) {
+    state.currentPage = totalPages;
+  }
+}
+
+function getPagedRecords() {
+  const start = (state.currentPage - 1) * state.pageSize;
+  const sortedRecords = getSortedRecords();
+  return sortedRecords.slice(start, start + state.pageSize);
+}
+
+function getSortedRecords() {
+  if (!state.sortField || !state.sortDirection) {
+    return state.records;
+  }
+
+  const direction = state.sortDirection === "desc" ? -1 : 1;
+  return state.records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => {
+      const compared = compareRecordValue(left.record, right.record, state.sortField);
+      if (compared !== 0) {
+        return compared * direction;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.record);
+}
+
+function compareRecordValue(leftRecord, rightRecord, field) {
+  if (field === "quantity" || field === "amount") {
+    const leftValue = Number(leftRecord[field]);
+    const rightValue = Number(rightRecord[field]);
+    const safeLeft = Number.isFinite(leftValue) ? leftValue : 0;
+    const safeRight = Number.isFinite(rightValue) ? rightValue : 0;
+    return safeLeft - safeRight;
+  }
+
+  const leftText = String(leftRecord[field] || "").trim();
+  const rightText = String(rightRecord[field] || "").trim();
+  return leftText.localeCompare(rightText, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+}
+
+function toggleSort(field) {
+  if (!SORTABLE_RECORD_FIELDS.has(field)) return;
+
+  if (state.sortField !== field) {
+    state.sortField = field;
+    state.sortDirection = "asc";
+  } else if (state.sortDirection === "asc") {
+    state.sortDirection = "desc";
+  } else {
+    state.sortField = "";
+    state.sortDirection = "";
+  }
+
+  state.currentPage = 1;
+  renderRecords();
+}
+
+function getRecordsColumnCount() {
+  return state.isMultiSelectMode ? 7 : 7;
+}
+
+function isAllCurrentPageSelected(pageRecords) {
+  return pageRecords.length > 0 && pageRecords.every((record) => state.selectedRecordIds.has(record.id));
+}
+
+function clearInvalidSelections() {
+  const existingIds = new Set(state.records.map((record) => record.id));
+  for (const id of state.selectedRecordIds) {
+    if (!existingIds.has(id)) {
+      state.selectedRecordIds.delete(id);
+    }
+  }
+}
+
+function toggleMultiSelectMode() {
+  const enteringMultiSelect = !state.isMultiSelectMode;
+  if (enteringMultiSelect && state.editingRowId) {
+    state.editingRowId = "";
+  }
+
+  state.isMultiSelectMode = enteringMultiSelect;
+  if (!state.isMultiSelectMode) {
+    state.selectedRecordIds.clear();
+  }
+
+  deps.clearListError();
+  renderRecords();
+}
+
+function toggleSelectOne(recordId) {
+  if (state.selectedRecordIds.has(recordId)) {
+    state.selectedRecordIds.delete(recordId);
+  } else {
+    state.selectedRecordIds.add(recordId);
+  }
+
+  renderRecords();
+}
+
+function toggleSelectCurrentPage(selectAll) {
+  const pageRecords = getPagedRecords();
+  for (const record of pageRecords) {
+    if (selectAll) {
+      state.selectedRecordIds.add(record.id);
+    } else {
+      state.selectedRecordIds.delete(record.id);
+    }
+  }
+
+  renderRecords();
+}
+
+function handleBatchDelete() {
+  const selectedCount = state.selectedRecordIds.size;
+  if (selectedCount === 0) {
+    deps.showListError("请先选择记录。");
+    return;
+  }
+
+  const confirmed = window.confirm(`确定删除已选 ${selectedCount} 条记录？`);
+  if (!confirmed) return;
+
+  state.records = state.records.filter((record) => !state.selectedRecordIds.has(record.id));
+  state.selectedRecordIds.clear();
+  state.editingRowId = "";
+
+  deps.saveRecords();
+  deps.clearListError();
+  renderRecords();
+  renderReportsIfAvailable();
+}
+
+function handleClearAllRecords() {
+  if (state.records.length === 0) {
+    deps.showListError("当前没有可清空的记录。");
+    return;
+  }
+
+  const confirmed = window.confirm(`确定清空全部 ${state.records.length} 条记录？此操作不可撤销。`);
+  if (!confirmed) return;
+
+  state.records = [];
+  state.selectedRecordIds.clear();
+  state.editingRowId = "";
+
+  deps.saveRecords();
+  deps.clearListError();
+  renderRecords();
+  renderReportsIfAvailable();
+}
+
+function renderEditingRow(record) {
+  const selectedProductId = state.products.some((item) => item.id === record.productId) ? record.productId : "";
+  const productOptions = buildProductOptions(selectedProductId);
+  const currentProduct = state.products.find((item) => item.id === selectedProductId);
+  const amountText = currentProduct
+    ? deps.formatMoney(deps.roundMoney(currentProduct.unitPrice * record.quantity))
+    : "-";
+
+  return `
+    <tr data-editing="true">
+      <td>
+        <input class="row-edit-input" data-field="date" type="date" value="${deps.escapeHtml(record.date)}" />
+      </td>
+      <td>
+        <select class="row-edit-select row-edit-product" data-field="productId">
+          ${productOptions}
+        </select>
+      </td>
+      <td>
+        <input class="row-edit-input" data-field="hospital" type="text" value="${deps.escapeHtml(record.hospital)}" />
+      </td>
+      <td>
+        <input class="row-edit-input row-edit-quantity" data-field="quantity" type="text" inputmode="decimal" value="${deps.escapeHtml(String(record.quantity))}" />
+      </td>
+      <td>
+        <span class="row-edit-amount">${deps.escapeHtml(amountText)}</span>
+      </td>
+      <td>
+        <input class="row-edit-input" data-field="delivery" type="text" value="${deps.escapeHtml(record.delivery)}" />
+      </td>
+      <td>
+        <div class="action-group">
+          <button class="save-btn save-record-btn" type="button" data-id="${deps.escapeHtml(record.id)}">保存</button>
+          <button class="cancel-btn cancel-record-btn" type="button" data-id="${deps.escapeHtml(record.id)}">取消</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function buildProductOptions(selectedId) {
+  const options = ['<option value="">请选择产品/规格</option>'].concat(
+    state.products.map((item) => {
+      const selected = item.id === selectedId ? " selected" : "";
+      return `<option value="${deps.escapeHtml(item.id)}"${selected}>${deps.escapeHtml(item.productName)}</option>`;
+    }),
+  );
+
+  return options.join("");
+}
+
+function saveInlineEdit(id, trigger) {
+  const row = trigger.closest("tr");
+  if (!(row instanceof HTMLTableRowElement)) return;
+
+  const data = {
+    date: getRowFieldValue(row, "date"),
+    productId: getRowFieldValue(row, "productId"),
+    hospital: getRowFieldValue(row, "hospital"),
+    quantity: getRowFieldValue(row, "quantity"),
+    delivery: getRowFieldValue(row, "delivery"),
+  };
+
+  const selectedProduct = state.products.find((item) => item.id === data.productId);
+  const validationError = deps.validateSalesInput(data, selectedProduct);
+  if (validationError) {
+    deps.showListError(validationError);
+    return;
+  }
+
+  const quantityNum = Number(data.quantity);
+  const amount = deps.roundMoney(selectedProduct.unitPrice * quantityNum);
+
+  state.records = state.records.map((record) => {
+    if (record.id !== id) return record;
+
+    return {
+      ...record,
+      date: data.date,
+      productId: selectedProduct.id,
+      productName: selectedProduct.productName,
+      unitPriceSnapshot: selectedProduct.unitPrice,
+      hospital: data.hospital,
+      quantity: quantityNum,
+      amount,
+      delivery: data.delivery,
+    };
+  });
+
+  state.editingRowId = "";
+  deps.saveRecords();
+  deps.clearListError();
+  renderRecords();
+  renderReportsIfAvailable();
+}
+
+function getRowFieldValue(row, fieldName) {
+  const field = row.querySelector(`[data-field="${fieldName}"]`);
+  if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLSelectElement)) {
+    return "";
+  }
+
+  return String(field.value || "").trim();
+}
+
+function updateInlineAmount(row) {
+  const productId = getRowFieldValue(row, "productId");
+  const quantityRaw = getRowFieldValue(row, "quantity");
+  const amountEl = row.querySelector(".row-edit-amount");
+
+  if (!(amountEl instanceof HTMLElement)) return;
+
+  const selectedProduct = state.products.find((item) => item.id === productId);
+  const quantityNum = Number(quantityRaw);
+
+  if (!selectedProduct || !Number.isInteger(quantityNum) || quantityNum === 0) {
+    amountEl.textContent = "-";
+    return;
+  }
+
+  amountEl.textContent = deps.formatMoney(deps.roundMoney(selectedProduct.unitPrice * quantityNum));
+}
+
+function processImportRows(dataRows) {
+  const nextProducts = state.products.map((item) => ({ ...item }));
+  const nextRecords = state.records.map((item) => ({ ...item }));
+
+  const productNameMap = new Map();
+  for (const product of nextProducts) {
+    const key = deps.normalizeText(product.productName);
+    if (key && !productNameMap.has(key)) {
+      productNameMap.set(key, product);
+    }
+  }
+
+  const duplicateSourceMap = new Map();
+  nextRecords.forEach((record, index) => {
+    const normalizedName = deps.normalizeText(record.productName);
+    const mappedProduct = productNameMap.get(normalizedName);
+    const fallbackKey = record.productId || (mappedProduct ? mappedProduct.id : `name:${normalizedName}`);
+    const duplicateKey = buildDuplicateKey(record.date, fallbackKey, record.hospital, record.delivery, record.quantity);
+    if (!duplicateSourceMap.has(duplicateKey)) {
+      duplicateSourceMap.set(duplicateKey, { type: "existing", recordIndex: index + 1 });
+    }
+  });
+
+  const summary = {
+    totalRows: dataRows.length,
+    successRows: 0,
+    failedRows: 0,
+    duplicateDetectedRows: 0,
+    autoCreatedProducts: 0,
+    autoCreatedProductNames: [],
+    errors: [],
+    duplicates: [],
+  };
+
+  for (const rowInfo of dataRows) {
+    const parsed = normalizeImportDataRow(rowInfo.rowNumber, rowInfo.cells);
+    if (!parsed.ok) {
+      summary.errors.push(parsed.error);
+      continue;
+    }
+
+    const data = parsed.data;
+    const productKey = deps.normalizeText(data.productName);
+    let product = productNameMap.get(productKey);
+
+    if (!product) {
+      product = {
+        id: deps.buildId(),
+        productName: data.productName,
+        unitPrice: 0,
+      };
+      nextProducts.unshift(product);
+      productNameMap.set(productKey, product);
+      summary.autoCreatedProducts += 1;
+      summary.autoCreatedProductNames.push(product.productName);
+    }
+
+    const duplicateKey = buildDuplicateKey(data.date, product.id, data.hospital, data.delivery, data.quantity);
+    const duplicateSource = duplicateSourceMap.get(duplicateKey);
+    if (duplicateSource) {
+      summary.duplicates.push(
+        buildImportError(rowInfo.rowNumber, buildDuplicateReason(duplicateSource), {
+          日期: data.date,
+          "产品/规格": product.productName,
+          医院: data.hospital,
+          "采购数量（盒）": data.quantity,
+          配送: data.delivery,
+        }),
+      );
+    } else {
+      duplicateSourceMap.set(duplicateKey, { type: "import", rowNumber: rowInfo.rowNumber });
+    }
+
+    nextRecords.unshift({
+      id: deps.buildId(),
+      date: data.date,
+      productId: product.id,
+      productName: product.productName,
+      unitPriceSnapshot: product.unitPrice,
+      hospital: data.hospital,
+      quantity: data.quantity,
+      amount: deps.roundMoney(product.unitPrice * data.quantity),
+      delivery: data.delivery,
+    });
+
+    summary.successRows += 1;
+  }
+
+  summary.failedRows = summary.errors.length;
+  summary.duplicateDetectedRows = summary.duplicates.length;
+
+  return {
+    ...summary,
+    nextProducts,
+    nextRecords,
+  };
+}
+
+function normalizeImportDataRow(rowNumber, cells) {
+  const rawRow = {
+    日期: cells[0],
+    "产品/规格": cells[1],
+    医院: cells[2],
+    "采购数量（盒）": cells[3],
+    配送: cells[4],
+  };
+
+  const date = normalizeImportDate(cells[0]);
+  if (!date) {
+    return {
+      ok: false,
+      error: buildImportError(rowNumber, "日期格式不正确或为空。", rawRow),
+    };
+  }
+
+  const productName = String(cells[1] || "").trim();
+  if (!productName) {
+    return {
+      ok: false,
+      error: buildImportError(rowNumber, "产品/规格不能为空。", rawRow),
+    };
+  }
+
+  const hospital = String(cells[2] || "").trim();
+  if (!hospital) {
+    return {
+      ok: false,
+      error: buildImportError(rowNumber, "医院不能为空。", rawRow),
+    };
+  }
+
+  const quantity = normalizeImportQuantity(cells[3]);
+  if (quantity === null) {
+    return {
+      ok: false,
+      error: buildImportError(rowNumber, "采购数量必须为非 0 整数（可为负数）。", rawRow),
+    };
+  }
+
+  const delivery = String(cells[4] || "").trim();
+  if (!delivery) {
+    return {
+      ok: false,
+      error: buildImportError(rowNumber, "配送不能为空。", rawRow),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      date,
+      productName,
+      hospital,
+      quantity,
+      delivery,
+    },
+  };
+}
+
+function normalizeImportDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return deps.formatDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return parseExcelSerialToDate(value);
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^\d+(\.0+)?$/.test(raw)) {
+    return parseExcelSerialToDate(Number(raw));
+  }
+
+  const directMatch = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (directMatch) {
+    const year = Number(directMatch[1]);
+    const month = Number(directMatch[2]);
+    const day = Number(directMatch[3]);
+    if (!deps.isValidDateParts(year, month, day)) return "";
+    return deps.formatDate(year, month, day);
+  }
+
+  const parsedDate = new Date(raw);
+  if (Number.isNaN(parsedDate.getTime())) return "";
+
+  return deps.formatDate(parsedDate.getFullYear(), parsedDate.getMonth() + 1, parsedDate.getDate());
+}
+
+function parseExcelSerialToDate(serialValue) {
+  if (!Number.isFinite(serialValue) || serialValue <= 0) return "";
+  if (typeof XLSX === "undefined" || !XLSX.SSF || typeof XLSX.SSF.parse_date_code !== "function") return "";
+
+  const parsed = XLSX.SSF.parse_date_code(serialValue);
+  if (!parsed || !parsed.y || !parsed.m || !parsed.d) return "";
+  if (!deps.isValidDateParts(parsed.y, parsed.m, parsed.d)) return "";
+
+  return deps.formatDate(parsed.y, parsed.m, parsed.d);
+}
+
+function normalizeImportQuantity(value) {
+  let quantityNum;
+
+  if (typeof value === "number") {
+    quantityNum = value;
+  } else {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+    quantityNum = Number(raw);
+  }
+
+  if (!Number.isFinite(quantityNum)) return null;
+  if (!Number.isInteger(quantityNum)) return null;
+  if (quantityNum === 0) return null;
+
+  return quantityNum;
+}
+
+function isValidImportHeader(headerRow) {
+  const normalized = normalizeImportTemplateRow(headerRow);
+  if (normalized.length !== IMPORT_HEADERS.length) return false;
+  return IMPORT_HEADERS.every((header, index) => normalized[index] === header);
+}
+
+function isValidImportGuideRow(guideRow) {
+  const normalized = normalizeImportTemplateRow(guideRow);
+  if (normalized.length !== IMPORT_GUIDE_ROW.length) return false;
+  return IMPORT_GUIDE_ROW.every((guide, index) => normalized[index] === guide);
+}
+
+function normalizeImportTemplateRow(row) {
+  if (!Array.isArray(row)) return [];
+
+  const normalized = row.map((item) => String(item || "").trim());
+  while (normalized.length > 0 && normalized[normalized.length - 1] === "") {
+    normalized.pop();
+  }
+  return normalized;
+}
+
+function isImportRowEmpty(cells) {
+  return cells.every((cell) => String(cell ?? "").trim() === "");
+}
+
+function buildDuplicateKey(date, productKey, hospital, delivery, quantity) {
+  return [
+    String(date || "").trim(),
+    String(productKey || "").trim(),
+    deps.normalizeText(hospital),
+    deps.normalizeText(delivery),
+    String(quantity || "").trim(),
+  ].join("|");
+}
+
+function buildDuplicateReason(duplicateSource) {
+  if (duplicateSource && duplicateSource.type === "import" && Number.isFinite(duplicateSource.rowNumber)) {
+    return `与第 ${duplicateSource.rowNumber} 行重复（已允许导入）。`;
+  }
+
+  if (duplicateSource && duplicateSource.type === "existing" && Number.isFinite(duplicateSource.recordIndex)) {
+    return `与现有记录第 ${duplicateSource.recordIndex} 条重复（已允许导入）。`;
+  }
+
+  return "与现有或本次已导入记录重复（已允许导入）。";
+}
+
+function buildImportError(rowNumber, reason, rawRow) {
+  return {
+    rowNumber,
+    reason,
+    rawRow,
+  };
+}
+
+function createImportFailure(reason, rowNumber, rawRow) {
+  return {
+    totalRows: 0,
+    successRows: 0,
+    failedRows: 1,
+    duplicateDetectedRows: 0,
+    autoCreatedProducts: 0,
+    autoCreatedProductNames: [],
+    errors: [
+      {
+        rowNumber,
+        reason,
+        rawRow,
+      },
+    ],
+    duplicates: [],
+  };
+}
+
+function setImportResult(result) {
+  state.importResult = result;
+  renderImportResult();
+}
+
+export function clearImportResult(nextState, nextDom, nextDeps) {
+  bindContext(nextState, nextDom, nextDeps);
+  state.importResult = null;
+  dom.importResultEl.hidden = true;
+  dom.importResultEl.innerHTML = "";
+}
+
+function renderImportResult() {
+  if (!state.importResult) {
+    clearImportResult();
+    return;
+  }
+
+  dom.importResultEl.hidden = false;
+
+  const hasFailures = state.importResult.failedRows > 0;
+  const hasDuplicates = state.importResult.duplicateDetectedRows > 0;
+  const hasAutoCreated = state.importResult.autoCreatedProducts > 0;
+  const title = hasFailures ? "导入完成（含失败）" : "导入完成";
+
+  const errorsPreview = state.importResult.errors.slice(0, IMPORT_DETAIL_PREVIEW_LIMIT);
+  const duplicatesPreview = state.importResult.duplicates.slice(0, IMPORT_DETAIL_PREVIEW_LIMIT);
+  const autoCreatedPreview = state.importResult.autoCreatedProductNames.slice(0, IMPORT_DETAIL_PREVIEW_LIMIT);
+
+  const failureSection =
+    hasFailures
+      ? `
+      <div class="import-detail-section" id="import-failures">
+        <div class="import-detail-title">失败明细</div>
+        <ul class="import-detail-list">
+          ${errorsPreview
+            .map((item) => {
+              const rowText = item.rowNumber > 0 ? `第 ${item.rowNumber} 行` : "文件级错误";
+              return `<li>${deps.escapeHtml(rowText)}：${deps.escapeHtml(item.reason)}</li>`;
+            })
+            .join("")}
+          ${
+            state.importResult.errors.length > IMPORT_DETAIL_PREVIEW_LIMIT
+              ? `<li>其余 ${deps.escapeHtml(
+                  String(state.importResult.errors.length - IMPORT_DETAIL_PREVIEW_LIMIT),
+                )} 条失败请修正后重试。</li>`
+              : ""
+          }
+        </ul>
+      </div>
+    `
+      : "";
+
+  const duplicateSection =
+    hasDuplicates
+      ? `
+      <div class="import-detail-section" id="import-duplicates">
+        <div class="import-detail-title">重复检测明细（已导入）</div>
+        <ul class="import-detail-list">
+          ${duplicatesPreview
+            .map((item) => `<li>第 ${deps.escapeHtml(String(item.rowNumber))} 行：${deps.escapeHtml(item.reason)}</li>`)
+            .join("")}
+          ${
+            state.importResult.duplicates.length > IMPORT_DETAIL_PREVIEW_LIMIT
+              ? `<li>其余 ${deps.escapeHtml(
+                  String(state.importResult.duplicates.length - IMPORT_DETAIL_PREVIEW_LIMIT),
+                )} 条重复已省略展示。</li>`
+              : ""
+          }
+        </ul>
+      </div>
+    `
+      : "";
+
+  const autoCreatedSection =
+    hasAutoCreated
+      ? `
+      <div class="import-detail-section" id="import-auto-created">
+        <div class="import-detail-title">自动新增产品明细</div>
+        <ul class="import-detail-list">
+          ${autoCreatedPreview.map((name) => `<li>${deps.escapeHtml(name)}</li>`).join("")}
+          ${
+            state.importResult.autoCreatedProductNames.length > IMPORT_DETAIL_PREVIEW_LIMIT
+              ? `<li>其余 ${deps.escapeHtml(
+                  String(state.importResult.autoCreatedProductNames.length - IMPORT_DETAIL_PREVIEW_LIMIT),
+                )} 个产品已省略展示。</li>`
+              : ""
+          }
+        </ul>
+      </div>
+    `
+      : "";
+
+  dom.importResultEl.innerHTML = `
+    <div class="import-result-title">${deps.escapeHtml(title)}</div>
+    <div class="import-result-stats">
+      <span class="import-stat">
+        <span class="import-icon">#</span>
+        总行数 ${deps.escapeHtml(String(state.importResult.totalRows))}
+      </span>
+      <span class="import-stat import-stat-success">
+        <span class="import-icon icon-check">✓</span>
+        成功 ${deps.escapeHtml(String(state.importResult.successRows))}
+      </span>
+      <button class="import-stat import-stat-error ${
+        hasFailures ? "import-stat-clickable" : "import-stat-disabled"
+      }" type="button" ${hasFailures ? 'data-jump-target="import-failures"' : "disabled"}>
+        <span class="import-icon icon-cross">✕</span>
+        失败 ${deps.escapeHtml(String(state.importResult.failedRows))}
+      </button>
+      <button class="import-stat import-stat-warning ${
+        hasDuplicates ? "import-stat-clickable" : "import-stat-disabled"
+      }" type="button" ${hasDuplicates ? 'data-jump-target="import-duplicates"' : "disabled"}>
+        <span class="import-icon icon-warn">!</span>
+        重复 ${deps.escapeHtml(String(state.importResult.duplicateDetectedRows))}
+      </button>
+      <button class="import-stat import-stat-warning ${
+        hasAutoCreated ? "import-stat-clickable" : "import-stat-disabled"
+      }" type="button" ${hasAutoCreated ? 'data-jump-target="import-auto-created"' : "disabled"}>
+        <span class="import-icon icon-warn">!</span>
+        自动新增产品 ${deps.escapeHtml(String(state.importResult.autoCreatedProducts))}
+      </button>
+    </div>
+    ${failureSection}
+    ${duplicateSection}
+    ${autoCreatedSection}
+  `;
+}
+
+function isExcelJsReady() {
+  return typeof ExcelJS !== "undefined" && ExcelJS && typeof ExcelJS.Workbook === "function";
+}
+
+async function downloadTemplateWithExcelJs() {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("销售数据", {
+    views: [{ state: "frozen", xSplit: 0, ySplit: IMPORT_DATA_START_INDEX }],
+  });
+
+  worksheet.columns = TEMPLATE_COL_CONFIG.map((item) => ({ width: item.wch }));
+  worksheet.autoFilter = {
+    from: "A1",
+    to: `${encodeImportCol(IMPORT_HEADERS.length - 1)}1`,
+  };
+
+  worksheet.addRow(IMPORT_HEADERS);
+  worksheet.addRow(IMPORT_GUIDE_ROW);
+  worksheet.addRow(TEMPLATE_SAMPLE_ROW);
+  for (let i = 0; i < TEMPLATE_INPUT_AREA_ROW_COUNT; i += 1) {
+    worksheet.addRow(["", "", "", "", ""]);
+  }
+
+  worksheet.getRow(1).height = 24;
+  worksheet.getRow(2).height = 34;
+  worksheet.getRow(3).height = 22;
+  for (let rowNum = TEMPLATE_INPUT_AREA_START_ROW; rowNum <= TEMPLATE_INPUT_AREA_END_ROW; rowNum += 1) {
+    worksheet.getRow(rowNum).height = 21;
+  }
+
+  const headerStyle = {
+    font: { name: "Microsoft YaHei", bold: true, size: 11, color: { argb: "FFFFFFFF" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FF2F5597" } },
+    alignment: { horizontal: "center", vertical: "middle", wrapText: true },
+    border: buildExcelJsBorder("FF1F3864", "medium"),
+  };
+  const guideStyle = {
+    font: { name: "Microsoft YaHei", size: 10, color: { argb: "FF7F6000" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } },
+    alignment: { horizontal: "left", vertical: "middle", wrapText: true },
+    border: buildExcelJsBorder("FFE0C58F", "thin"),
+  };
+  const sampleStyle = {
+    font: { name: "Microsoft YaHei", size: 10, color: { argb: "FF4B5563" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FA" } },
+    border: buildExcelJsBorder("FFC9D2E3", "thin"),
+  };
+  const inputStyle = {
+    font: { name: "Microsoft YaHei", size: 11, color: { argb: "FF1F2937" } },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FBFF" } },
+    border: buildExcelJsBorder("FFD8E2F1", "thin"),
+  };
+
+  worksheet.getCell("A3").value = new Date(2026, 0, 1);
+  worksheet.getCell("B3").value = TEMPLATE_SAMPLE_ROW[1];
+  worksheet.getCell("C3").value = TEMPLATE_SAMPLE_ROW[2];
+  worksheet.getCell("D3").value = Number(TEMPLATE_SAMPLE_ROW[3]);
+  worksheet.getCell("E3").value = TEMPLATE_SAMPLE_ROW[4];
+
+  for (let colIndex = 1; colIndex <= IMPORT_HEADERS.length; colIndex += 1) {
+    const colConfig = TEMPLATE_COL_CONFIG[colIndex - 1] || {};
+    const align = mapExcelJsHorizontalAlign(colConfig.align);
+
+    const headerCell = worksheet.getRow(1).getCell(colIndex);
+    headerCell.style = {
+      ...headerStyle,
+      alignment: { ...headerStyle.alignment },
+      border: { ...headerStyle.border },
+      font: { ...headerStyle.font },
+      fill: { ...headerStyle.fill },
+    };
+
+    const guideCell = worksheet.getRow(2).getCell(colIndex);
+    guideCell.style = {
+      ...guideStyle,
+      alignment: { ...guideStyle.alignment },
+      border: { ...guideStyle.border },
+      font: { ...guideStyle.font },
+      fill: { ...guideStyle.fill },
+    };
+
+    const sampleCell = worksheet.getRow(3).getCell(colIndex);
+    sampleCell.style = {
+      ...sampleStyle,
+      alignment: {
+        horizontal: align,
+        vertical: "middle",
+      },
+    };
+    if (colConfig.numFmt) {
+      sampleCell.numFmt = colConfig.numFmt;
+    }
+
+    for (let rowNum = TEMPLATE_INPUT_AREA_START_ROW; rowNum <= TEMPLATE_INPUT_AREA_END_ROW; rowNum += 1) {
+      const cell = worksheet.getRow(rowNum).getCell(colIndex);
+      cell.style = {
+        ...inputStyle,
+        alignment: {
+          horizontal: align,
+          vertical: "middle",
+        },
+      };
+      if (colConfig.numFmt) {
+        cell.numFmt = colConfig.numFmt;
+      }
+    }
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  triggerExcelTemplateDownload(buffer, TEMPLATE_FILE_NAME);
+}
+
+function buildExcelJsBorder(colorArgb, lineStyle) {
+  const border = { style: lineStyle, color: { argb: colorArgb } };
+  return {
+    top: border,
+    right: border,
+    bottom: border,
+    left: border,
+  };
+}
+
+function mapExcelJsHorizontalAlign(align) {
+  return align === "center" ? "center" : "left";
+}
+
+function triggerExcelTemplateDownload(buffer, fileName) {
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function decorateImportTemplateSheet(worksheet) {
+  if (!worksheet || typeof worksheet !== "object") return;
+
+  worksheet["!cols"] = TEMPLATE_COL_CONFIG.map((item) => ({ wch: item.wch }));
+  const rowsConfig = Array.from({ length: TEMPLATE_INPUT_AREA_END_ROW }, () => ({ hpt: 21 }));
+  rowsConfig[0] = { hpt: 24 };
+  rowsConfig[1] = { hpt: 34 };
+  rowsConfig[2] = { hpt: 22 };
+  worksheet["!rows"] = rowsConfig;
+  worksheet["!autofilter"] = { ref: `A1:${encodeImportCol(IMPORT_HEADERS.length - 1)}1` };
+  worksheet["!freeze"] = {
+    xSplit: 0,
+    ySplit: IMPORT_DATA_START_INDEX,
+    topLeftCell: `A${IMPORT_DATA_START_ROW}`,
+    activePane: "bottomLeft",
+    state: "frozen",
+  };
+
+  const headerStyle = {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+    fill: { patternType: "solid", fgColor: { rgb: "2F5597" } },
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border: buildTemplateBorder("1F3864", "medium"),
+  };
+  const guideStyle = {
+    font: { color: { rgb: "7F6000" }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: "FFF2CC" } },
+    alignment: { horizontal: "left", vertical: "center", wrapText: true },
+    border: buildTemplateBorder("E0C58F", "thin"),
+  };
+  const sampleBaseStyle = {
+    font: { color: { rgb: "4B5563" }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: "F5F7FA" } },
+    border: buildTemplateBorder("C9D2E3", "thin"),
+  };
+  const inputAreaBaseStyle = {
+    font: { color: { rgb: "1F2937" }, sz: 11 },
+    fill: { patternType: "solid", fgColor: { rgb: "F8FBFF" } },
+    border: buildTemplateBorder("D8E2F1", "thin"),
+  };
+
+  for (let colIndex = 0; colIndex < IMPORT_HEADERS.length; colIndex += 1) {
+    const colRef = encodeImportCol(colIndex);
+    const headerCell = worksheet[`${colRef}1`];
+    const guideCell = worksheet[`${colRef}2`];
+    const sampleCell = worksheet[`${colRef}${IMPORT_DATA_START_ROW}`];
+    const colConfig = TEMPLATE_COL_CONFIG[colIndex] || {};
+
+    if (headerCell) headerCell.s = headerStyle;
+    if (guideCell) guideCell.s = guideStyle;
+
+    if (sampleCell) {
+      sampleCell.s = {
+        ...sampleBaseStyle,
+        alignment: {
+          horizontal: colConfig.align || "left",
+          vertical: "center",
+        },
+      };
+      if (colConfig.numFmt) {
+        sampleCell.z = colConfig.numFmt;
+      }
+    }
+  }
+
+  for (let rowNumber = TEMPLATE_INPUT_AREA_START_ROW; rowNumber <= TEMPLATE_INPUT_AREA_END_ROW; rowNumber += 1) {
+    for (let colIndex = 0; colIndex < IMPORT_HEADERS.length; colIndex += 1) {
+      const colRef = encodeImportCol(colIndex);
+      const cellAddress = `${colRef}${rowNumber}`;
+      const colConfig = TEMPLATE_COL_CONFIG[colIndex] || {};
+      let cell = worksheet[cellAddress];
+      if (!cell) {
+        cell = { t: "s", v: "" };
+        worksheet[cellAddress] = cell;
+      }
+
+      cell.s = {
+        ...inputAreaBaseStyle,
+        alignment: {
+          horizontal: colConfig.align || "left",
+          vertical: "center",
+        },
+      };
+      if (colConfig.numFmt) {
+        cell.z = colConfig.numFmt;
+      }
+    }
+  }
+
+  const sampleDateCellAddress = `A${IMPORT_DATA_START_ROW}`;
+  const sampleDateCell = worksheet[sampleDateCellAddress];
+  const dateSerial = convertTemplateDateTextToExcelSerial(TEMPLATE_SAMPLE_ROW[0]);
+  if (sampleDateCell && dateSerial !== null) {
+    sampleDateCell.t = "n";
+    sampleDateCell.v = dateSerial;
+    sampleDateCell.z = TEMPLATE_COL_CONFIG[0].numFmt;
+  }
+
+  const sampleQuantityCellAddress = `D${IMPORT_DATA_START_ROW}`;
+  const sampleQuantityCell = worksheet[sampleQuantityCellAddress];
+  if (sampleQuantityCell && Number.isFinite(Number(sampleQuantityCell.v))) {
+    sampleQuantityCell.t = "n";
+    sampleQuantityCell.v = Number(sampleQuantityCell.v);
+    sampleQuantityCell.z = TEMPLATE_COL_CONFIG[3].numFmt;
+  }
+}
+
+function buildTemplateBorder(colorHex, lineStyle = "thin") {
+  const border = { style: lineStyle, color: { rgb: colorHex } };
+  return {
+    top: border,
+    right: border,
+    bottom: border,
+    left: border,
+  };
+}
+
+function encodeImportCol(index) {
+  if (typeof XLSX !== "undefined" && XLSX.utils && typeof XLSX.utils.encode_col === "function") {
+    return XLSX.utils.encode_col(index);
+  }
+  return String.fromCharCode(65 + index);
+}
+
+function convertTemplateDateTextToExcelSerial(dateText) {
+  const text = String(dateText || "").trim();
+  const matched = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!matched) return null;
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  if (!deps.isValidDateParts(year, month, day)) return null;
+
+  const excelEpochUtc = Date.UTC(1899, 11, 30);
+  const targetUtc = Date.UTC(year, month - 1, day);
+  return (targetUtc - excelEpochUtc) / 86400000;
+}
+
+function isXlsxReady() {
+  if (typeof XLSX !== "undefined") return true;
+  deps.showListError("Excel 组件未加载，请刷新页面后重试。");
+  return false;
+}
