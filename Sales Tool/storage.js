@@ -4,6 +4,8 @@ export const TARGETS_STORAGE_KEY = "sales_targets_v1";
 export const SALES_DRAFT_STORAGE_KEY = "sales_form_draft_v1";
 export const REPORT_RANGE_STORAGE_KEY = "sales_report_range_v1";
 export const REPORT_CHART_PALETTE_STORAGE_KEY = "sales_report_chart_palette_v1";
+export const REPORT_CHART_DATA_LABEL_STORAGE_KEY = "sales_report_chart_data_label_v1";
+export const REPORT_AMOUNT_UNIT_STORAGE_KEY = "sales_report_amount_unit_v1";
 export const TARGETS_VERSION = 1;
 export const TARGET_METRIC_TYPE = "amount";
 export const TARGET_QUARTERS = [
@@ -113,6 +115,59 @@ export function saveReportChartPalette(paletteId) {
   const normalized = String(paletteId || "").trim();
   if (!normalized) return;
   localStorage.setItem(REPORT_CHART_PALETTE_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+export function loadReportChartDataLabelMode(defaultMode) {
+  const fallback = normalizeReportChartDataLabelModePayload(defaultMode);
+  const raw = localStorage.getItem(REPORT_CHART_DATA_LABEL_STORAGE_KEY);
+  if (!raw) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") {
+      return normalizeReportChartDataLabelModePayload(parsed);
+    }
+    if (typeof parsed === "boolean") {
+      return parsed ? "compact" : "none";
+    }
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.mode === "string") {
+        return normalizeReportChartDataLabelModePayload(parsed.mode);
+      }
+      if (typeof parsed.enabled === "boolean") {
+        return parsed.enabled ? "compact" : "none";
+      }
+    }
+    return fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+export function saveReportChartDataLabelMode(mode) {
+  const normalized = normalizeReportChartDataLabelModePayload(mode);
+  localStorage.setItem(REPORT_CHART_DATA_LABEL_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+export function loadReportAmountUnit(defaultUnitId) {
+  const fallback = String(defaultUnitId || "").trim() || "yuan";
+  const raw = localStorage.getItem(REPORT_AMOUNT_UNIT_STORAGE_KEY);
+  if (!raw) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const value = typeof parsed === "string" ? parsed : parsed && parsed.unitId;
+    const normalized = String(value || "").trim();
+    return normalized || fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+export function saveReportAmountUnit(unitId) {
+  const normalized = String(unitId || "").trim();
+  if (!normalized) return;
+  localStorage.setItem(REPORT_AMOUNT_UNIT_STORAGE_KEY, JSON.stringify(normalized));
 }
 
 export function loadTargets() {
@@ -398,4 +453,12 @@ function normalizeReportRangePayload(payload, fallback = null) {
 function normalizeYmText(value) {
   const text = String(value || "").trim();
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(text) ? text : "";
+}
+
+function normalizeReportChartDataLabelModePayload(raw) {
+  const value = String(raw || "").trim();
+  if (value === "none" || value === "compact" || value === "emphasis") {
+    return value;
+  }
+  return "none";
 }

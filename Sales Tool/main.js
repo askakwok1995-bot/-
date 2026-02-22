@@ -6,12 +6,16 @@ import {
   loadSalesDraft,
   loadReportRange,
   loadReportChartPalette,
+  loadReportChartDataLabelMode,
+  loadReportAmountUnit,
   saveProducts,
   saveRecords,
   saveTargets,
   saveSalesDraft,
   saveReportRange,
   saveReportChartPalette,
+  saveReportChartDataLabelMode,
+  saveReportAmountUnit,
   clearSalesDraft,
   createDefaultTargetYear,
   normalizeTargetYearData,
@@ -42,6 +46,8 @@ import {
   getProductMonthlyAllocationMap,
 } from "./targets.js";
 import {
+  DEFAULT_REPORT_AMOUNT_UNIT_ID,
+  DEFAULT_REPORT_CHART_DATA_LABEL_MODE,
   DEFAULT_REPORT_CHART_PALETTE_ID,
   bindReportEvents,
   getDefaultReportRange,
@@ -55,6 +61,8 @@ try {
 const defaultReportRange = getDefaultReportRange();
 const initialReportRange = loadReportRange(defaultReportRange) || defaultReportRange;
 const initialReportChartPaletteId = loadReportChartPalette(DEFAULT_REPORT_CHART_PALETTE_ID);
+const initialReportChartDataLabelMode = loadReportChartDataLabelMode(DEFAULT_REPORT_CHART_DATA_LABEL_MODE);
+const initialReportAmountUnitId = loadReportAmountUnit(DEFAULT_REPORT_AMOUNT_UNIT_ID);
 
 const dom = {
   productForm: document.getElementById("product-form"),
@@ -108,6 +116,7 @@ const dom = {
 
   reportStartMonthInput: document.getElementById("report-start-month"),
   reportEndMonthInput: document.getElementById("report-end-month"),
+  reportAmountUnitSelect: document.getElementById("report-amount-unit-select"),
   exportReportTablesBtn: document.getElementById("export-report-tables-btn"),
   reportHintEl: document.getElementById("report-hint"),
   reportMonthBody: document.getElementById("report-month-body"),
@@ -118,6 +127,7 @@ const dom = {
   reportChartsDetails: document.getElementById("report-visual-board"),
   reportChartsHintEl: document.getElementById("report-charts-hint"),
   reportChartPaletteSelect: document.getElementById("report-chart-palette-select"),
+  reportChartDataLabelModeSelect: document.getElementById("report-chart-data-label-mode-select"),
   chartMonthlyTrendEl: document.getElementById("chart-monthly-trend"),
   chartQuarterlyTrendEl: document.getElementById("chart-quarterly-trend"),
   chartProductPerformanceEl: document.getElementById("chart-product-performance"),
@@ -163,6 +173,8 @@ const state = {
   reportEndYm: initialReportRange.endYm,
   reportRangeError: "",
   reportChartPaletteId: initialReportChartPaletteId,
+  reportChartDataLabelMode: initialReportChartDataLabelMode,
+  reportAmountUnitId: initialReportAmountUnitId,
   activeHospitalChartKey: "",
 };
 
@@ -211,6 +223,8 @@ const deps = {
   saveSalesDraft,
   saveReportRange,
   saveReportChartPalette,
+  saveReportChartDataLabelMode,
+  saveReportAmountUnit,
   clearSalesDraft,
   getEffectiveMonthlyTargetMap: (year) => getEffectiveMonthlyTargetMap(state, year, deps),
   getProductMonthlyAllocationMap: (year) => getProductMonthlyAllocationMap(state, year, deps),

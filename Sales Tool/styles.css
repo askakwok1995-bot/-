@@ -299,11 +299,39 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.report-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.report-section-head h2 {
+  margin: 0;
+}
+
+.report-section-range {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+
 .report-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.report-meta-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .report-month-field {
@@ -319,6 +347,19 @@ tbody tr:hover td {
   min-width: 168px;
 }
 
+.report-unit-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-direction: row;
+  white-space: nowrap;
+}
+
+.report-unit-field select {
+  width: 128px;
+  min-width: 128px;
+}
+
 .report-export-btn {
   margin-left: auto;
   margin-top: 0;
@@ -327,6 +368,7 @@ tbody tr:hover td {
 
 .report-hint {
   margin: 0;
+  flex: 1 1 auto;
 }
 
 .report-hint-error {
@@ -380,11 +422,11 @@ tbody tr:hover td {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "intro toolbar"
-    "hint hint"
+    "hint toolbar"
     "grid grid";
   column-gap: 12px;
-  row-gap: 8px;
-  align-items: center;
+  row-gap: 6px;
+  align-items: start;
 }
 
 .report-charts-intro,
@@ -394,14 +436,18 @@ tbody tr:hover td {
 
 .report-charts-intro {
   grid-area: intro;
+  align-self: start;
 }
 
 .report-charts-toolbar {
   grid-area: toolbar;
   display: flex;
-  justify-content: flex-end;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
   justify-self: end;
+  align-self: start;
 }
 
 .report-chart-palette-field {
@@ -417,8 +463,22 @@ tbody tr:hover td {
   min-width: 208px;
 }
 
+.report-chart-data-label-field {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.report-charts-toolbar .report-chart-data-label-field select {
+  width: 208px;
+  min-width: 208px;
+}
+
 .report-charts-hint {
   grid-area: hint;
+  align-self: start;
 }
 
 .report-charts-grid {
@@ -516,7 +576,12 @@ tbody tr:hover td {
   min-height: 300px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: linear-gradient(180deg, #ffffff 0%, #f6fcff 100%);
+  background: transparent;
+}
+
+.report-chart-canvas-compact {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 #chart-monthly-trend {
@@ -802,6 +867,11 @@ tbody tr:hover td {
   width: 72px;
   min-width: 72px;
   padding: 4px 6px;
+}
+
+.report-section-range .report-unit-field select {
+  width: 128px;
+  min-width: 128px;
 }
 
 .report-chart-card-tools .report-hospital-trend-field select {
@@ -1264,9 +1334,31 @@ tr.selected-row td {
     flex-direction: column;
   }
 
+  .report-meta-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .report-section-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .report-section-range {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .report-month-field input {
     width: 182px;
     min-width: 182px;
+  }
+
+  .report-section-range .report-unit-field select {
+    width: 132px;
+    min-width: 132px;
   }
 
   .report-export-btn {
@@ -1321,10 +1413,18 @@ tr.selected-row td {
   .report-charts-toolbar {
     justify-content: flex-start;
     justify-self: start;
+    align-items: flex-start;
   }
 
   .report-chart-canvas {
     min-height: 280px;
+  }
+
+  .report-chart-canvas.report-chart-canvas-compact {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0;
+    margin-right: 0;
   }
 
   .report-chart-card-tools {
@@ -1344,6 +1444,11 @@ tr.selected-row td {
   }
 
   .report-charts-toolbar .report-chart-palette-field select {
+    width: 196px;
+    min-width: 196px;
+  }
+
+  .report-charts-toolbar .report-chart-data-label-field select {
     width: 196px;
     min-width: 196px;
   }

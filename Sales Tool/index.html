@@ -262,7 +262,25 @@
       </section>
 
       <section class="card">
-        <h2>报表区</h2>
+        <div class="report-section-head">
+          <h2>报表区</h2>
+          <div class="report-section-range">
+            <label class="inline-field report-month-field" for="report-start-month">
+              起始月
+              <input id="report-start-month" type="month" aria-label="选择起始月份" />
+            </label>
+            <label class="inline-field report-month-field" for="report-end-month">
+              结束月
+              <input id="report-end-month" type="month" aria-label="选择结束月份" />
+            </label>
+            <label class="inline-field report-unit-field" for="report-amount-unit-select">
+              单位
+              <select id="report-amount-unit-select" aria-label="选择报表金额单位">
+                <option value="">加载中...</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <details class="sub-card sub-card-report">
           <summary>
             <h3>销售分析</h3>
@@ -270,21 +288,13 @@
           </summary>
           <div class="sub-card-body">
             <div class="report-panel">
-              <div class="report-toolbar">
-                <label class="inline-field report-month-field" for="report-start-month">
-                  起始月
-                  <input id="report-start-month" type="month" aria-label="选择起始月份" />
-                </label>
-                <label class="inline-field report-month-field" for="report-end-month">
-                  结束月
-                  <input id="report-end-month" type="month" aria-label="选择结束月份" />
-                </label>
+              <div class="report-meta-row">
+                <p id="report-hint" class="hint report-hint"></p>
                 <button id="export-report-tables-btn" class="secondary-btn report-export-btn" type="button">
                   导出销售分析（XLSX）
                 </button>
               </div>
 
-              <p id="report-hint" class="hint report-hint"></p>
               <p id="report-empty" class="empty report-empty" hidden>暂无可分析数据</p>
 
               <div class="report-block">
@@ -404,6 +414,12 @@
                 <label class="inline-field report-chart-palette-field" for="report-chart-palette-select">
                   配色方案
                   <select id="report-chart-palette-select" aria-label="选择图表配色方案">
+                    <option value="">加载中...</option>
+                  </select>
+                </label>
+                <label class="inline-field report-chart-data-label-field" for="report-chart-data-label-mode-select">
+                  标注图表数据
+                  <select id="report-chart-data-label-mode-select" aria-label="选择图表数据标注模式">
                     <option value="">加载中...</option>
                   </select>
                 </label>
