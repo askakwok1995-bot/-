@@ -522,6 +522,14 @@ tbody tr:hover td {
   gap: 8px;
 }
 
+.report-chart-export-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .report-chart-card-tools {
   display: flex;
   align-items: center;
@@ -1431,6 +1439,10 @@ tr.selected-row td {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .report-chart-export-group {
+    justify-content: flex-start;
   }
 
   .report-chart-card-head-with-tools {

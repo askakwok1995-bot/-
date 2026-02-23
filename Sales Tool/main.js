@@ -138,13 +138,21 @@ const dom = {
   hospitalTrendSelect: document.getElementById("chart-hospital-trend-select"),
   chartHospitalTrendEl: document.getElementById("chart-hospital-trend"),
   exportChartMonthlyTrendBtn: document.getElementById("export-chart-monthly-trend-btn"),
+  exportChartMonthlyTrendXlsxBtn: document.getElementById("export-chart-monthly-trend-xlsx-btn"),
   exportChartQuarterlyTrendBtn: document.getElementById("export-chart-quarterly-trend-btn"),
+  exportChartQuarterlyTrendXlsxBtn: document.getElementById("export-chart-quarterly-trend-xlsx-btn"),
   exportChartProductPerformanceBtn: document.getElementById("export-chart-product-performance-btn"),
+  exportChartProductPerformanceXlsxBtn: document.getElementById("export-chart-product-performance-xlsx-btn"),
   exportChartProductMonthlyTrendBtn: document.getElementById("export-chart-product-monthly-trend-btn"),
+  exportChartProductMonthlyTrendXlsxBtn: document.getElementById("export-chart-product-monthly-trend-xlsx-btn"),
   exportChartProductTopBtn: document.getElementById("export-chart-product-top-btn"),
+  exportChartProductTopXlsxBtn: document.getElementById("export-chart-product-top-xlsx-btn"),
   exportChartHospitalTopBtn: document.getElementById("export-chart-hospital-top-btn"),
+  exportChartHospitalTopXlsxBtn: document.getElementById("export-chart-hospital-top-xlsx-btn"),
   exportChartHospitalShareBtn: document.getElementById("export-chart-hospital-share-btn"),
+  exportChartHospitalShareXlsxBtn: document.getElementById("export-chart-hospital-share-xlsx-btn"),
   exportChartHospitalTrendBtn: document.getElementById("export-chart-hospital-trend-btn"),
+  exportChartHospitalTrendXlsxBtn: document.getElementById("export-chart-hospital-trend-xlsx-btn"),
 };
 
 const state = {
