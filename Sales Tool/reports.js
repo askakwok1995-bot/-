@@ -2076,6 +2076,7 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
 
 function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
   if (!instance) return;
+  const isNameOnlyMode = labelMode === "none";
   const labelEnabled = labelMode !== "none";
 
   const rows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
@@ -2111,7 +2112,14 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
           type: "pie",
           radius: ["48%", "72%"],
           center: ["50%", "46%"],
-          label: labelEnabled
+          label: isNameOnlyMode
+            ? {
+                show: true,
+                position: "outside",
+                color: palette.axisTextColor,
+                formatter: (params) => params.name,
+              }
+            : labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "outside"),
                 formatter: (params) => {
@@ -2125,7 +2133,7 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
               }
             : { show: false },
           labelLine: {
-            show: labelEnabled,
+            show: labelEnabled || isNameOnlyMode,
           },
           data: rows.map((row) => ({
             name: row.productName,
@@ -2210,6 +2218,7 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
 
 function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
   if (!instance) return;
+  const isNameOnlyMode = labelMode === "none";
   const labelEnabled = labelMode !== "none";
 
   const topRows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
@@ -2259,7 +2268,14 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
           type: "pie",
           radius: ["48%", "72%"],
           center: ["50%", "46%"],
-          label: labelEnabled
+          label: isNameOnlyMode
+            ? {
+                show: true,
+                position: "outside",
+                color: palette.axisTextColor,
+                formatter: (params) => params.name,
+              }
+            : labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "outside"),
                 formatter: (params) => {
@@ -2273,7 +2289,7 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
               }
             : { show: false },
           labelLine: {
-            show: labelEnabled,
+            show: labelEnabled || isNameOnlyMode,
           },
           data: rows.map((row) => ({
             name: row.hospitalName,
