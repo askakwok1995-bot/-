@@ -8,6 +8,7 @@ const DEFAULT_THRESHOLD = Object.freeze({
   minStructuredRate: 0.6,
   maxP95Ms: 15000,
 });
+const UNKNOWN_SOURCE_SUFFIX = "(unknown_source)";
 
 const BASELINE_METRICS = Object.freeze({
   p50ElapsedMs: 30815,
@@ -176,6 +177,21 @@ async function parseJsonSafe(response) {
   }
 }
 
+function normalizeAttemptDiagnostics(rawDiagnostics) {
+  if (!Array.isArray(rawDiagnostics)) {
+    return [];
+  }
+  return rawDiagnostics
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const stageCandidate = trim(item.stage);
+      const stage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
+      const formatReason = trim(item.formatReason) || "unknown_reason";
+      return { stage, formatReason };
+    })
+    .filter((item) => item !== null);
+}
+
 function normalizeResult(index, testCase, response, payload, durationMs) {
   const requestId = trim(response.headers.get("x-request-id")) || trim(payload?.requestId);
   const error = payload && typeof payload.error === "object" ? payload.error : null;
@@ -194,6 +210,8 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
   const attemptCount = Number.isFinite(attemptCountRaw) && attemptCountRaw > 0 ? Math.floor(attemptCountRaw) : null;
   const repairApplied = typeof meta?.repairApplied === "boolean" ? meta.repairApplied : null;
   const finalStage = trim(meta?.finalStage);
+  const metaFormatReason = trim(meta?.formatReason) || "-";
+  const attemptDiagnostics = normalizeAttemptDiagnostics(meta?.attemptDiagnostics);
   const totalDurationRaw = Number(meta?.totalDurationMs);
   const totalDurationMs =
     Number.isFinite(totalDurationRaw) && totalDurationRaw >= 0 ? Math.floor(totalDurationRaw) : toInt(durationMs, 0);
@@ -221,8 +239,138 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     elapsedMs,
     totalDurationMs,
     finalStage: finalStage || "-",
+    metaFormatReason,
+    attemptDiagnostics,
     isFailure: response.status >= 400 || Boolean(code),
   };
+}
+
+function getFallbackReasonByStage(row, stage) {
+  const formatReason = trim(row?.metaFormatReason);
+  if (!formatReason || formatReason === "-") {
+    return "";
+  }
+  const finalStage = trim(row?.finalStage);
+  if (stage === "first" && finalStage === "first") {
+    return `${formatReason} ${UNKNOWN_SOURCE_SUFFIX}`;
+  }
+  if (stage === "retry" && (finalStage === "retry" || finalStage === "repair")) {
+    return `${formatReason} ${UNKNOWN_SOURCE_SUFFIX}`;
+  }
+  return "";
+}
+
+function collectStageReasons(rows, stage) {
+  const normalizedStage = stage === "retry" ? "retry" : "first";
+  const reasonCount = new Map();
+  let sampleCount = 0;
+  for (const row of rows) {
+    const fromDiagnostics = Array.isArray(row?.attemptDiagnostics)
+      ? row.attemptDiagnostics
+          .filter((item) => item && item.stage === normalizedStage)
+          .map((item) => trim(item.formatReason))
+          .filter((reason) => reason)
+      : [];
+    let reasons = fromDiagnostics;
+    if (reasons.length === 0) {
+      const fallback = getFallbackReasonByStage(row, normalizedStage);
+      reasons = fallback ? [fallback] : [];
+    }
+    if (reasons.length === 0) {
+      continue;
+    }
+    sampleCount += 1;
+    for (const reason of reasons) {
+      reasonCount.set(reason, (reasonCount.get(reason) || 0) + 1);
+    }
+  }
+
+  const entries = Array.from(reasonCount.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.reason.localeCompare(b.reason, "zh-CN");
+    });
+
+  return {
+    stage: normalizedStage,
+    sampleCount,
+    entries,
+  };
+}
+
+function buildAttemptReasonStats(results) {
+  const safeResults = Array.isArray(results) ? results : [];
+  const grouped = new Map();
+  for (const row of safeResults) {
+    const mode = row?.mode || "unknown";
+    if (!grouped.has(mode)) {
+      grouped.set(mode, []);
+    }
+    grouped.get(mode).push(row);
+  }
+  return {
+    overall: {
+      first: collectStageReasons(safeResults, "first"),
+      retry: collectStageReasons(safeResults, "retry"),
+    },
+    byMode: Array.from(grouped.entries()).map(([mode, rows]) => ({
+      mode,
+      total: rows.length,
+      first: collectStageReasons(rows, "first"),
+      retry: collectStageReasons(rows, "retry"),
+    })),
+  };
+}
+
+function printTopReasonsTable(title, stageStats, totalRows, topN = 5) {
+  console.log(title);
+  console.log("| stage | reason | count | rate |");
+  console.log("|-------|--------|-------|------|");
+  const safeTotalRows = Number.isFinite(Number(totalRows)) && Number(totalRows) > 0 ? Math.floor(Number(totalRows)) : 1;
+  const firstRows = stageStats.first.entries.slice(0, topN);
+  const retryRows = stageStats.retry.entries.slice(0, topN);
+  if (firstRows.length === 0 && retryRows.length === 0) {
+    console.log("| - | - | 0 | 0.0% |");
+    return;
+  }
+  for (const item of firstRows) {
+    console.log(`| first | ${item.reason} | ${item.count} | ${toPercent(item.count / safeTotalRows)} |`);
+  }
+  for (const item of retryRows) {
+    console.log(`| retry | ${item.reason} | ${item.count} | ${toPercent(item.count / safeTotalRows)} |`);
+  }
+}
+
+function printAttemptReasonStats(results) {
+  const stats = buildAttemptReasonStats(results);
+  console.log("\n=== attemptDiagnostics.formatReason 分布（overall）===");
+  printTopReasonsTable("overall top reasons", stats.overall, results.length);
+  console.log("\n=== attemptDiagnostics.formatReason 分布（by mode）===");
+  for (const item of stats.byMode) {
+    printTopReasonsTable(`mode=${item.mode}`, item, item.total);
+  }
+  return stats;
+}
+
+function pickTopReason(stageStats) {
+  if (!stageStats || !Array.isArray(stageStats.entries) || stageStats.entries.length === 0) {
+    return "-";
+  }
+  const first = stageStats.entries[0];
+  return `${first.reason} (${first.count})`;
+}
+
+function printFocusMetrics(summary, modeStats, reasonStats) {
+  console.log("\n=== 重点指标 ===");
+  console.log(`- structured 占比: ${toPercent(summary.metrics.structuredRate)}`);
+  console.log(`- finalStage=first 占比: ${toPercent(summary.metrics.finalStageFirstRate)}`);
+  console.log("- text_fallback by mode:");
+  for (const item of modeStats) {
+    console.log(`  - ${item.mode}: ${toPercent(item.textFallbackRate)}`);
+  }
+  console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
+  console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
 }
 
 function toPercent(value) {
@@ -415,6 +563,7 @@ function printModeStats(results) {
       `| ${item.mode} | ${item.total} | ${toPercent(item.attempt3Rate)} | ${toPercent(item.textFallbackRate)} | ${toPercent(item.finalStageFirstRate)} | ${toPercent(item.finalStageRetryRate)} | ${toPercent(item.finalStageRepairRate)} | ${item.p95ElapsedMs}ms |`,
     );
   }
+  return stats;
 }
 
 function printFinalStageSummary(summary) {
@@ -557,6 +706,8 @@ async function run() {
         attemptCount: "-",
         repairApplied: "-",
         finalStage: "-",
+        metaFormatReason: "-",
+        attemptDiagnostics: [],
         elapsedMs: toInt(Date.now() - startedAt, 0),
         totalDurationMs: toInt(Date.now() - startedAt, 0),
         requestId: "-",
@@ -590,9 +741,11 @@ async function run() {
   console.log("\n=== 明细记录表 ===");
   printTable(results);
   console.log("\n=== 按 mode 统计 ===");
-  printModeStats(results);
+  const modeStats = printModeStats(results);
+  const reasonStats = printAttemptReasonStats(results);
 
   const summary = evaluateThresholds(results);
+  printFocusMetrics(summary, modeStats, reasonStats);
   console.log("\n=== FinalStage 总体占比 ===");
   printFinalStageSummary(summary);
   console.log("\n=== 判定结果 ===");

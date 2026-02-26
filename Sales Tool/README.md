@@ -312,19 +312,19 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
-- 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
+- 首轮输出仅在 `json_parse_failed/output_truncated` 时才进入 retry；`schema_invalid` 不默认重试（减少无效二次调用）。
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
-  - `briefing`: first `896` / retry `1280`
+  - `briefing`: first `768` / retry `1152`
   - `diagnosis`: first `1024` / retry `1536`
   - `action-plan`: first `1280` / retry `1792`
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
 - 结构化质量门槛（mode 化）：
   - `briefing`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=1`
-  - `diagnosis`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=0`
-  - `action-plan`：`summary>=70`，`highlights>=0`，`evidence>=1`，`actions>=1`
+  - `diagnosis`：`summary>=60`，`highlights>=1`，`evidence>=1`，`actions>=0`
+  - `action-plan`：`summary>=60`，`highlights>=0`，`evidence>=1`，`actions>=1`
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
@@ -484,15 +484,17 @@ npm run check:chat-stability
 1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/elapsedMs`）
 2. `finalStage` 总体占比（`first/retry/repair`）
 3. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`finalStage=first/retry/repair` 占比、`p95 elapsedMs`）
-4. 总体耗时统计（`p50/p95 elapsedMs`）
-5. 与 baseline 对比（固定基线：`p50=30815`, `p95=45849`, `structured=50%`, `attempt3=40%`, `briefing repair=100%`, `diagnosis fallback=66.7%`, `action-plan fallback=100%`）
-6. 阈值判定（Pass/Fail）：
+4. `attemptDiagnostics.formatReason` 分布（overall + by mode，分别输出 `first/retry` 的 top reasons，含 `unknown_source` 兜底标记）
+5. 重点指标摘要（`structured` 占比、`finalStage=first` 占比、`text_fallback by mode`、`first/retry top formatReason`）
+6. 总体耗时统计（`p50/p95 elapsedMs`）
+7. 与 baseline 对比（固定基线：`p50=30815`, `p95=45849`, `structured=50%`, `attempt3=40%`, `briefing repair=100%`, `diagnosis fallback=66.7%`, `action-plan fallback=100%`）
+8. 阈值判定（Pass/Fail）：
    - 总失败率 `<= 20%`
    - `UPSTREAM_TIMEOUT` 占比 `<= 10%`
    - `attemptCount=3` 占比 `<= 30%`
    - `structured` 占比 `>= 60%`
    - `p95 elapsedMs <= 15000ms`（目标值）
-7. 自动日志判读建议（基于错误码与阶段）
+9. 自动日志判读建议（基于错误码与阶段）
 
 注意：
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。

@@ -83,13 +83,13 @@ const MODE_QUALITY_THRESHOLDS = Object.freeze({
     minActionsCount: 1,
   },
   [CHAT_MODES.DIAGNOSIS]: {
-    minSummaryChars: 70,
+    minSummaryChars: 60,
     minHighlightsCount: 1,
     minEvidenceCount: 1,
     minActionsCount: 0,
   },
   [CHAT_MODES.ACTION_PLAN]: {
-    minSummaryChars: 70,
+    minSummaryChars: 60,
     minHighlightsCount: 0,
     minEvidenceCount: 1,
     minActionsCount: 1,
@@ -310,8 +310,8 @@ function getModeTokenProfile(mode, messageLength = 0) {
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
   let retry = RETRY_MAX_OUTPUT_TOKENS;
   if (safeMode === CHAT_MODES.BRIEFING) {
-    first = 896;
-    retry = 1280;
+    first = 768;
+    retry = 1152;
   } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
     first = 1024;
     retry = 1536;
@@ -1410,7 +1410,10 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     buildAttemptDiagnostic("first", finalEvaluation, modeTokenProfile.first, stageDurations.first),
   );
   const firstElapsed = stageDurations.first;
-  if (finalEvaluation.shouldRetry && hasBudgetForNextAttempt() && firstElapsed < FIRST_STAGE_BUDGET_MS) {
+  const shouldTriggerRetry =
+    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED ||
+    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED;
+  if (shouldTriggerRetry && hasBudgetForNextAttempt() && firstElapsed < FIRST_STAGE_BUDGET_MS) {
     retryCount = 1;
     const retryPayload = buildGeminiPayload({
       message,
