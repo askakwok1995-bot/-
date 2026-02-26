@@ -2,13 +2,18 @@ const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONTEXT_CHARS = 18000;
+const MAX_HISTORY_ITEMS = 12;
+const MAX_HISTORY_CHARS = 4000;
 const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
-const MIN_SUMMARY_CHARS = 40;
+const MIN_SUMMARY_CHARS = 80;
+const MIN_HIGHLIGHTS_COUNT = 2;
+const MIN_EVIDENCE_COUNT = 2;
+const MIN_ACTIONS_COUNT = 2;
 const GEMINI_STREAM_ALT = "alt=sse";
 
 const CHAT_ERROR_CODES = Object.freeze({
@@ -21,6 +26,8 @@ const CHAT_ERROR_CODES = Object.freeze({
   MESSAGE_REQUIRED: "MESSAGE_REQUIRED",
   MESSAGE_TOO_LONG: "MESSAGE_TOO_LONG",
   UPSTREAM_TIMEOUT: "UPSTREAM_TIMEOUT",
+  UPSTREAM_AUTH_ERROR: "UPSTREAM_AUTH_ERROR",
+  UPSTREAM_RATE_LIMIT: "UPSTREAM_RATE_LIMIT",
   UPSTREAM_NETWORK_ERROR: "UPSTREAM_NETWORK_ERROR",
   UPSTREAM_ERROR: "UPSTREAM_ERROR",
   EMPTY_REPLY: "EMPTY_REPLY",
@@ -30,6 +37,10 @@ const CHAT_MODES = Object.freeze({
   BRIEFING: "briefing",
   DIAGNOSIS: "diagnosis",
   ACTION_PLAN: "action-plan",
+});
+const CHAT_HISTORY_ROLES = Object.freeze({
+  USER: "user",
+  ASSISTANT: "assistant",
 });
 
 const CHAT_FORMAT_REASONS = Object.freeze({
@@ -173,6 +184,70 @@ function sanitizeMode(rawMode) {
   return CHAT_MODES.BRIEFING;
 }
 
+function isValidHistoryRole(role) {
+  return role === CHAT_HISTORY_ROLES.USER || role === CHAT_HISTORY_ROLES.ASSISTANT;
+}
+
+function sanitizeHistoryList(rawHistory) {
+  if (!Array.isArray(rawHistory)) {
+    return [];
+  }
+
+  const normalizedItems = rawHistory
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const role = trimString(item.role).toLowerCase();
+      if (!isValidHistoryRole(role)) {
+        return null;
+      }
+      const content = trimString(item.content);
+      if (!content) {
+        return null;
+      }
+      const limitedContent =
+        content.length > MAX_HISTORY_CHARS ? content.slice(content.length - MAX_HISTORY_CHARS) : content;
+      return { role, content: limitedContent };
+    })
+    .filter((item) => item !== null);
+
+  const limitedByCount =
+    normalizedItems.length > MAX_HISTORY_ITEMS
+      ? normalizedItems.slice(normalizedItems.length - MAX_HISTORY_ITEMS)
+      : normalizedItems;
+
+  let totalChars = 0;
+  const limitedByChars = [];
+  for (let index = limitedByCount.length - 1; index >= 0; index -= 1) {
+    const item = limitedByCount[index];
+    const nextLength = item.content.length + totalChars;
+    if (nextLength > MAX_HISTORY_CHARS && limitedByChars.length > 0) {
+      break;
+    }
+    totalChars = Math.min(nextLength, MAX_HISTORY_CHARS);
+    limitedByChars.unshift(item);
+    if (totalChars >= MAX_HISTORY_CHARS) {
+      break;
+    }
+  }
+
+  return limitedByChars;
+}
+
+function formatHistoryText(history) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return "[]";
+  }
+
+  return history
+    .map((item, index) => {
+      const roleLabel = item.role === CHAT_HISTORY_ROLES.ASSISTANT ? "助手" : "用户";
+      return `${index + 1}. ${roleLabel}：${item.content}`;
+    })
+    .join("\n");
+}
+
 function buildChatSuccessPayload(params) {
   const { evaluation, model, requestId, mode, retryCount = 0 } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
@@ -226,6 +301,8 @@ function buildPrompt(message, context, mode, options = {}) {
   const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
   const contextText = safeContextText(context);
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
+  const history = sanitizeHistoryList(options?.history);
+  const historyText = formatHistoryText(history);
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -240,6 +317,10 @@ function buildPrompt(message, context, mode, options = {}) {
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
     "禁止使用 Markdown 代码块；如果无法保证格式，仍优先输出可解析 JSON。",
+    "优先参考最近对话上下文，但以当前传入数据口径为准。",
+    "",
+    "最近对话摘要（按时间顺序）：",
+    historyText,
     "",
     "用户问题：",
     safeMessage,
@@ -402,7 +483,11 @@ function validateStructuredQuality(structured) {
     };
   }
 
-  if (structured.highlights.length < 1 || structured.evidence.length < 1 || structured.actions.length < 1) {
+  if (
+    structured.highlights.length < MIN_HIGHLIGHTS_COUNT ||
+    structured.evidence.length < MIN_EVIDENCE_COUNT ||
+    structured.actions.length < MIN_ACTIONS_COUNT
+  ) {
     return {
       ok: false,
       reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
@@ -485,6 +570,7 @@ function buildGeminiPayload(params) {
   const {
     message,
     contextPayload,
+    history,
     mode,
     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     strictJsonOnly = false,
@@ -496,7 +582,10 @@ function buildGeminiPayload(params) {
         role: "user",
         parts: [
           {
-            text: buildPrompt(message, contextPayload, mode, { strictJsonOnly }),
+            text: buildPrompt(message, contextPayload, mode, {
+              strictJsonOnly,
+              history,
+            }),
           },
         ],
       },
@@ -682,6 +771,29 @@ function buildChatError(code, message, status) {
   };
 }
 
+function mapGeminiUpstreamHttpError(status, upstreamMessage) {
+  const safeStatus = Number(status);
+  const safeMessage = trimString(upstreamMessage);
+
+  if (safeStatus === 401 || safeStatus === 403) {
+    return buildChatError(
+      CHAT_ERROR_CODES.UPSTREAM_AUTH_ERROR,
+      safeMessage || "Gemini Key 无效或无权限，请检查 GEMINI_API_KEY 配置。",
+      502,
+    );
+  }
+
+  if (safeStatus === 429) {
+    return buildChatError(
+      CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT,
+      safeMessage || "Gemini 请求过于频繁或配额受限，请稍后重试。",
+      429,
+    );
+  }
+
+  return buildChatError(CHAT_ERROR_CODES.UPSTREAM_ERROR, safeMessage || `Gemini 返回异常状态：HTTP ${safeStatus}`, 502);
+}
+
 async function requestGeminiNonStreaming(model, key, upstreamPayload) {
   const endpoint = buildGeminiEndpoint(model, false);
 
@@ -725,11 +837,7 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload) {
     const upstreamMessage = readUpstreamErrorMessage(upstreamData);
     return {
       ok: false,
-      error: buildChatError(
-        CHAT_ERROR_CODES.UPSTREAM_ERROR,
-        upstreamMessage || `Gemini 返回异常状态：HTTP ${upstreamResponse.status}`,
-        502,
-      ),
+      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage),
     };
   }
 
@@ -827,11 +935,7 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
     const upstreamMessage = readUpstreamErrorMessage(upstreamData);
     return {
       ok: false,
-      error: buildChatError(
-        CHAT_ERROR_CODES.UPSTREAM_ERROR,
-        upstreamMessage || `Gemini 返回异常状态：HTTP ${upstreamResponse.status}`,
-        502,
-      ),
+      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage),
     };
   }
 
@@ -932,10 +1036,11 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
   };
 }
 
-async function generateChatResponse(model, key, message, contextPayload, mode) {
+async function generateChatResponse(model, key, message, contextPayload, mode, history) {
   const firstAttemptPayload = buildGeminiPayload({
     message,
     contextPayload,
+    history,
     mode,
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     strictJsonOnly: false,
@@ -954,6 +1059,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode) {
     const retryPayload = buildGeminiPayload({
       message,
       contextPayload,
+      history,
       mode,
       maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
       strictJsonOnly: true,
@@ -1001,6 +1107,7 @@ export async function onRequestPost(context) {
 
   const message = trimString(body && body.message);
   const contextPayload = body && typeof body.context === "object" && body.context ? body.context : {};
+  const history = sanitizeHistoryList(body && body.history);
   const mode = sanitizeMode(body && body.mode);
   const stream = Boolean(body && body.stream);
 
@@ -1031,6 +1138,7 @@ export async function onRequestPost(context) {
           const streamPayload = buildGeminiPayload({
             message,
             contextPayload,
+            history,
             mode,
             maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
             strictJsonOnly: false,
@@ -1049,7 +1157,7 @@ export async function onRequestPost(context) {
 
           if (!streamResult.ok) {
             if (!hasDelta) {
-              const fallback = await generateChatResponse(model, key, message, contextPayload, mode);
+              const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history);
               if (fallback.ok) {
                 const payload = buildChatSuccessPayload({
                   evaluation: fallback.evaluation,
@@ -1081,7 +1189,7 @@ export async function onRequestPost(context) {
           }
 
           if (!streamResult.hasDelta) {
-            const fallback = await generateChatResponse(model, key, message, contextPayload, mode);
+            const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history);
             if (fallback.ok) {
               const payload = buildChatSuccessPayload({
                 evaluation: fallback.evaluation,
@@ -1140,7 +1248,7 @@ export async function onRequestPost(context) {
     return ndjsonResponse(readable, requestId);
   }
 
-  const generated = await generateChatResponse(model, key, message, contextPayload, mode);
+  const generated = await generateChatResponse(model, key, message, contextPayload, mode, history);
   if (!generated.ok) {
     return errorResponse(generated.error.code, generated.error.message, generated.error.status, requestId);
   }

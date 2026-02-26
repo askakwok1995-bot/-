@@ -16,6 +16,8 @@ const CHAT_FORMAT_REASONS = {
   OUTPUT_TRUNCATED: "output_truncated",
   EMPTY_REPLY: "empty_reply",
 };
+const CHAT_HISTORY_MAX_ROUNDS = 6;
+const CHAT_HISTORY_MAX_ITEMS = CHAT_HISTORY_MAX_ROUNDS * 2;
 
 let initialized = false;
 
@@ -137,6 +139,10 @@ function buildActionMeta(action) {
   return parts.join(" | ");
 }
 
+function isValidHistoryRole(value) {
+  return value === "user" || value === "assistant";
+}
+
 export function initAiChatUi(options = {}) {
   if (initialized && window[CHAT_API_KEY]) {
     return window[CHAT_API_KEY];
@@ -179,6 +185,7 @@ export function initAiChatUi(options = {}) {
   let currentMode = normalizeMode(options.initialMode);
   let sendHandler = null;
   let isSending = false;
+  let sessionHistory = [];
 
   const placeholderStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
@@ -280,6 +287,50 @@ export function initAiChatUi(options = {}) {
     dom.input.disabled = isSending;
     dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
     dom.statusEl.textContent = hasHandler ? readyStatus : placeholderStatus;
+  }
+
+  function sanitizeHistoryItem(item) {
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    const role = toText(item.role).toLowerCase();
+    if (!isValidHistoryRole(role)) {
+      return null;
+    }
+    const content = toText(item.content);
+    if (!content) {
+      return null;
+    }
+    return { role, content };
+  }
+
+  function trimHistory(items, maxItems = CHAT_HISTORY_MAX_ITEMS) {
+    if (!Array.isArray(items)) {
+      return [];
+    }
+    const sanitized = items.map((item) => sanitizeHistoryItem(item)).filter((item) => item !== null);
+    if (sanitized.length <= maxItems) {
+      return sanitized;
+    }
+    return sanitized.slice(sanitized.length - maxItems);
+  }
+
+  function pushHistory(role, content) {
+    const next = sanitizeHistoryItem({ role, content });
+    if (!next) return;
+    sessionHistory.push(next);
+    sessionHistory = trimHistory(sessionHistory);
+  }
+
+  function getSessionHistory() {
+    return sessionHistory.map((item) => ({ ...item }));
+  }
+
+  function clearSessionHistory() {
+    sessionHistory = [];
+    const hasHandler = typeof sendHandler === "function";
+    dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
+    dom.statusEl.textContent = "会话记忆已清空。";
   }
 
   function scrollMessagesToBottom() {
@@ -520,6 +571,7 @@ export function initAiChatUi(options = {}) {
       return;
     }
 
+    pushHistory("user", text);
     appendTextMessage("user", text);
     dom.input.value = "";
     isSending = true;
@@ -532,6 +584,7 @@ export function initAiChatUi(options = {}) {
       const result = await Promise.resolve(
         sendHandler(text, {
           mode: currentMode,
+          history: getSessionHistory(),
           onThinking: (message) => {
             updateThinkingLabel(liveMessage, message);
             dom.statusEl.classList.remove("ai-chat-status-ready");
@@ -559,6 +612,13 @@ export function initAiChatUi(options = {}) {
         removeLiveMessage(liveMessage);
       }
 
+      const assistantHistoryText = normalized.structured
+        ? toText(normalized.structured.summary || normalized.reply)
+        : toText(normalized.reply);
+      if (assistantHistoryText) {
+        pushHistory("assistant", assistantHistoryText);
+      }
+
       dom.statusEl.classList.add("ai-chat-status-ready");
       if (normalized.format === "text_fallback") {
         let fallbackStatus = normalized.fallbackNotice;
@@ -582,7 +642,7 @@ export function initAiChatUi(options = {}) {
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       dom.statusEl.classList.remove("ai-chat-status-ready");
-      dom.statusEl.textContent = `预留处理器执行失败：${message}`;
+      dom.statusEl.textContent = `调用失败：${message}`;
       if (!liveMessage.hasDelta) {
         removeLiveMessage(liveMessage);
         appendTextMessage("assistant", `调用失败：${message}`);
@@ -642,6 +702,8 @@ export function initAiChatUi(options = {}) {
     getState: () => state,
     getMode,
     setMode,
+    getSessionHistory,
+    clearSessionHistory,
     setSendHandler: (handler) => {
       sendHandler = typeof handler === "function" ? handler : null;
       isSending = false;

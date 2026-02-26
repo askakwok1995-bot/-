@@ -1079,8 +1079,88 @@ async function initializeApp() {
     outline: (rangeOverride) => buildBriefingOutline(buildAnalyticsContext(rangeOverride)),
   };
 
+  const AI_CHAT_CONTEXT_TOP_N = 3;
+
+  function compactInsightEvidence(entries, maxItems = 2) {
+    if (!Array.isArray(entries)) {
+      return [];
+    }
+    return entries
+      .slice(0, maxItems)
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const label = String(entry.label || "").trim();
+        const value = entry.value;
+        if (!label || (typeof value !== "string" && typeof value !== "number")) {
+          return null;
+        }
+        return { label, value };
+      })
+      .filter((entry) => entry !== null);
+  }
+
+  function compactInsightItems(items, maxItems = AI_CHAT_CONTEXT_TOP_N) {
+    if (!Array.isArray(items)) {
+      return [];
+    }
+    return items
+      .slice(0, maxItems)
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const title = String(item.title || "").trim();
+        const summary = String(item.summary || "").trim();
+        if (!title && !summary) {
+          return null;
+        }
+        return {
+          id: String(item.id || "").trim(),
+          level: String(item.level || "info").trim() || "info",
+          title,
+          summary,
+          evidence: compactInsightEvidence(item.evidence, 2),
+          suggestion: String(item.suggestion || "").trim(),
+        };
+      })
+      .filter((item) => item !== null);
+  }
+
+  function compactOutlinePayload(outlinePayload) {
+    if (!outlinePayload || typeof outlinePayload !== "object") {
+      return { ok: false, sections: [] };
+    }
+    const sections = Array.isArray(outlinePayload.sections) ? outlinePayload.sections : [];
+    return {
+      ok: Boolean(outlinePayload.ok),
+      title: String(outlinePayload.title || "").trim(),
+      range: outlinePayload.range && typeof outlinePayload.range === "object" ? outlinePayload.range : {},
+      source: String(outlinePayload.source || "").trim(),
+      sections: sections.slice(0, 4).map((section) => ({
+        key: String(section?.key || "").trim(),
+        title: String(section?.title || "").trim(),
+        points: Array.isArray(section?.points)
+          ? section.points.slice(0, 2).map((point) => ({
+              summary: String(point?.summary || "").trim(),
+              evidence: compactInsightEvidence(point?.evidence, 2),
+              suggestion: String(point?.suggestion || "").trim(),
+            }))
+          : [],
+      })),
+    };
+  }
+
   function buildAiChatContextPayload(rangeOverride) {
     const analysisContext = buildAnalyticsContext(rangeOverride);
+    const kpi = getKpiOverview(analysisContext);
+    const trend = getTrendInsights(analysisContext);
+    const product = getProductInsights(analysisContext, { topN: AI_CHAT_CONTEXT_TOP_N });
+    const hospital = getHospitalInsights(analysisContext, { topN: AI_CHAT_CONTEXT_TOP_N });
+    const risk = getRiskAlerts(analysisContext);
+    const outline = buildBriefingOutline(analysisContext);
+
     return {
       analysis: {
         ok: analysisContext.ok,
@@ -1089,12 +1169,33 @@ async function initializeApp() {
         metricPriority: analysisContext.metricPriority,
         meta: analysisContext.meta,
       },
-      kpi: getKpiOverview(analysisContext),
-      trend: getTrendInsights(analysisContext),
-      product: getProductInsights(analysisContext, { topN: 5 }),
-      hospital: getHospitalInsights(analysisContext, { topN: 5 }),
-      risk: getRiskAlerts(analysisContext),
-      outline: buildBriefingOutline(analysisContext),
+      kpi: {
+        ok: Boolean(kpi?.ok),
+        summary: String(kpi?.summary || "").trim(),
+        metrics: kpi?.metrics && typeof kpi.metrics === "object" ? kpi.metrics : {},
+        items: compactInsightItems(kpi?.items, AI_CHAT_CONTEXT_TOP_N),
+      },
+      trend: {
+        ok: Boolean(trend?.ok),
+        summary: String(trend?.summary || "").trim(),
+        items: compactInsightItems(trend?.items, AI_CHAT_CONTEXT_TOP_N),
+      },
+      product: {
+        ok: Boolean(product?.ok),
+        summary: String(product?.summary || "").trim(),
+        items: compactInsightItems(product?.items, AI_CHAT_CONTEXT_TOP_N),
+      },
+      hospital: {
+        ok: Boolean(hospital?.ok),
+        summary: String(hospital?.summary || "").trim(),
+        items: compactInsightItems(hospital?.items, AI_CHAT_CONTEXT_TOP_N),
+      },
+      risk: {
+        ok: Boolean(risk?.ok),
+        summary: String(risk?.summary || "").trim(),
+        items: compactInsightItems(risk?.items, AI_CHAT_CONTEXT_TOP_N),
+      },
+      outline: compactOutlinePayload(outline),
     };
   }
 
@@ -1119,6 +1220,8 @@ async function initializeApp() {
     DIAGNOSIS: "diagnosis",
     ACTION_PLAN: "action-plan",
   });
+  const CHAT_HISTORY_MAX_ITEMS = 12;
+  const CHAT_HISTORY_MAX_CHARS = 4000;
 
   function isValidChatMode(mode) {
     return mode === CHAT_MODES.BRIEFING || mode === CHAT_MODES.DIAGNOSIS || mode === CHAT_MODES.ACTION_PLAN;
@@ -1127,6 +1230,56 @@ async function initializeApp() {
   function sanitizeChatMode(mode) {
     const candidate = String(mode || "").trim();
     return isValidChatMode(candidate) ? candidate : CHAT_MODES.BRIEFING;
+  }
+
+  function isValidChatHistoryRole(role) {
+    return role === "user" || role === "assistant";
+  }
+
+  function sanitizeChatHistory(history, maxItems = CHAT_HISTORY_MAX_ITEMS, maxChars = CHAT_HISTORY_MAX_CHARS) {
+    if (!Array.isArray(history)) {
+      return [];
+    }
+
+    const normalizedItems = history
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const role = String(item.role || "")
+          .trim()
+          .toLowerCase();
+        if (!isValidChatHistoryRole(role)) {
+          return null;
+        }
+        const rawContent = String(item.content || "").trim();
+        if (!rawContent) {
+          return null;
+        }
+        const content = rawContent.length > maxChars ? rawContent.slice(rawContent.length - maxChars) : rawContent;
+        return { role, content };
+      })
+      .filter((item) => item !== null);
+
+    const limitedByCount =
+      normalizedItems.length > maxItems ? normalizedItems.slice(normalizedItems.length - maxItems) : normalizedItems;
+
+    let totalChars = 0;
+    const limitedByChars = [];
+    for (let index = limitedByCount.length - 1; index >= 0; index -= 1) {
+      const item = limitedByCount[index];
+      const nextLength = item.content.length + totalChars;
+      if (nextLength > maxChars && limitedByChars.length > 0) {
+        break;
+      }
+      totalChars = Math.min(nextLength, maxChars);
+      limitedByChars.unshift(item);
+      if (totalChars >= maxChars) {
+        break;
+      }
+    }
+
+    return limitedByChars;
   }
 
   const CHAT_API_ERROR_MESSAGE_MAP = Object.freeze({
@@ -1139,6 +1292,8 @@ async function initializeApp() {
     MESSAGE_REQUIRED: "消息不能为空。",
     MESSAGE_TOO_LONG: "消息过长，请精简后再试。",
     UPSTREAM_TIMEOUT: "Gemini 请求超时，请稍后重试。",
+    UPSTREAM_AUTH_ERROR: "Gemini Key 无效或无权限，请检查 Cloudflare Pages Secret 配置。",
+    UPSTREAM_RATE_LIMIT: "Gemini 请求过于频繁或配额受限，请稍后重试。",
     UPSTREAM_NETWORK_ERROR: "Gemini 网络请求失败，请稍后重试。",
     UPSTREAM_ERROR: "Gemini 服务返回异常，请稍后重试。",
     EMPTY_REPLY: "Gemini 返回为空，请稍后重试。",
@@ -1387,11 +1542,12 @@ async function initializeApp() {
       throw new Error("消息不能为空。");
     }
     const safeMode = sanitizeChatMode(options && typeof options === "object" ? options.mode : "");
-    const streamEnabled = !(options && typeof options === "object" && options.stream === false);
+    const streamEnabled = Boolean(options && typeof options === "object" && options.stream === true);
     const onThinking = options && typeof options.onThinking === "function" ? options.onThinking : null;
     const onDelta = options && typeof options.onDelta === "function" ? options.onDelta : null;
     const onDone = options && typeof options.onDone === "function" ? options.onDone : null;
     const onError = options && typeof options.onError === "function" ? options.onError : null;
+    const history = sanitizeChatHistory(options && typeof options === "object" ? options.history : []);
 
     const accessToken = await getChatAuthToken();
     if (!accessToken) {
@@ -1403,6 +1559,7 @@ async function initializeApp() {
       context: buildAiChatContextPayload(),
       mode: safeMode,
       stream: streamEnabled,
+      history,
     };
 
     const sendRequest = async (body) => {
@@ -1434,12 +1591,10 @@ async function initializeApp() {
     let response = await sendRequest(requestBody);
 
     if (streamEnabled && response.ok && isNdjsonResponse(response)) {
-      let receivedDelta = false;
       try {
         const streamResult = await consumeChatNdjsonStream(response, {
           onThinking,
           onDelta: (text, requestId) => {
-            receivedDelta = true;
             if (onDelta) onDelta(text, requestId);
           },
           onDone,
@@ -1447,13 +1602,6 @@ async function initializeApp() {
         });
         return normalizeChatSuccessPayload(streamResult.payload, safeMode, streamResult.requestId);
       } catch (error) {
-        if (!receivedDelta) {
-          response = await sendRequest({
-            ...requestBody,
-            stream: false,
-          });
-          return parseJsonResponse(response);
-        }
         throw error;
       }
     }

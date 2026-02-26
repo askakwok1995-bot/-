@@ -196,7 +196,7 @@ window.__APP_CONFIG__ = {
 6. 指标修改后刷新仍保留，报表联动变化正确。
 7. 报表表格与图表导出可用（XLSX/PNG）。
 8. 执行 `npm run check` 通过。
-9. 聊天接口错误提示可区分：`UNAUTHORIZED(401)` / `CONFIG_MISSING` / `AUTH_UPSTREAM_TIMEOUT(504)` / `UPSTREAM_TIMEOUT(504)` / `UPSTREAM_ERROR`。
+9. 聊天接口错误提示可区分：`UNAUTHORIZED(401)` / `CONFIG_MISSING` / `AUTH_UPSTREAM_TIMEOUT(504)` / `UPSTREAM_TIMEOUT(504)` / `UPSTREAM_AUTH_ERROR` / `UPSTREAM_RATE_LIMIT` / `UPSTREAM_ERROR`。
 
 ## 10. 已知边界与后续建议
 
@@ -253,6 +253,24 @@ window.__APP_CONFIG__ = {
 4. `Settings` -> `Variables and Secrets`：
    - Secret: `GEMINI_API_KEY`
    - Variable: `GEMINI_MODEL=gemini-2.5-flash`
+5. 确认 `GEMINI_API_KEY` 已保存到 **Production** 环境，且值无引号、无前后空格；保存后执行一次 Redeploy。
+
+### 12.1.1 Gemini 连通性硬校验（推荐）
+在 Cloudflare 部署后，先直接调用线上 `/api/chat`（带登录态 Token）验证链路，再回到 UI 验收：
+
+```bash
+curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
+  -H "Authorization: Bearer <SUPABASE_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message":"请用中文回复“连通正常”",
+    "context":{"kpi":{},"risk":{},"outline":{}},
+    "mode":"briefing",
+    "stream": false
+  }'
+```
+
+如果返回 `UPSTREAM_AUTH_ERROR`，优先检查 Cloudflare `GEMINI_API_KEY` 与 Google AI Studio 配额/权限。
 
 ### 12.2 后端接口说明
 本仓库已新增 Pages Function：
@@ -278,8 +296,12 @@ window.__APP_CONFIG__ = {
     "risk": {},
     "outline": {}
   },
+  "history": [
+    { "role": "user", "content": "上次你给我的简报结论是什么？" },
+    { "role": "assistant", "content": "上次结论为：整体销售微增但达成率未达标。" }
+  ],
   "mode": "briefing",
-  "stream": true
+  "stream": false
 }
 ```
 
@@ -293,9 +315,10 @@ window.__APP_CONFIG__ = {
 - 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
 - 默认输出 token：首轮 `1536`，重试 `2048`。
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
-- 结构化质量门槛：`summary` 长度至少 40 字，且 `highlights/evidence/actions` 至少各 1 条。
+- 结构化质量门槛（平衡版）：`summary` 长度至少 80 字，且 `highlights/evidence/actions` 至少各 2 条。
+- 会话历史门槛：最多携带最近 6 轮（12 条）`history`，总字符上限约 `4000`。
 
-非流式成功响应（`stream=false` 或流式不可用时）：
+非流式成功响应（`stream=false`，默认）：
 ```json
 {
   "reply": "结构化摘要文本（兼容旧前端）",
@@ -361,21 +384,25 @@ window.__APP_CONFIG__ = {
 
 ### 12.3 前端接线说明
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
-- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`，默认 `stream=true`。
-- 前端优先使用流式增量渲染；若流式不可用，会自动回退到非流式 JSON 解析。
+- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`，默认 `stream=false`（稳态优先）。
+- 前端会在内存中维护最近 6 轮会话历史（刷新页面即清空），并随请求透传到 `history`。
+- 仅当显式传入 `stream=true` 时才走流式增量渲染；流式失败时前端不会再发起二次补发请求。
 - 发送后会先显示 `AI 思考中...` 占位消息（带三点动画），随后按 `delta` 事件逐步更新文本。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
 - 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
 - 若回退文本疑似 JSON 残片（以 `{` 开头但不可解析），前端会提示“结构化输出未完成，请重试”。
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
 - AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
+- 调试桥接：
+  - `window.__SALES_TOOL_AI_CHAT__.getSessionHistory()`
+  - `window.__SALES_TOOL_AI_CHAT__.clearSessionHistory()`
 
 ### 12.4 验收清单
 1. 线上页面登录后可正常使用业务模块。
 2. 发送聊天问题可返回 Gemini 文本。
 3. 前端源码与 `config.js` 中不包含 `GEMINI_API_KEY`。
 4. 关闭或清空 `GEMINI_API_KEY` 时，聊天提示“服务端未配置”。
-5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_ERROR`。
+5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_AUTH_ERROR`、`UPSTREAM_RATE_LIMIT`、`UPSTREAM_ERROR`。
 6. 用户报错时可提供“请求号（requestId）”用于排查。
 7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
