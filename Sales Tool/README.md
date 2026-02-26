@@ -52,7 +52,9 @@
 ├── targets.js                 # 年度/季度/月度指标与产品分配
 ├── reports.js                 # 报表计算、图表渲染、导出
 ├── config.example.js          # Supabase 配置模板
-├── config.local.js            # 本地配置（已 gitignore）
+├── config.js                  # 运行时配置（构建时生成，已 gitignore）
+├── scripts/
+│   └── generate-config.js     # 按环境变量生成 config.js
 ├── .gitignore
 ├── package.json
 ├── package-lock.json
@@ -83,9 +85,9 @@ npm run check
 
 ## 5. 配置说明（Supabase）
 
-项目通过 `window.__APP_CONFIG__` 注入配置（`index.html` 会先加载 `config.local.js`）。
+项目通过 `window.__APP_CONFIG__` 注入配置（`index.html` 会先加载 `config.js`）。
 
-`config.local.js` 结构：
+`config.js` 结构：
 
 ```js
 window.__APP_CONFIG__ = {
@@ -94,8 +96,33 @@ window.__APP_CONFIG__ = {
 };
 ```
 
+本地开发（任选其一）：
+
+1. 直接拷贝模板为 `config.js`
+
+```bash
+cp config.example.js config.js
+```
+
+2. 用环境变量生成 `config.js`（与 Cloudflare 一致）
+
+```bash
+SUPABASE_URL=https://<your-project-ref>.supabase.co \
+SUPABASE_ANON_KEY=<your-anon-or-publishable-key> \
+npm run build:cf
+```
+
+Cloudflare Pages 推荐配置：
+- Root directory：`Sales Tool`
+- Build command：`npm ci && npm run build:cf`
+- Build output directory：`.`
+- Environment Variables（Production/Preview）：
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+
 注意事项：
-- `config.local.js` 已被 `.gitignore` 忽略，不应提交。
+- `config.js` 已被 `.gitignore` 忽略，不应提交。
+- `SUPABASE_ANON_KEY` 是前端可公开 key，可用于浏览器端；不要使用 `service_role` key。
 - 若缺少配置，登录按钮会被禁用并显示配置错误。
 
 ## 6. 认证与门禁流程
