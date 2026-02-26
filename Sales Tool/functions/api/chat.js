@@ -11,6 +11,8 @@ const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
 const TOTAL_CHAT_BUDGET_MS = 35000;
 const FIRST_STAGE_BUDGET_MS = 18000;
 const FIRST_AND_RETRY_BUDGET_MS = 24000;
+const SCHEMA_INVALID_REPAIR_BUDGET_MS = 22000;
+const SCHEMA_INVALID_REPAIR_MIN_OUTPUT_CHARS = 300;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
@@ -70,6 +72,27 @@ const MODE_DEFINITIONS = Object.freeze({
     label: "行动模式",
     goal: "用于制定执行清单，输出可落地动作。",
     focus: "强调负责人、时间、追踪指标与下一步检查点。",
+  },
+});
+
+const MODE_QUALITY_THRESHOLDS = Object.freeze({
+  [CHAT_MODES.BRIEFING]: {
+    minSummaryChars: 70,
+    minHighlightsCount: 1,
+    minEvidenceCount: 1,
+    minActionsCount: 1,
+  },
+  [CHAT_MODES.DIAGNOSIS]: {
+    minSummaryChars: 70,
+    minHighlightsCount: 1,
+    minEvidenceCount: 1,
+    minActionsCount: 0,
+  },
+  [CHAT_MODES.ACTION_PLAN]: {
+    minSummaryChars: 70,
+    minHighlightsCount: 0,
+    minEvidenceCount: 1,
+    minActionsCount: 1,
   },
 });
 
@@ -287,23 +310,20 @@ function getModeTokenProfile(mode, messageLength = 0) {
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
   let retry = RETRY_MAX_OUTPUT_TOKENS;
   if (safeMode === CHAT_MODES.BRIEFING) {
-    first = 640;
-    retry = 1024;
-  } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
     first = 896;
     retry = 1280;
-  } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
-    first = 1152;
+  } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
+    first = 1024;
     retry = 1536;
+  } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
+    first = 1280;
+    retry = 1792;
   }
 
   const safeLength = Number.isFinite(Number(messageLength)) ? Math.floor(Number(messageLength)) : 0;
   if (safeLength > 120) {
     first = Math.min(first + 256, RETRY_MAX_OUTPUT_TOKENS);
     retry = Math.min(retry + 256, 2048);
-  } else if (safeLength > 0 && safeLength < 30) {
-    first = Math.max(512, first - 128);
-    retry = Math.max(896, retry - 128);
   }
 
   return { first, retry };
@@ -324,6 +344,7 @@ function buildChatSuccessPayload(params) {
     finalStage = "first",
     contextChars = 0,
     historyChars = 0,
+    attemptDiagnostics = [],
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const structured = format === "structured" ? evaluation.structured : null;
@@ -339,6 +360,32 @@ function buildChatSuccessPayload(params) {
     safeFinalStage === "retry" || safeFinalStage === "repair" ? safeFinalStage : "first";
   const safeContextChars = Number.isFinite(Number(contextChars)) && Number(contextChars) >= 0 ? Math.floor(Number(contextChars)) : 0;
   const safeHistoryChars = Number.isFinite(Number(historyChars)) && Number(historyChars) >= 0 ? Math.floor(Number(historyChars)) : 0;
+  const safeAttemptDiagnostics = Array.isArray(attemptDiagnostics)
+    ? attemptDiagnostics
+        .map((item) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const stageCandidate = trimString(item.stage);
+          const stage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
+          const format = item.format === "structured" ? "structured" : "text_fallback";
+          const formatReason = trimString(item.formatReason) || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+          const finishReason = trimString(item.finishReason);
+          const outputCharsRaw = Number(item.outputChars);
+          const elapsedMsRaw = Number(item.elapsedMs);
+          const maxOutputTokensRaw = Number(item.maxOutputTokens);
+          return {
+            stage,
+            format,
+            formatReason,
+            finishReason,
+            outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
+            elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
+            maxOutputTokens: Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+          };
+        })
+        .filter((item) => item !== null)
+    : [];
 
   return {
     reply,
@@ -364,6 +411,7 @@ function buildChatSuccessPayload(params) {
       finalStage: normalizedFinalStage,
       contextChars: safeContextChars,
       historyChars: safeHistoryChars,
+      attemptDiagnostics: safeAttemptDiagnostics,
     },
   };
 }
@@ -400,6 +448,10 @@ function buildPrompt(message, context, mode, options = {}) {
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
   const history = sanitizeHistoryList(options?.history);
   const historyText = formatHistoryText(history);
+  const briefingCompactRule =
+    safeMode === CHAT_MODES.BRIEFING
+      ? "简报模式请紧凑输出：highlights/risks/actions/nextQuestions 建议各不超过 2 条，避免冗长解释。"
+      : "";
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -412,6 +464,7 @@ function buildPrompt(message, context, mode, options = {}) {
       : "本次为首轮输出，请优先保证结构化完整性和可读性。",
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
+    briefingCompactRule,
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
     "禁止使用 Markdown 代码块；如果无法保证格式，仍优先输出可解析 JSON。",
     "优先参考最近对话上下文，但以当前传入数据口径为准。",
@@ -441,6 +494,7 @@ function safeRepairSourceText(rawReply) {
 function buildRepairPrompt(rawReply, mode) {
   const safeMode = sanitizeMode(mode);
   const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
+  const thresholds = MODE_QUALITY_THRESHOLDS[safeMode] || MODE_QUALITY_THRESHOLDS[CHAT_MODES.BRIEFING];
   const sourceText = safeRepairSourceText(rawReply);
 
   return [
@@ -449,7 +503,7 @@ function buildRepairPrompt(rawReply, mode) {
     "禁止输出解释文字、禁止 Markdown 代码块，只能输出 JSON 对象。",
     `当前模式：${modeDefinition.label}。`,
     "字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
-    `summary 至少 ${MIN_SUMMARY_CHARS} 字；highlights/evidence/actions 至少各 ${MIN_HIGHLIGHTS_COUNT} 条。`,
+    `summary 至少 ${thresholds.minSummaryChars} 字；highlights>=${thresholds.minHighlightsCount}，evidence>=${thresholds.minEvidenceCount}，actions>=${thresholds.minActionsCount}。`,
     "若源文本信息不足，可在 risks 中明确“信息不足”，但仍需输出合法结构。",
     "",
     "待修复文本：",
@@ -595,7 +649,12 @@ function isTruncatedFinishReason(reason) {
   );
 }
 
-function validateStructuredQuality(structured) {
+function getModeQualityThreshold(mode) {
+  const safeMode = sanitizeMode(mode);
+  return MODE_QUALITY_THRESHOLDS[safeMode] || MODE_QUALITY_THRESHOLDS[CHAT_MODES.BRIEFING];
+}
+
+function validateStructuredQuality(structured, mode) {
   if (!structured || typeof structured !== "object") {
     return {
       ok: false,
@@ -603,7 +662,9 @@ function validateStructuredQuality(structured) {
     };
   }
 
-  if (structured.summary.length < MIN_SUMMARY_CHARS) {
+  const threshold = getModeQualityThreshold(mode);
+
+  if (structured.summary.length < threshold.minSummaryChars) {
     return {
       ok: false,
       reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
@@ -611,9 +672,9 @@ function validateStructuredQuality(structured) {
   }
 
   if (
-    structured.highlights.length < MIN_HIGHLIGHTS_COUNT ||
-    structured.evidence.length < MIN_EVIDENCE_COUNT ||
-    structured.actions.length < MIN_ACTIONS_COUNT
+    structured.highlights.length < threshold.minHighlightsCount ||
+    structured.evidence.length < threshold.minEvidenceCount ||
+    structured.actions.length < threshold.minActionsCount
   ) {
     return {
       ok: false,
@@ -627,7 +688,7 @@ function validateStructuredQuality(structured) {
   };
 }
 
-function evaluateGeminiOutput(reply, finishReason) {
+function evaluateGeminiOutput(reply, finishReason, mode) {
   const safeReply = trimString(reply);
   const safeFinishReason = trimString(finishReason);
   const outputChars = safeReply.length;
@@ -669,7 +730,7 @@ function evaluateGeminiOutput(reply, finishReason) {
     };
   }
 
-  const quality = validateStructuredQuality(structured);
+  const quality = validateStructuredQuality(structured, mode);
   if (!quality.ok) {
     return {
       format: "text_fallback",
@@ -1047,6 +1108,7 @@ async function attemptRepairStructured(model, key, rawReply, mode) {
     return {
       ok: false,
       evaluation: null,
+      error: null,
     };
   }
 
@@ -1058,12 +1120,47 @@ async function attemptRepairStructured(model, key, rawReply, mode) {
     return {
       ok: false,
       evaluation: null,
+      error: repairAttempt.error || null,
     };
   }
 
   return {
     ok: true,
-    evaluation: evaluateGeminiOutput(repairAttempt.reply, repairAttempt.finishReason),
+    evaluation: evaluateGeminiOutput(repairAttempt.reply, repairAttempt.finishReason, mode),
+    error: null,
+  };
+}
+
+function buildAttemptDiagnostic(stage, evaluation, maxOutputTokens, elapsedMs) {
+  const stageCandidate = trimString(stage);
+  const normalizedStage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
+  const normalizedFormat = evaluation?.format === "structured" ? "structured" : "text_fallback";
+  const formatReason = trimString(evaluation?.formatReason) || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+  const finishReason = trimString(evaluation?.finishReason);
+  const outputCharsRaw = Number(evaluation?.outputChars);
+  const elapsedMsRaw = Number(elapsedMs);
+  const maxOutputTokensRaw = Number(maxOutputTokens);
+  return {
+    stage: normalizedStage,
+    format: normalizedFormat,
+    formatReason,
+    finishReason,
+    outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
+    elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
+    maxOutputTokens: Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+  };
+}
+
+function buildAttemptDiagnosticFromError(stage, error, maxOutputTokens, elapsedMs) {
+  const code = trimString(error?.code).toLowerCase() || "upstream_error";
+  return {
+    stage: stage === "retry" || stage === "repair" ? stage : "first",
+    format: "text_fallback",
+    formatReason: code,
+    finishReason: "",
+    outputChars: 0,
+    elapsedMs: Number.isFinite(Number(elapsedMs)) && Number(elapsedMs) >= 0 ? Math.floor(Number(elapsedMs)) : 0,
+    maxOutputTokens: Number.isFinite(Number(maxOutputTokens)) && Number(maxOutputTokens) > 0 ? Math.floor(Number(maxOutputTokens)) : 0,
   };
 }
 
@@ -1281,11 +1378,14 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
   const modeTokenProfile = getModeTokenProfile(mode, trimString(message).length);
   const safeContextChars = safeJsonLength(contextPayload);
   const safeHistoryChars = safeJsonLength(history);
+  const safeMode = sanitizeMode(mode);
   let attemptCount = 0;
   let retryCount = 0;
   let repairApplied = false;
   let repairSucceeded = false;
   let finalStage = "first";
+  let retryEvaluated = false;
+  const attemptDiagnostics = [];
 
   const firstAttemptPayload = buildGeminiPayload({
     message,
@@ -1305,11 +1405,13 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     return firstAttempt;
   }
 
-  let finalEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason);
+  let finalEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason, safeMode);
+  attemptDiagnostics.push(
+    buildAttemptDiagnostic("first", finalEvaluation, modeTokenProfile.first, stageDurations.first),
+  );
   const firstElapsed = stageDurations.first;
   if (finalEvaluation.shouldRetry && hasBudgetForNextAttempt() && firstElapsed < FIRST_STAGE_BUDGET_MS) {
     retryCount = 1;
-    finalStage = "retry";
     const retryPayload = buildGeminiPayload({
       message,
       contextPayload,
@@ -1325,33 +1427,57 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     });
     stageDurations.retry = Date.now() - retryStageStartedAt;
     if (retryAttempt.ok) {
-      const retryEvaluation = evaluateGeminiOutput(retryAttempt.reply, retryAttempt.finishReason);
+      const retryEvaluation = evaluateGeminiOutput(retryAttempt.reply, retryAttempt.finishReason, safeMode);
+      retryEvaluated = true;
+      attemptDiagnostics.push(
+        buildAttemptDiagnostic("retry", retryEvaluation, modeTokenProfile.retry, stageDurations.retry),
+      );
       if (retryEvaluation.format === "structured" || retryEvaluation.reply) {
         finalEvaluation = retryEvaluation;
+        finalStage = "retry";
       }
+    } else {
+      attemptDiagnostics.push(
+        buildAttemptDiagnosticFromError("retry", retryAttempt.error, modeTokenProfile.retry, stageDurations.retry),
+      );
     }
   }
 
   const elapsedAfterRetry = Date.now() - startedAt;
+  const allowSchemaInvalidRepair =
+    safeMode !== CHAT_MODES.BRIEFING &&
+    retryEvaluated &&
+    finalStage === "retry" &&
+    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.SCHEMA_INVALID &&
+    elapsedAfterRetry < SCHEMA_INVALID_REPAIR_BUDGET_MS &&
+    Number(finalEvaluation.outputChars) >= SCHEMA_INVALID_REPAIR_MIN_OUTPUT_CHARS;
   const shouldAttemptRepair =
     finalEvaluation.format !== "structured" &&
     trimString(finalEvaluation.reply) &&
     hasBudgetForNextAttempt() &&
     elapsedAfterRetry < FIRST_AND_RETRY_BUDGET_MS &&
     (finalEvaluation.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED ||
-      finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED);
+      finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED ||
+      allowSchemaInvalidRepair);
   if (shouldAttemptRepair) {
     repairApplied = true;
-    finalStage = "repair";
     attemptCount += 1;
     const repairStageStartedAt = Date.now();
     const repairAttempt = await attemptRepairStructured(model, key, finalEvaluation.reply, mode);
     stageDurations.repair = Date.now() - repairStageStartedAt;
     if (repairAttempt.ok && repairAttempt.evaluation) {
+      attemptDiagnostics.push(
+        buildAttemptDiagnostic("repair", repairAttempt.evaluation, RETRY_MAX_OUTPUT_TOKENS, stageDurations.repair),
+      );
       if (repairAttempt.evaluation.format === "structured") {
         finalEvaluation = repairAttempt.evaluation;
         repairSucceeded = true;
+        finalStage = "repair";
       }
+    } else {
+      attemptDiagnostics.push(
+        buildAttemptDiagnosticFromError("repair", repairAttempt.error, RETRY_MAX_OUTPUT_TOKENS, stageDurations.repair),
+      );
     }
   }
 
@@ -1367,6 +1493,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     finalStage,
     contextChars: safeContextChars,
     historyChars: safeHistoryChars,
+    attemptDiagnostics,
   };
 }
 
@@ -1550,7 +1677,7 @@ export async function onRequestPost(context) {
             return;
           }
 
-          const streamEvaluation = evaluateGeminiOutput(streamResult.reply, streamResult.finishReason);
+          const streamEvaluation = evaluateGeminiOutput(streamResult.reply, streamResult.finishReason, mode);
           const payload = buildChatSuccessPayload({
             evaluation: streamEvaluation,
             model,
@@ -1567,6 +1694,9 @@ export async function onRequestPost(context) {
             finalStage: "first",
             contextChars: requestContextChars,
             historyChars: requestHistoryChars,
+            attemptDiagnostics: [
+              buildAttemptDiagnostic("first", streamEvaluation, modeTokenProfile.first, Date.now() - streamStartedAt),
+            ],
           });
           emit({
             type: "done",
@@ -1614,6 +1744,7 @@ export async function onRequestPost(context) {
       finalStage: generated.finalStage,
       contextChars: generated.contextChars,
       historyChars: generated.historyChars,
+      attemptDiagnostics: generated.attemptDiagnostics,
     }),
     200,
     requestId,

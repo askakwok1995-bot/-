@@ -9,6 +9,18 @@ const DEFAULT_THRESHOLD = Object.freeze({
   maxP95Ms: 15000,
 });
 
+const BASELINE_METRICS = Object.freeze({
+  p50ElapsedMs: 30815,
+  p95ElapsedMs: 45849,
+  structuredRate: 0.5,
+  attempt3Rate: 0.4,
+  mode: Object.freeze({
+    briefing: Object.freeze({ repairRate: 1.0, textFallbackRate: 0 }),
+    diagnosis: Object.freeze({ repairRate: 0, textFallbackRate: 2 / 3 }),
+    "action-plan": Object.freeze({ repairRate: 0, textFallbackRate: 1.0 }),
+  }),
+});
+
 const TEST_CASES = Object.freeze([
   { mode: "briefing", type: "short", message: "请给我一段本月简报。" },
   { mode: "briefing", type: "short", message: "总结Q1达成情况。" },
@@ -250,6 +262,9 @@ function buildModeStats(results) {
     const total = rows.length || 1;
     const attempt3Count = rows.filter((row) => row.attemptCount === "3").length;
     const textFallbackCount = rows.filter((row) => row.format === "text_fallback").length;
+    const finalStageFirstCount = rows.filter((row) => row.finalStage === "first").length;
+    const finalStageRetryCount = rows.filter((row) => row.finalStage === "retry").length;
+    const finalStageRepairCount = rows.filter((row) => row.finalStage === "repair").length;
     const elapsedValues = rows.map((row) => Number(row.elapsedMs)).filter((value) => Number.isFinite(value) && value >= 0);
     const p95 = calcPercentile(elapsedValues, 95);
     return {
@@ -257,6 +272,9 @@ function buildModeStats(results) {
       total,
       attempt3Rate: attempt3Count / total,
       textFallbackRate: textFallbackCount / total,
+      finalStageFirstRate: finalStageFirstCount / total,
+      finalStageRetryRate: finalStageRetryCount / total,
+      finalStageRepairRate: finalStageRepairCount / total,
       p95ElapsedMs: p95,
     };
   });
@@ -268,6 +286,9 @@ function evaluateThresholds(results) {
   const timeoutCount = results.filter((row) => row.errorCode === "UPSTREAM_TIMEOUT").length;
   const attempt3Count = results.filter((row) => row.attemptCount === "3").length;
   const structuredCount = results.filter((row) => row.format === "structured").length;
+  const finalStageFirstCount = results.filter((row) => row.finalStage === "first").length;
+  const finalStageRetryCount = results.filter((row) => row.finalStage === "retry").length;
+  const finalStageRepairCount = results.filter((row) => row.finalStage === "repair").length;
   const elapsedValues = results.map((row) => Number(row.elapsedMs)).filter((value) => Number.isFinite(value) && value >= 0);
   const p50ElapsedMs = calcPercentile(elapsedValues, 50);
   const p95ElapsedMs = calcPercentile(elapsedValues, 95);
@@ -277,6 +298,9 @@ function evaluateThresholds(results) {
     timeoutRate: timeoutCount / total,
     attempt3Rate: attempt3Count / total,
     structuredRate: structuredCount / total,
+    finalStageFirstRate: finalStageFirstCount / total,
+    finalStageRetryRate: finalStageRetryCount / total,
+    finalStageRepairRate: finalStageRepairCount / total,
     p50ElapsedMs,
     p95ElapsedMs,
   };
@@ -288,6 +312,9 @@ function evaluateThresholds(results) {
       timeoutCount,
       attempt3Count,
       structuredCount,
+      finalStageFirstCount,
+      finalStageRetryCount,
+      finalStageRepairCount,
       elapsedValues,
     },
     metrics,
@@ -377,11 +404,84 @@ function printTable(results) {
 
 function printModeStats(results) {
   const stats = buildModeStats(results);
-  console.log("| mode | 样本数 | attemptCount=3 占比 | text_fallback 占比 | p95 elapsedMs |");
-  console.log("|------|--------|----------------------|--------------------|---------------|");
+  console.log(
+    "| mode | 样本数 | attemptCount=3 占比 | text_fallback 占比 | finalStage=first 占比 | finalStage=retry 占比 | finalStage=repair 占比 | p95 elapsedMs |",
+  );
+  console.log(
+    "|------|--------|----------------------|--------------------|-----------------------|-----------------------|------------------------|---------------|",
+  );
   for (const item of stats) {
     console.log(
-      `| ${item.mode} | ${item.total} | ${toPercent(item.attempt3Rate)} | ${toPercent(item.textFallbackRate)} | ${item.p95ElapsedMs}ms |`,
+      `| ${item.mode} | ${item.total} | ${toPercent(item.attempt3Rate)} | ${toPercent(item.textFallbackRate)} | ${toPercent(item.finalStageFirstRate)} | ${toPercent(item.finalStageRetryRate)} | ${toPercent(item.finalStageRepairRate)} | ${item.p95ElapsedMs}ms |`,
+    );
+  }
+}
+
+function printFinalStageSummary(summary) {
+  console.log("| finalStage=first 占比 | finalStage=retry 占比 | finalStage=repair 占比 |");
+  console.log("|-----------------------|-----------------------|------------------------|");
+  console.log(
+    `| ${toPercent(summary.metrics.finalStageFirstRate)} | ${toPercent(summary.metrics.finalStageRetryRate)} | ${toPercent(summary.metrics.finalStageRepairRate)} |`,
+  );
+}
+
+function formatDeltaPercent(currentRate, baselineRate) {
+  const current = Number(currentRate);
+  const baseline = Number(baselineRate);
+  if (!Number.isFinite(current) || !Number.isFinite(baseline)) {
+    return "-";
+  }
+  const delta = (current - baseline) * 100;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1)}pp`;
+}
+
+function formatDeltaMs(currentMs, baselineMs) {
+  const current = Number(currentMs);
+  const baseline = Number(baselineMs);
+  if (!Number.isFinite(current) || !Number.isFinite(baseline)) {
+    return "-";
+  }
+  const delta = current - baseline;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${Math.floor(delta)}ms`;
+}
+
+function printBaselineComparison(results, summary) {
+  const modeStats = buildModeStats(results);
+  const modeStatMap = Object.fromEntries(modeStats.map((item) => [item.mode, item]));
+  console.log("| 指标 | baseline | 当前 | 变化 |");
+  console.log("|------|----------|------|------|");
+  console.log(
+    `| p50 elapsedMs | ${BASELINE_METRICS.p50ElapsedMs}ms | ${summary.metrics.p50ElapsedMs}ms | ${formatDeltaMs(summary.metrics.p50ElapsedMs, BASELINE_METRICS.p50ElapsedMs)} |`,
+  );
+  console.log(
+    `| p95 elapsedMs | ${BASELINE_METRICS.p95ElapsedMs}ms | ${summary.metrics.p95ElapsedMs}ms | ${formatDeltaMs(summary.metrics.p95ElapsedMs, BASELINE_METRICS.p95ElapsedMs)} |`,
+  );
+  console.log(
+    `| structured 占比 | ${toPercent(BASELINE_METRICS.structuredRate)} | ${toPercent(summary.metrics.structuredRate)} | ${formatDeltaPercent(summary.metrics.structuredRate, BASELINE_METRICS.structuredRate)} |`,
+  );
+  console.log(
+    `| attemptCount=3 占比 | ${toPercent(BASELINE_METRICS.attempt3Rate)} | ${toPercent(summary.metrics.attempt3Rate)} | ${formatDeltaPercent(summary.metrics.attempt3Rate, BASELINE_METRICS.attempt3Rate)} |`,
+  );
+
+  const briefingStats = modeStatMap.briefing || null;
+  const diagnosisStats = modeStatMap.diagnosis || null;
+  const actionPlanStats = modeStatMap["action-plan"] || null;
+
+  if (briefingStats) {
+    console.log(
+      `| briefing finalStage=repair 占比 | ${toPercent(BASELINE_METRICS.mode.briefing.repairRate)} | ${toPercent(briefingStats.finalStageRepairRate)} | ${formatDeltaPercent(briefingStats.finalStageRepairRate, BASELINE_METRICS.mode.briefing.repairRate)} |`,
+    );
+  }
+  if (diagnosisStats) {
+    console.log(
+      `| diagnosis text_fallback 占比 | ${toPercent(BASELINE_METRICS.mode.diagnosis.textFallbackRate)} | ${toPercent(diagnosisStats.textFallbackRate)} | ${formatDeltaPercent(diagnosisStats.textFallbackRate, BASELINE_METRICS.mode.diagnosis.textFallbackRate)} |`,
+    );
+  }
+  if (actionPlanStats) {
+    console.log(
+      `| action-plan text_fallback 占比 | ${toPercent(BASELINE_METRICS.mode["action-plan"].textFallbackRate)} | ${toPercent(actionPlanStats.textFallbackRate)} | ${formatDeltaPercent(actionPlanStats.textFallbackRate, BASELINE_METRICS.mode["action-plan"].textFallbackRate)} |`,
     );
   }
 }
@@ -493,6 +593,8 @@ async function run() {
   printModeStats(results);
 
   const summary = evaluateThresholds(results);
+  console.log("\n=== FinalStage 总体占比 ===");
+  printFinalStageSummary(summary);
   console.log("\n=== 判定结果 ===");
   for (const check of summary.checks) {
     console.log(`- [${check.pass ? "PASS" : "FAIL"}] ${check.label} -> ${check.value}`);
@@ -504,8 +606,13 @@ async function run() {
   console.log(`- 超时数: ${summary.counts.timeoutCount}`);
   console.log(`- attemptCount=3 数: ${summary.counts.attempt3Count}`);
   console.log(`- structured 数: ${summary.counts.structuredCount}`);
+  console.log(`- finalStage=first 数: ${summary.counts.finalStageFirstCount}`);
+  console.log(`- finalStage=retry 数: ${summary.counts.finalStageRetryCount}`);
+  console.log(`- finalStage=repair 数: ${summary.counts.finalStageRepairCount}`);
   console.log(`- p50 elapsedMs: ${summary.metrics.p50ElapsedMs}ms`);
   console.log(`- p95 elapsedMs: ${summary.metrics.p95ElapsedMs}ms`);
+  console.log("\n=== 与 baseline 对比 ===");
+  printBaselineComparison(results, summary);
   if (summary.metrics.p95ElapsedMs > 15000 && summary.metrics.p95ElapsedMs <= 18000) {
     console.log("\n=== 耗时分布观察（15000~18000ms 区间）===");
     printElapsedDistribution(results);

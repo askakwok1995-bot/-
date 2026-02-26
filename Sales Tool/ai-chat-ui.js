@@ -88,6 +88,35 @@ function looksLikeJsonFragment(text) {
   }
 }
 
+function normalizeAttemptDiagnostics(rawDiagnostics) {
+  if (!Array.isArray(rawDiagnostics)) {
+    return [];
+  }
+  return rawDiagnostics
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const stageCandidate = toText(item.stage);
+      const stage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
+      const format = item.format === "structured" ? "structured" : "text_fallback";
+      const outputCharsRaw = Number(item.outputChars);
+      const elapsedMsRaw = Number(item.elapsedMs);
+      const maxOutputTokensRaw = Number(item.maxOutputTokens);
+      return {
+        stage,
+        format,
+        formatReason: toText(item.formatReason) || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED,
+        finishReason: toText(item.finishReason),
+        outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
+        elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
+        maxOutputTokens:
+          Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+      };
+    })
+    .filter((item) => item !== null);
+}
+
 function normalizeStringList(value, maxItems = 6) {
   if (!Array.isArray(value)) return [];
   return value
@@ -648,6 +677,7 @@ export function initAiChatUi(options = {}) {
           finalStage: ["first", "retry", "repair"].includes(String(rawMeta.finalStage || "").trim())
             ? String(rawMeta.finalStage).trim()
             : "first",
+          attemptDiagnostics: normalizeAttemptDiagnostics(rawMeta.attemptDiagnostics),
         }
       : null;
     return {

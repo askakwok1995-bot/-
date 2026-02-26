@@ -313,14 +313,18 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
 - 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
-- 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”；`schema_invalid` 不再进入 repair（减少上游调用次数）。
+- 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
+- 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
-  - `briefing`: first `640` / retry `1024`
-  - `diagnosis`: first `896` / retry `1280`
-  - `action-plan`: first `1152` / retry `1536`
+  - `briefing`: first `896` / retry `1280`
+  - `diagnosis`: first `1024` / retry `1536`
+  - `action-plan`: first `1280` / retry `1792`
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
-- 结构化质量门槛（稳定版）：`summary` 长度至少 70 字，且 `highlights/evidence/actions` 至少各 1 条。
+- 结构化质量门槛（mode 化）：
+  - `briefing`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=1`
+  - `diagnosis`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=0`
+  - `action-plan`：`summary>=70`，`highlights>=0`，`evidence>=1`，`actions>=1`
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
@@ -348,7 +352,18 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "stageDurations": { "first": 8421, "retry": 0, "repair": 0 },
     "finalStage": "first",
     "contextChars": 2521,
-    "historyChars": 864
+    "historyChars": 864,
+    "attemptDiagnostics": [
+      {
+        "stage": "first",
+        "format": "structured",
+        "formatReason": "structured_ok",
+        "finishReason": "STOP",
+        "outputChars": 386,
+        "elapsedMs": 8421,
+        "maxOutputTokens": 896
+      }
+    ]
   },
   "structured": {
     "summary": "总体结论",
@@ -395,6 +410,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.stageDurations` 为分阶段耗时（`first/retry/repair`）。
 - `meta.finalStage` 为最终命中的阶段。
 - `meta.contextChars/historyChars` 用于观察请求体体量。
+- `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens`），用于定位“首轮命中低”或“repair 依赖高”。
 
 失败响应（示例）：
 ```json
@@ -443,7 +459,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 7. 错误响应中可见 `error.stage/upstreamStatus/durationMs`（如上游 503 位于 retry 阶段）。
 8. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars` 在响应中存在且可用于排障。
+10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/attemptDiagnostics` 在响应中存在且可用于排障。
 11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查
@@ -466,15 +482,17 @@ npm run check:chat-stability
 
 脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
 1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/elapsedMs`）
-2. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`p95 elapsedMs`）
-3. 总体耗时统计（`p50/p95 elapsedMs`）
-4. 阈值判定（Pass/Fail）：
+2. `finalStage` 总体占比（`first/retry/repair`）
+3. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`finalStage=first/retry/repair` 占比、`p95 elapsedMs`）
+4. 总体耗时统计（`p50/p95 elapsedMs`）
+5. 与 baseline 对比（固定基线：`p50=30815`, `p95=45849`, `structured=50%`, `attempt3=40%`, `briefing repair=100%`, `diagnosis fallback=66.7%`, `action-plan fallback=100%`）
+6. 阈值判定（Pass/Fail）：
    - 总失败率 `<= 20%`
    - `UPSTREAM_TIMEOUT` 占比 `<= 10%`
    - `attemptCount=3` 占比 `<= 30%`
    - `structured` 占比 `>= 60%`
    - `p95 elapsedMs <= 15000ms`（目标值）
-5. 自动日志判读建议（基于错误码与阶段）
+7. 自动日志判读建议（基于错误码与阶段）
 
 注意：
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。

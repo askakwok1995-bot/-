@@ -1474,6 +1474,38 @@ async function initializeApp() {
     return reasons.includes(candidate) ? candidate : CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
   }
 
+  function normalizeAttemptDiagnostics(rawDiagnostics) {
+    if (!Array.isArray(rawDiagnostics)) {
+      return [];
+    }
+    return rawDiagnostics
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const stageCandidate = String(item.stage || "").trim();
+        const stage =
+          stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
+        const format = item.format === "structured" ? "structured" : "text_fallback";
+        const formatReason = String(item.formatReason || "").trim() || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+        const finishReason = String(item.finishReason || "").trim();
+        const outputCharsRaw = Number(item.outputChars);
+        const elapsedMsRaw = Number(item.elapsedMs);
+        const maxOutputTokensRaw = Number(item.maxOutputTokens);
+        return {
+          stage,
+          format,
+          formatReason,
+          finishReason,
+          outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
+          elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
+          maxOutputTokens:
+            Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+        };
+      })
+      .filter((item) => item !== null);
+  }
+
   function normalizeChatMeta(meta, fallbackFormat = "structured") {
     const defaultFormatReason =
       fallbackFormat === "text_fallback" ? CHAT_FORMAT_REASONS.JSON_PARSE_FAILED : CHAT_FORMAT_REASONS.STRUCTURED_OK;
@@ -1495,6 +1527,7 @@ async function initializeApp() {
         finalStage: "first",
         contextChars: 0,
         historyChars: 0,
+        attemptDiagnostics: [],
       };
     }
 
@@ -1527,6 +1560,7 @@ async function initializeApp() {
       finalStage,
       contextChars: Number.isFinite(contextCharsRaw) && contextCharsRaw >= 0 ? Math.floor(contextCharsRaw) : 0,
       historyChars: Number.isFinite(historyCharsRaw) && historyCharsRaw >= 0 ? Math.floor(historyCharsRaw) : 0,
+      attemptDiagnostics: normalizeAttemptDiagnostics(meta.attemptDiagnostics),
     };
   }
 
