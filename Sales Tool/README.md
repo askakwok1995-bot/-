@@ -313,9 +313,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
 - 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
+- 若首轮 + 纠错重试后仍是坏 JSON，会触发一次“结构化修复调用”，仅修复一次，避免无限重试。
 - 默认输出 token：首轮 `1536`，重试 `2048`。
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
-- 结构化质量门槛（平衡版）：`summary` 长度至少 80 字，且 `highlights/evidence/actions` 至少各 2 条。
+- 结构化质量门槛（稳定版）：`summary` 长度至少 70 字，且 `highlights/evidence/actions` 至少各 1 条。
 - 会话历史门槛：最多携带最近 6 轮（12 条）`history`，总字符上限约 `4000`。
 
 非流式成功响应（`stream=false`，默认）：
@@ -330,7 +331,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "formatReason": "structured_ok",
     "retryCount": 0,
     "finishReason": "STOP",
-    "outputChars": 386
+    "outputChars": 386,
+    "repairApplied": false,
+    "repairSucceeded": false,
+    "attemptCount": 1
   },
   "structured": {
     "summary": "总体结论",
@@ -370,6 +374,9 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `schema_invalid`
   - `output_truncated`
   - `empty_reply`
+- `meta.repairApplied` 表示本次是否触发了修复调用。
+- `meta.repairSucceeded` 表示修复调用是否成功恢复结构化结果。
+- `meta.attemptCount` 表示总尝试次数（首轮 + 重试 + 修复）。
 
 失败响应（示例）：
 ```json
@@ -390,7 +397,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 发送后会先显示 `AI 思考中...` 占位消息（带三点动画），随后按 `delta` 事件逐步更新文本。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
 - 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
-- 若回退文本疑似 JSON 残片（以 `{` 开头但不可解析），前端会提示“结构化输出未完成，请重试”。
+- 仅在 `formatReason` 为 `json_parse_failed/output_truncated` 且 `repairSucceeded=false` 时，前端才提示“结构化输出未完成，请重试”。
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
 - AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
 - 调试桥接：
@@ -406,7 +413,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 6. 用户报错时可提供“请求号（requestId）”用于排查。
 7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-9. `meta.formatReason/retryCount/finishReason/outputChars` 在响应中存在且可用于排障。
+9. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount` 在响应中存在且可用于排障。
 10. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查

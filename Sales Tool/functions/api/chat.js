@@ -4,16 +4,17 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONTEXT_CHARS = 18000;
 const MAX_HISTORY_ITEMS = 12;
 const MAX_HISTORY_CHARS = 4000;
+const MAX_REPAIR_SOURCE_CHARS = 8000;
 const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
-const MIN_SUMMARY_CHARS = 80;
-const MIN_HIGHLIGHTS_COUNT = 2;
-const MIN_EVIDENCE_COUNT = 2;
-const MIN_ACTIONS_COUNT = 2;
+const MIN_SUMMARY_CHARS = 70;
+const MIN_HIGHLIGHTS_COUNT = 1;
+const MIN_EVIDENCE_COUNT = 1;
+const MIN_ACTIONS_COUNT = 1;
 const GEMINI_STREAM_ALT = "alt=sse";
 
 const CHAT_ERROR_CODES = Object.freeze({
@@ -249,11 +250,21 @@ function formatHistoryText(history) {
 }
 
 function buildChatSuccessPayload(params) {
-  const { evaluation, model, requestId, mode, retryCount = 0 } = params || {};
+  const {
+    evaluation,
+    model,
+    requestId,
+    mode,
+    retryCount = 0,
+    repairApplied = false,
+    repairSucceeded = false,
+    attemptCount = 1,
+  } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const structured = format === "structured" ? evaluation.structured : null;
   const fallbackReply = trimString(evaluation?.reply) || "结构化输出未完成，请重试。";
   const reply = format === "structured" ? structured.summary : fallbackReply;
+  const safeAttemptCount = Number.isFinite(Number(attemptCount)) && Number(attemptCount) > 0 ? Math.floor(Number(attemptCount)) : 1;
 
   return {
     reply,
@@ -267,6 +278,9 @@ function buildChatSuccessPayload(params) {
       retryCount: retryCount === 1 ? 1 : 0,
       finishReason: trimString(evaluation?.finishReason),
       outputChars: Number.isFinite(evaluation?.outputChars) ? evaluation.outputChars : 0,
+      repairApplied: Boolean(repairApplied),
+      repairSucceeded: Boolean(repairSucceeded),
+      attemptCount: safeAttemptCount,
     },
   };
 }
@@ -327,6 +341,36 @@ function buildPrompt(message, context, mode, options = {}) {
     "",
     "分析上下文(JSON)：",
     contextText,
+  ].join("\n");
+}
+
+function safeRepairSourceText(rawReply) {
+  const text = trimString(rawReply);
+  if (!text) {
+    return "";
+  }
+  if (text.length <= MAX_REPAIR_SOURCE_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_REPAIR_SOURCE_CHARS)}...(truncated)`;
+}
+
+function buildRepairPrompt(rawReply, mode) {
+  const safeMode = sanitizeMode(mode);
+  const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
+  const sourceText = safeRepairSourceText(rawReply);
+
+  return [
+    "你是销售分析助手的 JSON 修复器。",
+    "任务：将下面这段模型输出修复为一个合法、可解析的 JSON 对象。",
+    "禁止输出解释文字、禁止 Markdown 代码块，只能输出 JSON 对象。",
+    `当前模式：${modeDefinition.label}。`,
+    "字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
+    `summary 至少 ${MIN_SUMMARY_CHARS} 字；highlights/evidence/actions 至少各 ${MIN_HIGHLIGHTS_COUNT} 条。`,
+    "若源文本信息不足，可在 risks 中明确“信息不足”，但仍需输出合法结构。",
+    "",
+    "待修复文本：",
+    sourceText || "{}",
   ].join("\n");
 }
 
@@ -600,6 +644,28 @@ function buildGeminiPayload(params) {
   };
 }
 
+function buildGeminiRepairPayload(rawReply, mode) {
+  return {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: buildRepairPrompt(rawReply, mode),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      topP: 0.8,
+      maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
+      responseMimeType: "application/json",
+      responseSchema: CHAT_RESPONSE_SCHEMA,
+    },
+  };
+}
+
 function readUpstreamErrorMessage(payload) {
   if (!payload || typeof payload !== "object") return "";
   const topLevelMessage = trimString(payload.message);
@@ -849,6 +915,30 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload) {
   };
 }
 
+async function attemptRepairStructured(model, key, rawReply, mode) {
+  const sourceText = trimString(rawReply);
+  if (!sourceText) {
+    return {
+      ok: false,
+      evaluation: null,
+    };
+  }
+
+  const repairPayload = buildGeminiRepairPayload(sourceText, mode);
+  const repairAttempt = await requestGeminiNonStreaming(model, key, repairPayload);
+  if (!repairAttempt.ok) {
+    return {
+      ok: false,
+      evaluation: null,
+    };
+  }
+
+  return {
+    ok: true,
+    evaluation: evaluateGeminiOutput(repairAttempt.reply, repairAttempt.finishReason),
+  };
+}
+
 function consumeSseChunk(chunk, state, onEventData) {
   const nextChunk = String(chunk || "");
   if (!nextChunk) return;
@@ -1037,6 +1127,11 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
 }
 
 async function generateChatResponse(model, key, message, contextPayload, mode, history) {
+  let attemptCount = 0;
+  let retryCount = 0;
+  let repairApplied = false;
+  let repairSucceeded = false;
+
   const firstAttemptPayload = buildGeminiPayload({
     message,
     contextPayload,
@@ -1045,16 +1140,14 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     strictJsonOnly: false,
   });
+  attemptCount += 1;
   const firstAttempt = await requestGeminiNonStreaming(model, key, firstAttemptPayload);
   if (!firstAttempt.ok) {
     return firstAttempt;
   }
 
-  const firstEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason);
-  let finalEvaluation = firstEvaluation;
-  let retryCount = 0;
-
-  if (firstEvaluation.shouldRetry) {
+  let finalEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason);
+  if (finalEvaluation.shouldRetry) {
     retryCount = 1;
     const retryPayload = buildGeminiPayload({
       message,
@@ -1064,6 +1157,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
       maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
       strictJsonOnly: true,
     });
+    attemptCount += 1;
     const retryAttempt = await requestGeminiNonStreaming(model, key, retryPayload);
     if (retryAttempt.ok) {
       const retryEvaluation = evaluateGeminiOutput(retryAttempt.reply, retryAttempt.finishReason);
@@ -1073,10 +1167,25 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     }
   }
 
+  if (finalEvaluation.format !== "structured" && trimString(finalEvaluation.reply)) {
+    repairApplied = true;
+    attemptCount += 1;
+    const repairAttempt = await attemptRepairStructured(model, key, finalEvaluation.reply, mode);
+    if (repairAttempt.ok && repairAttempt.evaluation) {
+      if (repairAttempt.evaluation.format === "structured") {
+        finalEvaluation = repairAttempt.evaluation;
+        repairSucceeded = true;
+      }
+    }
+  }
+
   return {
     ok: true,
     evaluation: finalEvaluation,
     retryCount,
+    repairApplied,
+    repairSucceeded,
+    attemptCount,
   };
 }
 
@@ -1165,6 +1274,9 @@ export async function onRequestPost(context) {
                   requestId,
                   mode,
                   retryCount: fallback.retryCount,
+                  repairApplied: fallback.repairApplied,
+                  repairSucceeded: fallback.repairSucceeded,
+                  attemptCount: fallback.attemptCount,
                 });
                 emit({
                   type: "done",
@@ -1197,6 +1309,9 @@ export async function onRequestPost(context) {
                 requestId,
                 mode,
                 retryCount: fallback.retryCount,
+                repairApplied: fallback.repairApplied,
+                repairSucceeded: fallback.repairSucceeded,
+                attemptCount: fallback.attemptCount,
               });
               emit({
                 type: "done",
@@ -1225,6 +1340,9 @@ export async function onRequestPost(context) {
             requestId,
             mode,
             retryCount: 0,
+            repairApplied: false,
+            repairSucceeded: false,
+            attemptCount: 1,
           });
           emit({
             type: "done",
@@ -1260,6 +1378,9 @@ export async function onRequestPost(context) {
       requestId,
       mode,
       retryCount: generated.retryCount,
+      repairApplied: generated.repairApplied,
+      repairSucceeded: generated.repairSucceeded,
+      attemptCount: generated.attemptCount,
     }),
     200,
     requestId,

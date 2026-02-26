@@ -544,6 +544,11 @@ export function initAiChatUi(options = {}) {
       ? {
           formatReason: normalizeFormatReason(rawMeta.formatReason),
           retryCount: Number(rawMeta.retryCount) === 1 ? 1 : 0,
+          repairApplied: Boolean(rawMeta.repairApplied),
+          repairSucceeded: Boolean(rawMeta.repairSucceeded),
+          attemptCount: Number.isFinite(Number(rawMeta.attemptCount)) && Number(rawMeta.attemptCount) > 0
+            ? Math.floor(Number(rawMeta.attemptCount))
+            : 1,
         }
       : null;
     return {
@@ -625,7 +630,13 @@ export function initAiChatUi(options = {}) {
         if (!fallbackStatus && normalized.meta) {
           fallbackStatus = `已回退文本显示：${getFormatReasonLabel(normalized.meta.formatReason)}（原因码: ${normalized.meta.formatReason}）`;
         }
-        if (looksLikeJsonFragment(normalized.reply)) {
+        const shouldShowIncompleteJsonHint =
+          looksLikeJsonFragment(normalized.reply) &&
+          normalized.meta &&
+          (normalized.meta.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED ||
+            normalized.meta.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED) &&
+          !normalized.meta.repairSucceeded;
+        if (shouldShowIncompleteJsonHint) {
           fallbackStatus = "结构化输出未完成，请重试。";
         }
         if (normalized.requestId && !fallbackStatus.includes("请求号")) {

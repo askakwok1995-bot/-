@@ -1347,16 +1347,23 @@ async function initializeApp() {
         retryCount: 0,
         finishReason: "",
         outputChars: 0,
+        repairApplied: false,
+        repairSucceeded: false,
+        attemptCount: 1,
       };
     }
 
     const retryCount = Number(meta.retryCount) === 1 ? 1 : 0;
     const outputCharsRaw = Number(meta.outputChars);
+    const attemptCountRaw = Number(meta.attemptCount);
     return {
       formatReason: normalizeChatFormatReason(meta.formatReason),
       retryCount,
       finishReason: String(meta.finishReason || "").trim(),
       outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw > 0 ? Math.floor(outputCharsRaw) : 0,
+      repairApplied: Boolean(meta.repairApplied),
+      repairSucceeded: Boolean(meta.repairSucceeded),
+      attemptCount: Number.isFinite(attemptCountRaw) && attemptCountRaw > 0 ? Math.floor(attemptCountRaw) : 1,
     };
   }
 
