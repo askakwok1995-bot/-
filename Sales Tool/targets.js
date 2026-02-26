@@ -81,6 +81,19 @@ export function bindTargetInputEvents(state, dom, deps) {
   });
 
   if (dom.targetProductAllocBody instanceof HTMLElement) {
+    dom.targetProductAllocBody.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      const removeBtn = target.closest(".target-product-alloc-remove-btn");
+      if (!(removeBtn instanceof HTMLButtonElement)) return;
+
+      const productId = String(removeBtn.dataset.productId || "").trim();
+      if (!productId) return;
+
+      handleRemoveDeletedProductAllocationRow(state, dom, deps, productId);
+    });
+
     dom.targetProductAllocBody.addEventListener("input", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
@@ -255,6 +268,31 @@ function handleClearTargetProductAllocationPageClick(state, dom, deps) {
   renderReportsIfAvailable(deps);
 }
 
+function handleRemoveDeletedProductAllocationRow(state, dom, deps, productId) {
+  const safeProductId = String(productId || "").trim();
+  if (!safeProductId) return;
+
+  const isActiveProduct = state.products.some((item) => item.id === safeProductId);
+  if (isActiveProduct) return;
+
+  const yearData = ensureYearTargets(state, state.activeTargetYear, deps);
+  const allocations = getYearProductAllocations(yearData);
+  const targetEntry = allocations[safeProductId];
+  if (!targetEntry || typeof targetEntry !== "object") return;
+
+  const productName = String(targetEntry.productName || "").trim() || "该产品";
+  const confirmed = window.confirm(`确定移除“${productName}”的分配数据吗？此操作不可撤销。`);
+  if (!confirmed) return;
+
+  delete allocations[safeProductId];
+  state.targetProductAllocationFormatError = "";
+  yearData.updatedAt = new Date().toISOString();
+
+  flushTargetSave(state, deps);
+  renderTargetInputSection(state, dom, deps);
+  renderReportsIfAvailable(deps);
+}
+
 export function scheduleTargetSave(state, deps) {
   if (state.targetSaveTimer) {
     clearTimeout(state.targetSaveTimer);
@@ -400,6 +438,9 @@ export function renderTargetError(state, dom, validation) {
   if (!(dom.targetErrorEl instanceof HTMLElement)) return;
 
   const messages = [];
+  if (state.targetSyncError) {
+    messages.push(state.targetSyncError);
+  }
   if (state.targetInputFormatError) {
     messages.push(state.targetInputFormatError);
   }
@@ -438,7 +479,7 @@ function renderTargetProductAllocationSection(state, dom, deps, yearData) {
   if (rows.length === 0) {
     dom.targetProductAllocBody.innerHTML = `
       <tr>
-        <td colspan="5" class="empty">暂无产品配置</td>
+        <td colspan="6" class="empty">暂无产品配置</td>
       </tr>
     `;
   } else {
@@ -446,6 +487,17 @@ function renderTargetProductAllocationSection(state, dom, deps, yearData) {
       .map((row) => {
         const statusText = row.isDeleted ? "已删除" : "正常";
         const statusClass = row.isDeleted ? "target-product-alloc-status-deleted" : "";
+        const actionCell = row.isDeleted
+          ? `
+            <button
+              class="danger-btn target-product-alloc-remove-btn"
+              type="button"
+              data-product-id="${deps.escapeHtml(row.productId)}"
+            >
+              移除分配
+            </button>
+          `
+          : "-";
         const monthCells = quarterMonths
           .map((month) => {
             const monthKey = String(month);
@@ -470,6 +522,7 @@ function renderTargetProductAllocationSection(state, dom, deps, yearData) {
             <td class="target-product-alloc-name">${deps.escapeHtml(row.productName || "未命名产品")}</td>
             ${monthCells}
             <td class="target-product-alloc-status ${statusClass}">${statusText}</td>
+            <td class="target-product-alloc-action">${actionCell}</td>
           </tr>
         `;
       })

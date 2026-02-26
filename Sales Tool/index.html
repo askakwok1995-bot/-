@@ -17,7 +17,13 @@
       </p>
     </div>
     <main class="container">
-      <h1>医药代表销售汇报工具</h1>
+      <header class="app-topbar">
+        <h1>医药代表销售汇报工具</h1>
+        <div class="auth-user-panel" aria-live="polite">
+          <span id="auth-user-email" class="auth-user-email" hidden></span>
+          <button id="auth-signout-btn" class="secondary-btn auth-signout-btn" type="button" hidden>退出登录</button>
+        </div>
+      </header>
 
       <section class="card">
         <h2>录入区</h2>
@@ -185,11 +191,12 @@
                           <th id="target-product-alloc-month-col-2">分配金额（2月）</th>
                           <th id="target-product-alloc-month-col-3">分配金额（3月）</th>
                           <th>状态</th>
+                          <th>操作</th>
                         </tr>
                       </thead>
                       <tbody id="target-product-alloc-body">
                         <tr>
-                          <td colspan="5" class="empty">产品分配区加载中...</td>
+                          <td colspan="6" class="empty">产品分配区加载中...</td>
                         </tr>
                       </tbody>
                     </table>
@@ -209,6 +216,29 @@
           </summary>
           <div class="sub-card-body">
             <p id="list-error" class="error" role="alert" aria-live="polite"></p>
+            <p id="list-status" class="hint list-status" aria-live="polite"></p>
+            <div class="record-filter-bar" aria-label="列表筛选">
+              <label class="inline-field record-filter-field" for="record-filter-start-date">
+                开始日期
+                <input id="record-filter-start-date" type="date" />
+              </label>
+              <label class="inline-field record-filter-field" for="record-filter-end-date">
+                结束日期
+                <input id="record-filter-end-date" type="date" />
+              </label>
+              <label class="inline-field record-filter-field record-filter-keyword-field" for="record-filter-product-keyword">
+                产品关键词
+                <input id="record-filter-product-keyword" type="text" placeholder="输入产品名关键词" />
+              </label>
+              <label class="inline-field record-filter-field record-filter-keyword-field" for="record-filter-hospital-keyword">
+                医院关键词
+                <input id="record-filter-hospital-keyword" type="text" placeholder="输入医院关键词" />
+              </label>
+              <div class="record-filter-actions">
+                <button id="record-filter-apply-btn" class="secondary-btn" type="button">查询</button>
+                <button id="record-filter-reset-btn" class="secondary-btn" type="button">重置</button>
+              </div>
+            </div>
             <div id="import-result" class="import-result" hidden></div>
             <div class="multi-select-tools">
               <button id="multi-select-toggle-btn" class="secondary-btn" type="button">多选</button>
@@ -529,10 +559,34 @@
         </details>
       </section>
     </main>
+    <div id="auth-modal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
+      <div class="auth-modal-backdrop"></div>
+      <section class="auth-modal-card" aria-describedby="auth-status">
+        <h2 id="auth-modal-title" class="auth-modal-title">邮箱登录</h2>
+        <p class="auth-modal-desc">请输入邮箱和密码登录；首次可直接注册。</p>
+        <form id="auth-form" class="auth-form" novalidate>
+          <label for="auth-email">
+            邮箱
+            <input id="auth-email" name="email" type="email" placeholder="name@example.com" autocomplete="email" required />
+          </label>
+          <label for="auth-password">
+            密码
+            <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
+          </label>
+          <button id="auth-login-btn" type="submit">登录</button>
+          <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
+          <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
+          <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
+        </form>
+      </section>
+    </div>
+    <div id="auth-bootstrap-state" class="auth-bootstrap-state" aria-live="polite" hidden>正在验证登录状态...</div>
 
     <script src="./vendor/xlsx.full.min.js"></script>
     <script src="./vendor/exceljs.min.js"></script>
     <script src="./vendor/echarts.min.js"></script>
+    <script src="./config.local.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
       (() => {
         const isFileMode = window.location.protocol === "file:";

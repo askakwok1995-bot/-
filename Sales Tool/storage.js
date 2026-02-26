@@ -31,8 +31,35 @@ export function loadProducts() {
   }
 }
 
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
 export function loadRecords() {
   const raw = localStorage.getItem(RECORDS_STORAGE_KEY);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => normalizeRecord(item))
+      .filter((item) => item !== null);
+  } catch (_error) {
+    return [];
+  }
+}
+
+export function buildScopedRecordsStorageKey(userId) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) return "";
+  return `${RECORDS_STORAGE_KEY}:${normalizedUserId}`;
+}
+
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
+export function loadRecordsByUser(userId) {
+  const scopedKey = buildScopedRecordsStorageKey(userId);
+  if (!scopedKey) return [];
+
+  const raw = localStorage.getItem(scopedKey);
   if (!raw) return [];
 
   try {
@@ -51,8 +78,16 @@ export function saveProducts(state) {
   localStorage.setItem(PRODUCT_MASTER_STORAGE_KEY, JSON.stringify(state.products));
 }
 
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
 export function saveRecords(state) {
   localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(state.records));
+}
+
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
+export function saveRecordsByUser(userId, state) {
+  const scopedKey = buildScopedRecordsStorageKey(userId);
+  if (!scopedKey) return;
+  localStorage.setItem(scopedKey, JSON.stringify(state.records));
 }
 
 export function loadSalesDraft() {
@@ -170,6 +205,7 @@ export function saveReportAmountUnit(unitId) {
   localStorage.setItem(REPORT_AMOUNT_UNIT_STORAGE_KEY, JSON.stringify(normalized));
 }
 
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
 export function loadTargets() {
   const raw = localStorage.getItem(TARGETS_STORAGE_KEY);
   if (!raw) return createDefaultTargetsPayload();
@@ -182,6 +218,7 @@ export function loadTargets() {
   }
 }
 
+// Deprecated: 不再用于主流程，保留仅用于兼容旧代码路径。
 export function saveTargets(state) {
   localStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(state.targets));
 }
