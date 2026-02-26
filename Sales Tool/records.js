@@ -9,9 +9,7 @@ const IMPORT_GUIDE_ROW = [
 ];
 const IMPORT_DATA_START_ROW = 3;
 const IMPORT_DATA_START_INDEX = IMPORT_DATA_START_ROW - 1;
-const TEMPLATE_INPUT_AREA_START_ROW = IMPORT_DATA_START_ROW + 1;
-const TEMPLATE_INPUT_AREA_ROW_COUNT = 30;
-const TEMPLATE_INPUT_AREA_END_ROW = TEMPLATE_INPUT_AREA_START_ROW + TEMPLATE_INPUT_AREA_ROW_COUNT - 1;
+const TEMPLATE_INPUT_AREA_ROW_COUNT = 500;
 const TEMPLATE_SAMPLE_ROW = ["2026-01-01", "阿莫西林 0.25g*24粒", "XX人民医院", 12, "国控"];
 const TEMPLATE_COL_CONFIG = [
   { wch: 18, align: "center", numFmt: "yyyy-mm-dd" },
@@ -331,6 +329,9 @@ function setImportControlsDisabled(disabled) {
   if (dom.downloadTemplateBtn instanceof HTMLButtonElement) {
     dom.downloadTemplateBtn.disabled = disabled;
   }
+  if (dom.exportRecordsExcelBtn instanceof HTMLButtonElement) {
+    dom.exportRecordsExcelBtn.disabled = disabled;
+  }
 }
 
 export function bindRecordEvents(nextState, nextDom, nextDeps) {
@@ -486,6 +487,12 @@ dom.downloadTemplateBtn.addEventListener("click", async () => {
     deps.showListError("模板生成失败，请稍后重试。");
   }
 });
+
+if (dom.exportRecordsExcelBtn instanceof HTMLButtonElement) {
+  dom.exportRecordsExcelBtn.addEventListener("click", async () => {
+    await handleExportRecordsExcel();
+  });
+}
 
 dom.importExcelBtn.addEventListener("click", () => {
   deps.clearListError();
@@ -1817,11 +1824,127 @@ function renderImportResult() {
   `;
 }
 
+async function handleExportRecordsExcel() {
+  deps.clearListError();
+  clearListStatusSafe();
+  showListStatusSafe("正在导出...", "syncing");
+  setImportControlsDisabled(true);
+
+  try {
+    const exportRecords = await fetchAllRecordsForExport();
+    const dataRows = buildExportRecordRows(exportRecords);
+    const fileName = formatExportFileName();
+
+    if (isExcelJsReady()) {
+      await downloadExportRecordsWithExcelJs(dataRows, fileName);
+    } else if (isXlsxReady()) {
+      downloadExportRecordsWithXlsx(dataRows, fileName);
+    } else {
+      clearListStatusSafe();
+      return;
+    }
+
+    if (dataRows.length === 0) {
+      showListStatusSafe("当前无记录，已导出空模板。", "muted");
+      return;
+    }
+
+    showListStatusSafe(`导出成功：${fileName}`, "success");
+  } catch (error) {
+    clearListStatusSafe();
+    deps.showListError("导出失败，请稍后重试。");
+    console.error("[Sales Tool] 列表导出失败。", error);
+  } finally {
+    setImportControlsDisabled(false);
+  }
+}
+
+async function fetchAllRecordsForExport() {
+  if (typeof deps.fetchAllRecordsFromCloud === "function") {
+    try {
+      const records = await deps.fetchAllRecordsFromCloud();
+      if (Array.isArray(records)) {
+        return records;
+      }
+    } catch (error) {
+      console.error("[Sales Tool] 导出全量记录读取云端失败，改用本地数据兜底。", error);
+    }
+  }
+
+  if (Array.isArray(state.reportRecords) && state.reportRecords.length > 0) {
+    return state.reportRecords;
+  }
+
+  if (Array.isArray(state.recordListItems) && state.recordListItems.length > 0) {
+    return state.recordListItems;
+  }
+
+  return [];
+}
+
+function buildExportRecordRows(records) {
+  if (!Array.isArray(records)) return [];
+
+  return records.map((record) => {
+    const dateText = normalizeExportDateText(record?.date);
+    const productName = String(record?.productName || "").trim();
+    const hospital = String(record?.hospital || "").trim();
+    const delivery = String(record?.delivery || "").trim();
+    const quantityNum = Number(record?.quantity);
+    const quantity = Number.isFinite(quantityNum) ? quantityNum : "";
+
+    return [dateText, productName, hospital, quantity, delivery];
+  });
+}
+
+function buildExportWorksheetRows(dataRows, blankRows = TEMPLATE_INPUT_AREA_ROW_COUNT) {
+  const safeDataRows = Array.isArray(dataRows) ? dataRows : [];
+  const safeBlankRows = Number.isInteger(Number(blankRows)) && Number(blankRows) >= 0 ? Number(blankRows) : 0;
+
+  const rows = [IMPORT_HEADERS, IMPORT_GUIDE_ROW, ...safeDataRows];
+  for (let i = 0; i < safeBlankRows; i += 1) {
+    rows.push(createTemplateEmptyRowValues());
+  }
+
+  return rows;
+}
+
+function formatExportFileName(now = new Date()) {
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hour = String(now.getHours()).padStart(2, "0");
+  const minute = String(now.getMinutes()).padStart(2, "0");
+  const second = String(now.getSeconds()).padStart(2, "0");
+  return `销售记录导出_${year}${month}${day}_${hour}${minute}${second}.xlsx`;
+}
+
 function isExcelJsReady() {
   return typeof ExcelJS !== "undefined" && ExcelJS && typeof ExcelJS.Workbook === "function";
 }
 
 async function downloadTemplateWithExcelJs() {
+  await writeTemplateLikeExcelJsFile([TEMPLATE_SAMPLE_ROW], TEMPLATE_FILE_NAME, {
+    dataRowStyle: "sample",
+    blankRowsCount: TEMPLATE_INPUT_AREA_ROW_COUNT,
+  });
+}
+
+async function downloadExportRecordsWithExcelJs(dataRows, fileName) {
+  await writeTemplateLikeExcelJsFile(dataRows, fileName, {
+    dataRowStyle: "input",
+    blankRowsCount: TEMPLATE_INPUT_AREA_ROW_COUNT,
+  });
+}
+
+async function writeTemplateLikeExcelJsFile(dataRows, fileName, options = {}) {
+  const safeDataRows = Array.isArray(dataRows) ? dataRows : [];
+  const dataRowStyle = options.dataRowStyle === "input" ? "input" : "sample";
+  const blankRowsCount =
+    Number.isInteger(Number(options.blankRowsCount)) && Number(options.blankRowsCount) >= 0
+      ? Number(options.blankRowsCount)
+      : TEMPLATE_INPUT_AREA_ROW_COUNT;
+
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("销售数据", {
     views: [{ state: "frozen", xSplit: 0, ySplit: IMPORT_DATA_START_INDEX }],
@@ -1835,16 +1958,29 @@ async function downloadTemplateWithExcelJs() {
 
   worksheet.addRow(IMPORT_HEADERS);
   worksheet.addRow(IMPORT_GUIDE_ROW);
-  worksheet.addRow(TEMPLATE_SAMPLE_ROW);
-  for (let i = 0; i < TEMPLATE_INPUT_AREA_ROW_COUNT; i += 1) {
-    worksheet.addRow(["", "", "", "", ""]);
+  for (const row of safeDataRows) {
+    worksheet.addRow(buildExcelJsDataRow(row));
   }
+  for (let i = 0; i < blankRowsCount; i += 1) {
+    worksheet.addRow(createTemplateEmptyRowValues());
+  }
+
+  const dataStartRow = IMPORT_DATA_START_ROW;
+  const dataEndRow = safeDataRows.length > 0 ? dataStartRow + safeDataRows.length - 1 : dataStartRow - 1;
+  const inputAreaStartRow = dataEndRow + 1;
+  const inputAreaEndRow = inputAreaStartRow + blankRowsCount - 1;
 
   worksheet.getRow(1).height = 24;
   worksheet.getRow(2).height = 34;
-  worksheet.getRow(3).height = 22;
-  for (let rowNum = TEMPLATE_INPUT_AREA_START_ROW; rowNum <= TEMPLATE_INPUT_AREA_END_ROW; rowNum += 1) {
-    worksheet.getRow(rowNum).height = 21;
+  if (safeDataRows.length > 0) {
+    worksheet.getRow(dataStartRow).height = 22;
+  }
+  const rowsStart = safeDataRows.length > 0 ? dataStartRow : inputAreaStartRow;
+  if (rowsStart <= inputAreaEndRow) {
+    for (let rowNum = rowsStart; rowNum <= inputAreaEndRow; rowNum += 1) {
+      if (rowNum === dataStartRow && safeDataRows.length > 0) continue;
+      worksheet.getRow(rowNum).height = 21;
+    }
   }
 
   const headerStyle = {
@@ -1870,12 +2006,6 @@ async function downloadTemplateWithExcelJs() {
     border: buildExcelJsBorder("FFD8E2F1", "thin"),
   };
 
-  worksheet.getCell("A3").value = new Date(2026, 0, 1);
-  worksheet.getCell("B3").value = TEMPLATE_SAMPLE_ROW[1];
-  worksheet.getCell("C3").value = TEMPLATE_SAMPLE_ROW[2];
-  worksheet.getCell("D3").value = Number(TEMPLATE_SAMPLE_ROW[3]);
-  worksheet.getCell("E3").value = TEMPLATE_SAMPLE_ROW[4];
-
   for (let colIndex = 1; colIndex <= IMPORT_HEADERS.length; colIndex += 1) {
     const colConfig = TEMPLATE_COL_CONFIG[colIndex - 1] || {};
     const align = mapExcelJsHorizontalAlign(colConfig.align);
@@ -1898,35 +2028,67 @@ async function downloadTemplateWithExcelJs() {
       fill: { ...guideStyle.fill },
     };
 
-    const sampleCell = worksheet.getRow(3).getCell(colIndex);
-    sampleCell.style = {
-      ...sampleStyle,
-      alignment: {
-        horizontal: align,
-        vertical: "middle",
-      },
-    };
-    if (colConfig.numFmt) {
-      sampleCell.numFmt = colConfig.numFmt;
+    if (safeDataRows.length > 0) {
+      for (let rowNum = dataStartRow; rowNum <= dataEndRow; rowNum += 1) {
+        const rowStyle = dataRowStyle === "sample" ? sampleStyle : inputStyle;
+        const cell = worksheet.getRow(rowNum).getCell(colIndex);
+        cell.style = {
+          ...rowStyle,
+          alignment: {
+            horizontal: align,
+            vertical: "middle",
+          },
+        };
+        if (colConfig.numFmt) {
+          cell.numFmt = colConfig.numFmt;
+        }
+      }
     }
 
-    for (let rowNum = TEMPLATE_INPUT_AREA_START_ROW; rowNum <= TEMPLATE_INPUT_AREA_END_ROW; rowNum += 1) {
-      const cell = worksheet.getRow(rowNum).getCell(colIndex);
-      cell.style = {
-        ...inputStyle,
-        alignment: {
-          horizontal: align,
-          vertical: "middle",
-        },
-      };
-      if (colConfig.numFmt) {
-        cell.numFmt = colConfig.numFmt;
+    if (inputAreaStartRow <= inputAreaEndRow) {
+      for (let rowNum = inputAreaStartRow; rowNum <= inputAreaEndRow; rowNum += 1) {
+        const cell = worksheet.getRow(rowNum).getCell(colIndex);
+        cell.style = {
+          ...inputStyle,
+          alignment: {
+            horizontal: align,
+            vertical: "middle",
+          },
+        };
+        if (colConfig.numFmt) {
+          cell.numFmt = colConfig.numFmt;
+        }
       }
     }
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  triggerExcelTemplateDownload(buffer, TEMPLATE_FILE_NAME);
+  triggerExcelTemplateDownload(buffer, fileName);
+}
+
+function buildExcelJsDataRow(rawRow) {
+  const row = Array.isArray(rawRow) ? rawRow : [];
+  return [
+    parseDateTextToJsDate(String(row[0] || "")) || String(row[0] || ""),
+    String(row[1] || ""),
+    String(row[2] || ""),
+    normalizeExportQuantityValue(row[3]),
+    String(row[4] || ""),
+  ];
+}
+
+function downloadExportRecordsWithXlsx(dataRows, fileName) {
+  const rows = buildExportWorksheetRows(dataRows, TEMPLATE_INPUT_AREA_ROW_COUNT);
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  decorateImportTemplateSheet(worksheet, {
+    dataRowsCount: dataRows.length,
+    blankRowsCount: TEMPLATE_INPUT_AREA_ROW_COUNT,
+    dataRowStyle: "input",
+    applyDataTyping: true,
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "销售数据");
+  XLSX.writeFile(workbook, fileName);
 }
 
 function buildExcelJsBorder(colorArgb, lineStyle) {
@@ -1957,14 +2119,33 @@ function triggerExcelTemplateDownload(buffer, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function decorateImportTemplateSheet(worksheet) {
+function decorateImportTemplateSheet(worksheet, options = {}) {
   if (!worksheet || typeof worksheet !== "object") return;
 
+  const dataRowsCount =
+    Number.isInteger(Number(options.dataRowsCount)) && Number(options.dataRowsCount) >= 0
+      ? Number(options.dataRowsCount)
+      : 1;
+  const blankRowsCount =
+    Number.isInteger(Number(options.blankRowsCount)) && Number(options.blankRowsCount) >= 0
+      ? Number(options.blankRowsCount)
+      : TEMPLATE_INPUT_AREA_ROW_COUNT;
+  const dataRowStyle = options.dataRowStyle === "input" ? "input" : "sample";
+  const applyDataTyping = options.applyDataTyping !== false;
+
+  const dataStartRow = IMPORT_DATA_START_ROW;
+  const dataEndRow = dataRowsCount > 0 ? dataStartRow + dataRowsCount - 1 : dataStartRow - 1;
+  const inputAreaStartRow = dataEndRow + 1;
+  const inputAreaEndRow = inputAreaStartRow + blankRowsCount - 1;
+  const totalRows = Math.max(2, dataEndRow, inputAreaEndRow);
+
   worksheet["!cols"] = TEMPLATE_COL_CONFIG.map((item) => ({ wch: item.wch }));
-  const rowsConfig = Array.from({ length: TEMPLATE_INPUT_AREA_END_ROW }, () => ({ hpt: 21 }));
+  const rowsConfig = Array.from({ length: totalRows }, () => ({ hpt: 21 }));
   rowsConfig[0] = { hpt: 24 };
   rowsConfig[1] = { hpt: 34 };
-  rowsConfig[2] = { hpt: 22 };
+  if (dataRowsCount > 0 && rowsConfig[dataStartRow - 1]) {
+    rowsConfig[dataStartRow - 1] = { hpt: 22 };
+  }
   worksheet["!rows"] = rowsConfig;
   worksheet["!autofilter"] = { ref: `A1:${encodeImportCol(IMPORT_HEADERS.length - 1)}1` };
   worksheet["!freeze"] = {
@@ -2002,66 +2183,114 @@ function decorateImportTemplateSheet(worksheet) {
     const colRef = encodeImportCol(colIndex);
     const headerCell = worksheet[`${colRef}1`];
     const guideCell = worksheet[`${colRef}2`];
-    const sampleCell = worksheet[`${colRef}${IMPORT_DATA_START_ROW}`];
     const colConfig = TEMPLATE_COL_CONFIG[colIndex] || {};
 
     if (headerCell) headerCell.s = headerStyle;
     if (guideCell) guideCell.s = guideStyle;
 
-    if (sampleCell) {
-      sampleCell.s = {
-        ...sampleBaseStyle,
-        alignment: {
-          horizontal: colConfig.align || "left",
-          vertical: "center",
-        },
-      };
-      if (colConfig.numFmt) {
-        sampleCell.z = colConfig.numFmt;
+    if (dataRowsCount > 0) {
+      for (let rowNumber = dataStartRow; rowNumber <= dataEndRow; rowNumber += 1) {
+        const cellAddress = `${colRef}${rowNumber}`;
+        let cell = worksheet[cellAddress];
+        if (!cell) {
+          cell = { t: "z" };
+          worksheet[cellAddress] = cell;
+        }
+
+        cell.s = {
+          ...(dataRowStyle === "sample" ? sampleBaseStyle : inputAreaBaseStyle),
+          alignment: {
+            horizontal: colConfig.align || "left",
+            vertical: "center",
+          },
+        };
+        if (colConfig.numFmt) {
+          cell.z = colConfig.numFmt;
+        }
+      }
+    }
+
+    if (inputAreaStartRow <= inputAreaEndRow) {
+      for (let rowNumber = inputAreaStartRow; rowNumber <= inputAreaEndRow; rowNumber += 1) {
+        const cellAddress = `${colRef}${rowNumber}`;
+        let cell = worksheet[cellAddress];
+        if (!cell) {
+          cell = { t: "z" };
+          worksheet[cellAddress] = cell;
+        } else if (cell.t === "s" && String(cell.v || "").trim() === "") {
+          cell.t = "z";
+          delete cell.v;
+          delete cell.w;
+        }
+
+        cell.s = {
+          ...inputAreaBaseStyle,
+          alignment: {
+            horizontal: colConfig.align || "left",
+            vertical: "center",
+          },
+        };
+        if (colConfig.numFmt) {
+          cell.z = colConfig.numFmt;
+        }
       }
     }
   }
 
-  for (let rowNumber = TEMPLATE_INPUT_AREA_START_ROW; rowNumber <= TEMPLATE_INPUT_AREA_END_ROW; rowNumber += 1) {
-    for (let colIndex = 0; colIndex < IMPORT_HEADERS.length; colIndex += 1) {
-      const colRef = encodeImportCol(colIndex);
-      const cellAddress = `${colRef}${rowNumber}`;
-      const colConfig = TEMPLATE_COL_CONFIG[colIndex] || {};
-      let cell = worksheet[cellAddress];
-      if (!cell) {
-        cell = { t: "s", v: "" };
-        worksheet[cellAddress] = cell;
+  if (applyDataTyping && dataRowsCount > 0) {
+    for (let rowNumber = dataStartRow; rowNumber <= dataEndRow; rowNumber += 1) {
+      const dateCell = worksheet[`A${rowNumber}`];
+      const dateSerial = dateCell ? convertTemplateDateTextToExcelSerial(String(dateCell.v || "").trim()) : null;
+      if (dateCell && dateSerial !== null) {
+        dateCell.t = "n";
+        dateCell.v = dateSerial;
+        dateCell.z = TEMPLATE_COL_CONFIG[0].numFmt;
       }
 
-      cell.s = {
-        ...inputAreaBaseStyle,
-        alignment: {
-          horizontal: colConfig.align || "left",
-          vertical: "center",
-        },
-      };
-      if (colConfig.numFmt) {
-        cell.z = colConfig.numFmt;
+      const quantityCell = worksheet[`D${rowNumber}`];
+      const quantityNum = quantityCell ? Number(quantityCell.v) : NaN;
+      if (quantityCell && Number.isFinite(quantityNum)) {
+        quantityCell.t = "n";
+        quantityCell.v = quantityNum;
+        quantityCell.z = TEMPLATE_COL_CONFIG[3].numFmt;
       }
     }
   }
+}
 
-  const sampleDateCellAddress = `A${IMPORT_DATA_START_ROW}`;
-  const sampleDateCell = worksheet[sampleDateCellAddress];
-  const dateSerial = convertTemplateDateTextToExcelSerial(TEMPLATE_SAMPLE_ROW[0]);
-  if (sampleDateCell && dateSerial !== null) {
-    sampleDateCell.t = "n";
-    sampleDateCell.v = dateSerial;
-    sampleDateCell.z = TEMPLATE_COL_CONFIG[0].numFmt;
-  }
+function createTemplateEmptyRowValues() {
+  return Array.from({ length: IMPORT_HEADERS.length }, () => null);
+}
 
-  const sampleQuantityCellAddress = `D${IMPORT_DATA_START_ROW}`;
-  const sampleQuantityCell = worksheet[sampleQuantityCellAddress];
-  if (sampleQuantityCell && Number.isFinite(Number(sampleQuantityCell.v))) {
-    sampleQuantityCell.t = "n";
-    sampleQuantityCell.v = Number(sampleQuantityCell.v);
-    sampleQuantityCell.z = TEMPLATE_COL_CONFIG[3].numFmt;
+function normalizeExportDateText(rawDate) {
+  const text = String(rawDate || "").trim();
+  if (!text) return "";
+
+  const parsedDate = parseDateTextToJsDate(text);
+  if (!parsedDate) return text;
+
+  return `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`;
+}
+
+function parseDateTextToJsDate(dateText) {
+  const text = String(dateText || "").trim();
+  const matched = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!matched) return null;
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  if (!deps.isValidDateParts(year, month, day)) return null;
+
+  return new Date(year, month - 1, day);
+}
+
+function normalizeExportQuantityValue(rawQuantity) {
+  const quantityNum = Number(rawQuantity);
+  if (!Number.isFinite(quantityNum)) {
+    return String(rawQuantity || "");
   }
+  return quantityNum;
 }
 
 function buildTemplateBorder(colorHex, lineStyle = "thin") {

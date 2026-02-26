@@ -85,6 +85,7 @@ async function initializeApp() {
 
     downloadTemplateBtn: document.getElementById("download-template-btn"),
     importExcelBtn: document.getElementById("import-excel-btn"),
+    exportRecordsExcelBtn: document.getElementById("export-records-excel-btn"),
     importFileInput: document.getElementById("import-file-input"),
     importResultEl: document.getElementById("import-result"),
 
