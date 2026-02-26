@@ -278,7 +278,8 @@ window.__APP_CONFIG__ = {
     "risk": {},
     "outline": {}
   },
-  "mode": "briefing"
+  "mode": "briefing",
+  "stream": true
 }
 ```
 
@@ -291,9 +292,10 @@ window.__APP_CONFIG__ = {
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
 - 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
 - 默认输出 token：首轮 `1536`，重试 `2048`。
+- Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
 - 结构化质量门槛：`summary` 长度至少 40 字，且 `highlights/evidence/actions` 至少各 1 条。
 
-成功响应：
+非流式成功响应（`stream=false` 或流式不可用时）：
 ```json
 {
   "reply": "结构化摘要文本（兼容旧前端）",
@@ -322,6 +324,20 @@ window.__APP_CONFIG__ = {
 }
 ```
 
+流式响应（`stream=true`）：
+- 响应头：`content-type: application/x-ndjson`
+- 逐行事件（每行一条 JSON）：
+```json
+{ "type": "start", "requestId": "...", "mode": "briefing" }
+{ "type": "thinking", "requestId": "...", "message": "AI 思考中..." }
+{ "type": "delta", "requestId": "...", "text": "正在生成的文本片段" }
+{ "type": "done", "requestId": "...", "reply": "...", "model": "gemini-2.5-flash", "mode": "briefing", "format": "structured", "structured": { "...": "..." }, "meta": { "...": "..." } }
+```
+- 失败事件：
+```json
+{ "type": "error", "requestId": "...", "error": { "code": "UPSTREAM_TIMEOUT", "message": "Gemini 请求超时（>30000ms），请稍后重试。" } }
+```
+
 结构化回退说明：
 - 当模型输出无法解析为有效 JSON、字段不完整或输出截断时，接口返回 `format: "text_fallback"`。
 - 此时 `structured` 为 `null`，`reply` 返回模型原始文本（或服务端兜底提示）。
@@ -337,7 +353,7 @@ window.__APP_CONFIG__ = {
 {
   "error": {
     "code": "UPSTREAM_TIMEOUT",
-    "message": "Gemini 请求超时（>12000ms），请稍后重试。"
+    "message": "Gemini 请求超时（>30000ms），请稍后重试。"
   },
   "requestId": "..."
 }
@@ -345,7 +361,9 @@ window.__APP_CONFIG__ = {
 
 ### 12.3 前端接线说明
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
-- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`。
+- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`，默认 `stream=true`。
+- 前端优先使用流式增量渲染；若流式不可用，会自动回退到非流式 JSON 解析。
+- 发送后会先显示 `AI 思考中...` 占位消息（带三点动画），随后按 `delta` 事件逐步更新文本。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
 - 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
 - 若回退文本疑似 JSON 残片（以 `{` 开头但不可解析），前端会提示“结构化输出未完成，请重试”。
@@ -362,6 +380,7 @@ window.__APP_CONFIG__ = {
 7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
 9. `meta.formatReason/retryCount/finishReason/outputChars` 在响应中存在且可用于排障。
+10. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查
 1. `products` / `sales_records` / `sales_targets` 三张表开启 RLS。

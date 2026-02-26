@@ -298,6 +298,67 @@ export function initAiChatUi(options = {}) {
     scrollMessagesToBottom();
   }
 
+  function createThinkingMessage() {
+    const article = document.createElement("article");
+    article.className = "ai-chat-message ai-chat-message--assistant ai-chat-thinking";
+
+    const label = document.createElement("span");
+    label.className = "ai-chat-thinking-label";
+    label.textContent = "AI 思考中";
+    article.appendChild(label);
+
+    const dots = document.createElement("span");
+    dots.className = "ai-chat-typing-dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 3; i += 1) {
+      dots.appendChild(document.createElement("span"));
+    }
+    article.appendChild(dots);
+
+    dom.messages.appendChild(article);
+    scrollMessagesToBottom();
+
+    return {
+      article,
+      label,
+      text: "",
+      hasDelta: false,
+      isActive: true,
+    };
+  }
+
+  function updateThinkingLabel(liveMessage, text) {
+    if (!liveMessage || !liveMessage.isActive) return;
+    const nextText = toText(text) || "AI 思考中";
+    if (liveMessage.label instanceof HTMLElement) {
+      liveMessage.label.textContent = nextText;
+    }
+  }
+
+  function setLiveMessageText(liveMessage, text) {
+    if (!liveMessage || !liveMessage.isActive) return;
+    liveMessage.text = String(text || "");
+    liveMessage.article.classList.remove("ai-chat-thinking");
+    liveMessage.article.textContent = liveMessage.text || " ";
+    scrollMessagesToBottom();
+  }
+
+  function appendLiveMessageDelta(liveMessage, deltaText) {
+    if (!liveMessage || !liveMessage.isActive) return;
+    const delta = typeof deltaText === "string" ? deltaText : String(deltaText || "");
+    if (!delta) return;
+    liveMessage.hasDelta = true;
+    setLiveMessageText(liveMessage, `${liveMessage.text}${delta}`);
+  }
+
+  function removeLiveMessage(liveMessage) {
+    if (!liveMessage || !liveMessage.isActive) return;
+    if (liveMessage.article && liveMessage.article.parentNode === dom.messages) {
+      dom.messages.removeChild(liveMessage.article);
+    }
+    liveMessage.isActive = false;
+  }
+
   function appendStructuredAssistantMessage(structured, mode) {
     const normalized = normalizeStructuredPayload(structured);
     if (!normalized) return false;
@@ -463,18 +524,39 @@ export function initAiChatUi(options = {}) {
     dom.input.value = "";
     isSending = true;
     updateComposerState();
+    const liveMessage = createThinkingMessage();
+    dom.statusEl.classList.remove("ai-chat-status-ready");
+    dom.statusEl.textContent = "AI 思考中...";
 
     try {
-      const result = await Promise.resolve(sendHandler(text, { mode: currentMode }));
+      const result = await Promise.resolve(
+        sendHandler(text, {
+          mode: currentMode,
+          onThinking: (message) => {
+            updateThinkingLabel(liveMessage, message);
+            dom.statusEl.classList.remove("ai-chat-status-ready");
+            dom.statusEl.textContent = "AI 思考中...";
+          },
+          onDelta: (chunk) => {
+            appendLiveMessageDelta(liveMessage, chunk);
+            dom.statusEl.classList.remove("ai-chat-status-ready");
+            dom.statusEl.textContent = "AI 正在生成回复...";
+          },
+        }),
+      );
       const normalized = normalizeReplyPayload(result);
       let hasRendered = false;
 
       if (normalized.structured) {
+        removeLiveMessage(liveMessage);
         hasRendered = appendStructuredAssistantMessage(normalized.structured, normalized.mode);
       }
       if (!hasRendered && normalized.reply) {
-        appendTextMessage("assistant", normalized.reply);
+        setLiveMessageText(liveMessage, normalized.reply);
         hasRendered = true;
+      }
+      if (!hasRendered) {
+        removeLiveMessage(liveMessage);
       }
 
       dom.statusEl.classList.add("ai-chat-status-ready");
@@ -501,7 +583,10 @@ export function initAiChatUi(options = {}) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       dom.statusEl.classList.remove("ai-chat-status-ready");
       dom.statusEl.textContent = `预留处理器执行失败：${message}`;
-      appendTextMessage("assistant", `调用失败：${message}`);
+      if (!liveMessage.hasDelta) {
+        removeLiveMessage(liveMessage);
+        appendTextMessage("assistant", `调用失败：${message}`);
+      }
     } finally {
       isSending = false;
       dom.sendBtn.disabled = typeof sendHandler !== "function";

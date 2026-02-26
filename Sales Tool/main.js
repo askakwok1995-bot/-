@@ -1106,6 +1106,14 @@ async function initializeApp() {
     }
   }
 
+  function parseJsonLineSafe(line) {
+    try {
+      return JSON.parse(line);
+    } catch (_error) {
+      return null;
+    }
+  }
+
   const CHAT_MODES = Object.freeze({
     BRIEFING: "briefing",
     DIAGNOSIS: "diagnosis",
@@ -1230,6 +1238,131 @@ async function initializeApp() {
     return "聊天请求失败，请稍后重试。";
   }
 
+  function isNdjsonResponse(response) {
+    const contentType = String(response?.headers?.get("content-type") || "").toLowerCase();
+    return contentType.includes("application/x-ndjson");
+  }
+
+  function normalizeChatSuccessPayload(payload, modeFallback = CHAT_MODES.BRIEFING, requestIdFallback = "") {
+    const requestId = String(requestIdFallback || payload?.requestId || "").trim();
+    const reply = String(payload?.reply || "").trim();
+    const structured = payload?.structured && typeof payload.structured === "object" ? payload.structured : null;
+    const responseMode = sanitizeChatMode(payload?.mode || modeFallback);
+    const format = payload?.format === "structured" ? "structured" : "text_fallback";
+    const normalizedMeta = normalizeChatMeta(payload?.meta, format);
+    const fallbackReply = reply || String(structured?.summary || "").trim();
+    if (!fallbackReply && !structured) {
+      throw new Error(appendRequestId("服务端未返回有效回复。", requestId));
+    }
+
+    return {
+      reply: fallbackReply,
+      structured,
+      mode: responseMode,
+      format,
+      model: String(payload?.model || "").trim(),
+      requestId,
+      meta: normalizedMeta,
+      fallbackNotice: format === "text_fallback" ? buildChatFallbackNotice(normalizedMeta, requestId) : "",
+    };
+  }
+
+  async function consumeChatNdjsonStream(response, handlers = {}) {
+    if (!response.body || typeof response.body.getReader !== "function") {
+      throw new Error("当前环境不支持流式读取。");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalEvent = null;
+    let currentRequestId = "";
+
+    const onThinking = typeof handlers.onThinking === "function" ? handlers.onThinking : null;
+    const onDelta = typeof handlers.onDelta === "function" ? handlers.onDelta : null;
+    const onDone = typeof handlers.onDone === "function" ? handlers.onDone : null;
+    const onError = typeof handlers.onError === "function" ? handlers.onError : null;
+
+    const handleLine = (lineRaw) => {
+      const line = String(lineRaw || "").trim();
+      if (!line) return;
+      const event = parseJsonLineSafe(line);
+      if (!event || typeof event !== "object") return;
+
+      const type = String(event.type || "").trim();
+      const eventRequestId = String(event.requestId || "").trim();
+      if (eventRequestId) {
+        currentRequestId = eventRequestId;
+      }
+
+      if (type === "thinking") {
+        const message = String(event.message || "AI 思考中...").trim();
+        if (onThinking) onThinking(message, currentRequestId);
+        return;
+      }
+
+      if (type === "delta") {
+        const text = typeof event.text === "string" ? event.text : String(event.text || "");
+        if (text && onDelta) onDelta(text, currentRequestId);
+        return;
+      }
+
+      if (type === "done") {
+        finalEvent = event;
+        if (onDone) onDone(event, currentRequestId);
+        return;
+      }
+
+      if (type === "error") {
+        const code = String(event?.error?.code || "UPSTREAM_ERROR").trim() || "UPSTREAM_ERROR";
+        const message = String(event?.error?.message || "流式请求失败，请稍后重试。").trim();
+        const readable = appendRequestId(message, currentRequestId);
+        if (onError) onError(readable, { code, requestId: currentRequestId });
+        throw new Error(readable);
+      }
+    };
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex >= 0) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          handleLine(line);
+          newlineIndex = buffer.indexOf("\n");
+        }
+      }
+
+      const flushText = decoder.decode();
+      if (flushText) {
+        buffer += flushText;
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        handleLine(tail);
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch (_error) {
+        // no-op
+      }
+    }
+
+    if (!finalEvent) {
+      throw new Error(appendRequestId("流式响应未返回完成事件。", currentRequestId));
+    }
+
+    return {
+      payload: finalEvent,
+      requestId: currentRequestId,
+    };
+  }
+
   async function getChatAuthToken() {
     const client = getSupabaseClient();
     if (!client) {
@@ -1254,67 +1387,82 @@ async function initializeApp() {
       throw new Error("消息不能为空。");
     }
     const safeMode = sanitizeChatMode(options && typeof options === "object" ? options.mode : "");
+    const streamEnabled = !(options && typeof options === "object" && options.stream === false);
+    const onThinking = options && typeof options.onThinking === "function" ? options.onThinking : null;
+    const onDelta = options && typeof options.onDelta === "function" ? options.onDelta : null;
+    const onDone = options && typeof options.onDone === "function" ? options.onDone : null;
+    const onError = options && typeof options.onError === "function" ? options.onError : null;
 
     const accessToken = await getChatAuthToken();
     if (!accessToken) {
       throw new Error("登录状态已失效，请重新登录后再试。");
     }
 
-    let response;
-    try {
-      response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          message: safeMessage,
-          context: buildAiChatContextPayload(),
-          mode: safeMode,
-        }),
-      });
-    } catch (error) {
-      throw new Error(
-        `无法连接 /api/chat：${error instanceof Error && error.message ? error.message : "请稍后重试"}`,
-      );
-    }
-
-    const payload = await parseJsonSafe(response);
-    const requestId = extractChatRequestId(response, payload);
-    if (!response.ok) {
-      throw new Error(appendRequestId(normalizeChatApiError(response, payload), requestId));
-    }
-
-    const reply = String(payload?.reply || "").trim();
-    const structured = payload?.structured && typeof payload.structured === "object" ? payload.structured : null;
-    const responseMode = sanitizeChatMode(payload?.mode || safeMode);
-    const format = payload?.format === "structured" ? "structured" : "text_fallback";
-    const normalizedMeta = normalizeChatMeta(payload?.meta, format);
-    const fallbackReply = reply || String(structured?.summary || "").trim();
-    if (!fallbackReply && !structured) {
-      throw new Error(appendRequestId("服务端未返回有效回复。", requestId));
-    }
-
-    if (requestId) {
-      console.info("[Sales Tool] /api/chat 调用成功。", {
-        requestId,
-        mode: responseMode,
-        format,
-        formatReason: normalizedMeta.formatReason,
-        retryCount: normalizedMeta.retryCount,
-      });
-    }
-    return {
-      reply: fallbackReply,
-      structured,
-      mode: responseMode,
-      format,
-      model: String(payload?.model || "").trim(),
-      requestId,
-      meta: normalizedMeta,
-      fallbackNotice: format === "text_fallback" ? buildChatFallbackNotice(normalizedMeta, requestId) : "",
+    const requestBody = {
+      message: safeMessage,
+      context: buildAiChatContextPayload(),
+      mode: safeMode,
+      stream: streamEnabled,
     };
+
+    const sendRequest = async (body) => {
+      try {
+        return await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        throw new Error(
+          `无法连接 /api/chat：${error instanceof Error && error.message ? error.message : "请稍后重试"}`,
+        );
+      }
+    };
+
+    const parseJsonResponse = async (response) => {
+      const payload = await parseJsonSafe(response);
+      const requestId = extractChatRequestId(response, payload);
+      if (!response.ok) {
+        throw new Error(appendRequestId(normalizeChatApiError(response, payload), requestId));
+      }
+      return normalizeChatSuccessPayload(payload, safeMode, requestId);
+    };
+
+    let response = await sendRequest(requestBody);
+
+    if (streamEnabled && response.ok && isNdjsonResponse(response)) {
+      let receivedDelta = false;
+      try {
+        const streamResult = await consumeChatNdjsonStream(response, {
+          onThinking,
+          onDelta: (text, requestId) => {
+            receivedDelta = true;
+            if (onDelta) onDelta(text, requestId);
+          },
+          onDone,
+          onError,
+        });
+        return normalizeChatSuccessPayload(streamResult.payload, safeMode, streamResult.requestId);
+      } catch (error) {
+        if (!receivedDelta) {
+          response = await sendRequest({
+            ...requestBody,
+            stream: false,
+          });
+          return parseJsonResponse(response);
+        }
+        throw error;
+      }
+    }
+
+    const normalized = await parseJsonResponse(response);
+    if (onDone) {
+      onDone(normalized, normalized.requestId);
+    }
+    return normalized;
   }
 
   const aiChatApi = window.__SALES_TOOL_AI_CHAT__;
