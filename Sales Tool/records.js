@@ -20,6 +20,7 @@ const TEMPLATE_COL_CONFIG = [
 ];
 const TEMPLATE_FILE_NAME = "销售数据导入模板.xlsx";
 const IMPORT_DETAIL_PREVIEW_LIMIT = 10;
+const IMPORT_BATCH_CHUNK_SIZE = 250;
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 export const DEFAULT_PAGE_SIZE = 20;
 const SORTABLE_RECORD_FIELDS = new Set(["date", "productName", "hospital", "quantity", "amount", "delivery"]);
@@ -50,6 +51,19 @@ function showListStatusSafe(message, tone = "muted") {
   if (typeof deps.showListStatus === "function") {
     deps.showListStatus(message, tone);
   }
+}
+
+function splitRowsIntoChunks(rows, chunkSize) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const parsedChunkSize = Number(chunkSize);
+  const safeChunkSize = Number.isInteger(parsedChunkSize) && parsedChunkSize > 0 ? parsedChunkSize : safeRows.length || 1;
+  const chunks = [];
+
+  for (let start = 0; start < safeRows.length; start += safeChunkSize) {
+    chunks.push(safeRows.slice(start, start + safeChunkSize));
+  }
+
+  return chunks;
 }
 
 function createDefaultRecordFilters() {
@@ -585,24 +599,62 @@ dom.importFileInput.addEventListener("change", async (event) => {
     const processResult = processImportRows(dataRows);
     const { nextProducts, preparedRows, summary } = processResult;
 
-    if (typeof deps.insertRecordToCloud !== "function") {
+    const hasBatchInsert = typeof deps.insertRecordsBatchToCloud === "function";
+    const hasSingleInsert = typeof deps.insertRecordToCloud === "function";
+    if (!hasBatchInsert && !hasSingleInsert) {
       throw new Error("云端导入接口未就绪，请刷新页面后重试。");
     }
 
     showListStatusSafe("正在导入数据，数据较多时耗时会更长，请耐心等待。", "syncing");
     let successRows = 0;
-    for (const row of preparedRows) {
-      try {
-        await deps.insertRecordToCloud(row.payload);
-        successRows += 1;
-      } catch (error) {
-        summary.errors.push(
-          buildImportError(
-            row.rowNumber,
-            `保存失败：${error instanceof Error ? error.message : "请稍后重试"}`,
-            row.rawRow,
-          ),
-        );
+    const importChunks = splitRowsIntoChunks(preparedRows, IMPORT_BATCH_CHUNK_SIZE);
+    for (let chunkIndex = 0; chunkIndex < importChunks.length; chunkIndex += 1) {
+      const chunk = importChunks[chunkIndex];
+      const chunkLabel = `正在导入：第 ${chunkIndex + 1}/${importChunks.length} 批（${chunk.length} 行）...`;
+      showListStatusSafe(chunkLabel, "syncing");
+
+      let chunkInserted = false;
+      if (hasBatchInsert) {
+        try {
+          const batchPayloads = chunk.map((row) => row.payload);
+          const batchResult = await deps.insertRecordsBatchToCloud(batchPayloads);
+          const insertedCount = Number(batchResult?.insertedCount);
+          if (!Number.isInteger(insertedCount) || insertedCount !== chunk.length) {
+            throw new Error(
+              `批量写入返回数量异常（${Number.isFinite(insertedCount) ? insertedCount : "unknown"}/${chunk.length}）`,
+            );
+          }
+
+          successRows += insertedCount;
+          chunkInserted = true;
+        } catch (batchError) {
+          if (!hasSingleInsert) {
+            const reason = batchError instanceof Error && batchError.message ? batchError.message : "请稍后重试";
+            for (const row of chunk) {
+              summary.errors.push(buildImportError(row.rowNumber, `批量保存失败：${reason}`, row.rawRow));
+            }
+            continue;
+          }
+        }
+      }
+
+      if (chunkInserted) {
+        continue;
+      }
+
+      for (const row of chunk) {
+        try {
+          await deps.insertRecordToCloud(row.payload);
+          successRows += 1;
+        } catch (error) {
+          summary.errors.push(
+            buildImportError(
+              row.rowNumber,
+              `保存失败：${error instanceof Error ? error.message : "请稍后重试"}`,
+              row.rawRow,
+            ),
+          );
+        }
       }
     }
 
@@ -612,8 +664,46 @@ dom.importFileInput.addEventListener("change", async (event) => {
     setImportResult(summary);
 
     if (summary.successRows > 0) {
-      state.products = nextProducts;
-      deps.saveProducts();
+      const previousProducts = state.products.map((item) => ({ ...item }));
+      const hasAutoCreatedProducts = summary.autoCreatedProducts > 0;
+      let productSyncIssue = "";
+
+      if (hasAutoCreatedProducts) {
+        if (typeof deps.saveProducts !== "function") {
+          productSyncIssue = "导入记录已保存，但自动新增产品同步接口未就绪";
+        } else {
+          try {
+            await deps.saveProducts({ products: nextProducts });
+            state.products = nextProducts;
+          } catch (error) {
+            const reason = error instanceof Error && error.message ? error.message : "请稍后重试";
+            productSyncIssue = `导入记录已保存，但自动新增产品同步失败：${reason}`;
+          }
+        }
+
+        if (productSyncIssue) {
+          let hasRecovered = false;
+          if (typeof deps.fetchProductsFromCloud === "function") {
+            try {
+              const cloudProducts = await deps.fetchProductsFromCloud();
+              if (Array.isArray(cloudProducts)) {
+                state.products = cloudProducts;
+                hasRecovered = true;
+              }
+            } catch (error) {
+              const reason = error instanceof Error && error.message ? error.message : "请稍后重试";
+              productSyncIssue = `${productSyncIssue}；云端产品回拉失败：${reason}`;
+            }
+          }
+
+          if (!hasRecovered) {
+            state.products = previousProducts;
+          }
+        }
+      } else {
+        state.products = nextProducts;
+      }
+
       deps.renderProductMaster();
       deps.renderProductSelectOptions();
       deps.updateSalesFormAvailability();
@@ -622,7 +712,15 @@ dom.importFileInput.addEventListener("change", async (event) => {
 
       deps.clearListError();
       if (!listOk) {
-        deps.showListError("导入已提交，但列表刷新失败，请稍后重试。");
+        const extra = productSyncIssue ? `；${productSyncIssue}` : "";
+        deps.showListError(`导入已提交，但列表刷新失败，请稍后重试${extra}。`);
+      } else if (productSyncIssue) {
+        deps.showListError(`${productSyncIssue}。`);
+        if (!reportOk) {
+          showListStatusSafe("导入已提交，报表稍后更新。", "muted");
+        } else {
+          showListStatusSafe("导入完成，但产品主数据存在同步异常。", "muted");
+        }
       } else if (!reportOk) {
         showListStatusSafe("导入已提交，报表稍后更新。", "muted");
       } else if (summary.failedRows > 0) {
@@ -1410,9 +1508,7 @@ function processImportRows(dataRows) {
   const existingRecords = Array.isArray(state.reportRecords) ? state.reportRecords : state.records;
   existingRecords.forEach((record, index) => {
     const normalizedName = deps.normalizeText(record.productName);
-    const mappedProduct = productNameMap.get(normalizedName);
-    const fallbackKey = record.productId || (mappedProduct ? mappedProduct.id : `name:${normalizedName}`);
-    const duplicateKey = buildDuplicateKey(record.date, fallbackKey, record.hospital, record.delivery, record.quantity);
+    const duplicateKey = buildDuplicateKey(record.date, normalizedName, record.hospital, record.delivery, record.quantity);
     if (!duplicateSourceMap.has(duplicateKey)) {
       duplicateSourceMap.set(duplicateKey, { type: "existing", recordIndex: index + 1 });
     }
@@ -1453,7 +1549,7 @@ function processImportRows(dataRows) {
       summary.autoCreatedProductNames.push(product.productName);
     }
 
-    const duplicateKey = buildDuplicateKey(data.date, product.id, data.hospital, data.delivery, data.quantity);
+    const duplicateKey = buildDuplicateKey(data.date, productKey, data.hospital, data.delivery, data.quantity);
     const duplicateSource = duplicateSourceMap.get(duplicateKey);
     if (duplicateSource) {
       summary.duplicates.push(
@@ -1646,10 +1742,10 @@ function isImportRowEmpty(cells) {
   return cells.every((cell) => String(cell ?? "").trim() === "");
 }
 
-function buildDuplicateKey(date, productKey, hospital, delivery, quantity) {
+function buildDuplicateKey(date, productNameKey, hospital, delivery, quantity) {
   return [
     String(date || "").trim(),
-    String(productKey || "").trim(),
+    deps.normalizeText(productNameKey),
     deps.normalizeText(hospital),
     deps.normalizeText(delivery),
     String(quantity || "").trim(),

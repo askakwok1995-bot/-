@@ -48,7 +48,17 @@ import {
   getDefaultReportRange,
   renderReportSection,
 } from "./reports.js";
+import {
+  buildAnalysisContext,
+  getKpiOverview,
+  getTrendInsights,
+  getProductInsights,
+  getHospitalInsights,
+  getRiskAlerts,
+  buildBriefingOutline,
+} from "./analytics-engine.js";
 import { bootstrapAuthGate, getCurrentAuthUser, getSupabaseClient } from "./auth.js";
+import { initAiChatUi } from "./ai-chat-ui.js";
 
 window.__SALES_TOOL_MODULE_BOOTED__ = false;
 window.__SALES_TOOL_MODULE_BOOT_ERROR__ = false;
@@ -636,6 +646,39 @@ async function initializeApp() {
     return mapped;
   }
 
+  async function insertRecordsBatchToCloud(payloads) {
+    const client = getSupabaseClient();
+    const user = getCurrentAuthUser();
+
+    if (!client || !user?.id) {
+      throw new Error("未检测到登录用户，无法批量写入云端。");
+    }
+
+    const sourceRows = Array.isArray(payloads) ? payloads : [];
+    if (sourceRows.length === 0) {
+      return { insertedCount: 0 };
+    }
+
+    const rows = sourceRows.map((payload) => ({
+      user_id: user.id,
+      record_date: payload.date,
+      hospital_name: payload.hospital,
+      product_name: payload.productName,
+      purchase_quantity_boxes: payload.quantity,
+      assessed_amount: payload.amount,
+      actual_amount: null,
+      channel: payload.delivery || null,
+      remark: null,
+    }));
+
+    const { error } = await client.from("sales_records").insert(rows);
+    if (error) {
+      throw error;
+    }
+
+    return { insertedCount: rows.length };
+  }
+
   async function deleteRecordFromCloud(recordId) {
     const client = getSupabaseClient();
     const user = getCurrentAuthUser();
@@ -937,10 +980,8 @@ async function initializeApp() {
     isValidDateParts,
     escapeHtml,
 
-    saveProducts: (targetState = state) => {
-      void persistProductsSnapshotToCloud(targetState.products).catch((error) => {
-        console.error("[Sales Tool] 产品同步失败：", error);
-      });
+    saveProducts: async (targetState = state) => {
+      await persistProductsSnapshotToCloud(targetState.products);
     },
     saveRecords: () => {},
     saveTargets: (targetState = state) => {
@@ -983,6 +1024,7 @@ async function initializeApp() {
     fetchAllRecordsFromCloud,
     fetchRecordsFromCloud,
     insertRecordToCloud,
+    insertRecordsBatchToCloud,
     deleteRecordFromCloud,
     deleteRecordsFromCloud,
     deleteAllRecordsFromCloud,
@@ -1018,6 +1060,160 @@ async function initializeApp() {
       state.records = originalRecords;
     }
   };
+
+  function buildAnalyticsContext(rangeOverride) {
+    return buildAnalysisContext({
+      state,
+      deps,
+      rangeOverride,
+    });
+  }
+
+  window.__SALES_TOOL_ANALYTICS__ = {
+    buildContext: (rangeOverride) => buildAnalyticsContext(rangeOverride),
+    kpi: (rangeOverride) => getKpiOverview(buildAnalyticsContext(rangeOverride)),
+    trends: (rangeOverride) => getTrendInsights(buildAnalyticsContext(rangeOverride)),
+    products: (rangeOverride, options) => getProductInsights(buildAnalyticsContext(rangeOverride), options),
+    hospitals: (rangeOverride, options) => getHospitalInsights(buildAnalyticsContext(rangeOverride), options),
+    risks: (rangeOverride, options) => getRiskAlerts(buildAnalyticsContext(rangeOverride), options),
+    outline: (rangeOverride) => buildBriefingOutline(buildAnalyticsContext(rangeOverride)),
+  };
+
+  function buildAiChatContextPayload(rangeOverride) {
+    const analysisContext = buildAnalyticsContext(rangeOverride);
+    return {
+      analysis: {
+        ok: analysisContext.ok,
+        range: analysisContext.range,
+        generatedAt: analysisContext.generatedAt,
+        metricPriority: analysisContext.metricPriority,
+        meta: analysisContext.meta,
+      },
+      kpi: getKpiOverview(analysisContext),
+      trend: getTrendInsights(analysisContext),
+      product: getProductInsights(analysisContext, { topN: 5 }),
+      hospital: getHospitalInsights(analysisContext, { topN: 5 }),
+      risk: getRiskAlerts(analysisContext),
+      outline: buildBriefingOutline(analysisContext),
+    };
+  }
+
+  async function parseJsonSafe(response) {
+    try {
+      return await response.json();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function normalizeChatApiError(response, payload) {
+    const status = response?.status;
+    const code = String(payload?.error?.code || "").trim();
+    const upstreamMessage = String(payload?.error?.message || "").trim();
+
+    if (code === "UNAUTHORIZED") {
+      return upstreamMessage || "登录状态已失效，请重新登录后再试。";
+    }
+    if (code === "AUTH_CONFIG_MISSING") {
+      return "服务端缺少 Supabase 校验配置（SUPABASE_URL/SUPABASE_ANON_KEY）。";
+    }
+    if (code === "AUTH_UPSTREAM_ERROR") {
+      return upstreamMessage || "服务端登录态校验失败，请稍后重试。";
+    }
+    if (code === "CONFIG_MISSING") {
+      return "服务端未配置 GEMINI_API_KEY，请在 Cloudflare Pages Secrets 中补充。";
+    }
+    if (code === "MESSAGE_REQUIRED") {
+      return "消息不能为空。";
+    }
+    if (code === "UPSTREAM_NETWORK_ERROR") {
+      return upstreamMessage || "Gemini 网络请求失败，请稍后重试。";
+    }
+    if (code === "UPSTREAM_ERROR") {
+      return upstreamMessage || "Gemini 服务返回异常，请稍后重试。";
+    }
+    if (code === "EMPTY_REPLY") {
+      return "Gemini 返回为空，请稍后重试。";
+    }
+    if (status === 404) {
+      return "未找到 /api/chat。请确认已部署 Cloudflare Pages Functions。";
+    }
+    if (upstreamMessage) {
+      return upstreamMessage;
+    }
+    if (Number.isFinite(status)) {
+      return `聊天请求失败（HTTP ${status}）。`;
+    }
+    return "聊天请求失败，请稍后重试。";
+  }
+
+  async function getChatAuthToken() {
+    const client = getSupabaseClient();
+    if (!client) {
+      return "";
+    }
+
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error) {
+        throw error;
+      }
+      return String(data?.session?.access_token || "").trim();
+    } catch (error) {
+      console.warn("[Sales Tool] 读取聊天鉴权令牌失败。", error);
+      return "";
+    }
+  }
+
+  async function requestAiChatReply(message) {
+    const safeMessage = String(message || "").trim();
+    if (!safeMessage) {
+      throw new Error("消息不能为空。");
+    }
+
+    const accessToken = await getChatAuthToken();
+    if (!accessToken) {
+      throw new Error("登录状态已失效，请重新登录后再试。");
+    }
+
+    let response;
+    try {
+      response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          message: safeMessage,
+          context: buildAiChatContextPayload(),
+          mode: "briefing",
+        }),
+      });
+    } catch (error) {
+      throw new Error(
+        `无法连接 /api/chat：${error instanceof Error && error.message ? error.message : "请稍后重试"}`,
+      );
+    }
+
+    const payload = await parseJsonSafe(response);
+    if (!response.ok) {
+      throw new Error(normalizeChatApiError(response, payload));
+    }
+
+    const reply = String(payload?.reply || "").trim();
+    if (!reply) {
+      throw new Error("服务端未返回有效回复。");
+    }
+    return reply;
+  }
+
+  const aiChatApi = window.__SALES_TOOL_AI_CHAT__;
+  if (aiChatApi && typeof aiChatApi.setSendHandler === "function") {
+    aiChatApi.setSendHandler((message) => requestAiChatReply(message));
+  } else {
+    console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象，聊天发送处理器未挂载。");
+  }
 
   if (dom.pageSizeSelect instanceof HTMLSelectElement) {
     dom.pageSizeSelect.value = String(state.pageSize);
@@ -1175,6 +1371,8 @@ function showInitError(error) {
 
 async function bootstrap() {
   try {
+    initAiChatUi();
+
     await bootstrapAuthGate({
       appRoot: document.querySelector("main.container"),
     });

@@ -156,7 +156,7 @@ function ensureSupabaseClient() {
   const supabaseAnonKey = getConfigValue("SUPABASE_ANON_KEY");
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    showAuthStatus("请先配置 Supabase 连接信息。可复制 config.example.js 为 config.local.js 后填写。");
+    showAuthStatus("请先配置 Supabase 连接信息。可复制 config.example.js 为 config.js 后填写。");
     showAuthError("缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY。登录已禁用。");
     setAuthActionsEnabled(false);
     return null;
