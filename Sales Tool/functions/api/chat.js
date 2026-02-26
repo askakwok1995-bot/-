@@ -141,6 +141,12 @@ const CHAT_RESPONSE_SCHEMA = Object.freeze({
   },
 });
 
+const MODE_SCHEMA_REQUIRED_FIELDS = Object.freeze({
+  [CHAT_MODES.BRIEFING]: ["summary", "highlights", "evidence", "risks", "actions"],
+  [CHAT_MODES.DIAGNOSIS]: ["summary", "highlights", "evidence", "risks"],
+  [CHAT_MODES.ACTION_PLAN]: ["summary", "evidence", "actions"],
+});
+
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
   const headers = {
@@ -310,14 +316,14 @@ function getModeTokenProfile(mode, messageLength = 0) {
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
   let retry = RETRY_MAX_OUTPUT_TOKENS;
   if (safeMode === CHAT_MODES.BRIEFING) {
-    first = 768;
-    retry = 1152;
-  } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
     first = 1024;
-    retry = 1536;
-  } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
+    retry = 1408;
+  } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
     first = 1280;
     retry = 1792;
+  } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
+    first = 1536;
+    retry = 2048;
   }
 
   const safeLength = Number.isFinite(Number(messageLength)) ? Math.floor(Number(messageLength)) : 0;
@@ -448,10 +454,12 @@ function buildPrompt(message, context, mode, options = {}) {
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
   const history = sanitizeHistoryList(options?.history);
   const historyText = formatHistoryText(history);
-  const briefingCompactRule =
+  const modeCompactRule =
     safeMode === CHAT_MODES.BRIEFING
-      ? "简报模式请紧凑输出：highlights/risks/actions/nextQuestions 建议各不超过 2 条，避免冗长解释。"
-      : "";
+      ? "简报模式请紧凑输出：highlights<=2, evidence<=2, risks<=2, actions<=2, nextQuestions<=2。"
+      : safeMode === CHAT_MODES.DIAGNOSIS
+        ? "诊断模式请紧凑输出：highlights<=2, evidence<=3, risks<=2, actions<=1, nextQuestions<=1。"
+        : "行动模式请紧凑输出：actions<=3, evidence<=3, risks<=1, highlights<=1, nextQuestions<=1。";
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -464,7 +472,8 @@ function buildPrompt(message, context, mode, options = {}) {
       : "本次为首轮输出，请优先保证结构化完整性和可读性。",
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
-    briefingCompactRule,
+    modeCompactRule,
+    "宁可减少条目数量，也必须一次输出完整 JSON，不要输出超长句子。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
     "禁止使用 Markdown 代码块；如果无法保证格式，仍优先输出可解析 JSON。",
     "优先参考最近对话上下文，但以当前传入数据口径为准。",
@@ -478,6 +487,15 @@ function buildPrompt(message, context, mode, options = {}) {
     "分析上下文(JSON)：",
     contextText,
   ].join("\n");
+}
+
+function getModeResponseSchema(mode) {
+  const safeMode = sanitizeMode(mode);
+  const requiredFields = MODE_SCHEMA_REQUIRED_FIELDS[safeMode] || MODE_SCHEMA_REQUIRED_FIELDS[CHAT_MODES.BRIEFING];
+  return {
+    ...CHAT_RESPONSE_SCHEMA,
+    required: requiredFields,
+  };
 }
 
 function safeRepairSourceText(rawReply) {
@@ -763,6 +781,7 @@ function buildGeminiPayload(params) {
     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     strictJsonOnly = false,
   } = params || {};
+  const responseSchema = getModeResponseSchema(mode);
 
   return {
     contents: [
@@ -783,7 +802,7 @@ function buildGeminiPayload(params) {
       topP: 0.9,
       maxOutputTokens,
       responseMimeType: "application/json",
-      responseSchema: CHAT_RESPONSE_SCHEMA,
+      responseSchema,
     },
   };
 }

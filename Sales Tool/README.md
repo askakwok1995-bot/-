@@ -317,14 +317,24 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
-  - `briefing`: first `768` / retry `1152`
-  - `diagnosis`: first `1024` / retry `1536`
-  - `action-plan`: first `1280` / retry `1792`
+  - `briefing`: first `1024` / retry `1408`
+  - `diagnosis`: first `1280` / retry `1792`
+  - `action-plan`: first `1536` / retry `2048`
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
 - 结构化质量门槛（mode 化）：
   - `briefing`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=1`
   - `diagnosis`：`summary>=60`，`highlights>=1`，`evidence>=1`，`actions>=0`
   - `action-plan`：`summary>=60`，`highlights>=0`，`evidence>=1`，`actions>=1`
+- mode 化 schema required（字段全集保留，按 mode 下调必填）：
+  - `briefing`：`summary/highlights/evidence/risks/actions`
+  - `diagnosis`：`summary/highlights/evidence/risks`
+  - `action-plan`：`summary/evidence/actions`
+  - `nextQuestions` 为可选字段（前端兼容读取）
+- mode 化输出体量约束（用于减少截断）：
+  - `briefing`：`highlights/evidence/risks/actions/nextQuestions` 各建议不超过 2 条
+  - `diagnosis`：`highlights<=2,evidence<=3,risks<=2,actions<=1,nextQuestions<=1`
+  - `action-plan`：`actions<=3,evidence<=3,risks<=1,highlights<=1,nextQuestions<=1`
+  - 统一约束：宁可少条目，也要一次输出完整 JSON，避免超长句子
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
