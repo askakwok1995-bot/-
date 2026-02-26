@@ -1106,35 +1106,68 @@ async function initializeApp() {
     }
   }
 
+  const CHAT_MODES = Object.freeze({
+    BRIEFING: "briefing",
+    DIAGNOSIS: "diagnosis",
+    ACTION_PLAN: "action-plan",
+  });
+
+  function isValidChatMode(mode) {
+    return mode === CHAT_MODES.BRIEFING || mode === CHAT_MODES.DIAGNOSIS || mode === CHAT_MODES.ACTION_PLAN;
+  }
+
+  function sanitizeChatMode(mode) {
+    const candidate = String(mode || "").trim();
+    return isValidChatMode(candidate) ? candidate : CHAT_MODES.BRIEFING;
+  }
+
+  const CHAT_API_ERROR_MESSAGE_MAP = Object.freeze({
+    UNAUTHORIZED: "登录状态已失效，请重新登录后再试。",
+    AUTH_CONFIG_MISSING: "服务端缺少 Supabase 校验配置（SUPABASE_URL/SUPABASE_ANON_KEY）。",
+    AUTH_UPSTREAM_TIMEOUT: "服务端登录态校验超时，请稍后重试。",
+    AUTH_UPSTREAM_ERROR: "服务端登录态校验失败，请稍后重试。",
+    CONFIG_MISSING: "服务端未配置 GEMINI_API_KEY，请在 Cloudflare Pages Secrets 中补充。",
+    BAD_REQUEST: "请求格式不正确，请稍后重试。",
+    MESSAGE_REQUIRED: "消息不能为空。",
+    MESSAGE_TOO_LONG: "消息过长，请精简后再试。",
+    UPSTREAM_TIMEOUT: "Gemini 请求超时，请稍后重试。",
+    UPSTREAM_NETWORK_ERROR: "Gemini 网络请求失败，请稍后重试。",
+    UPSTREAM_ERROR: "Gemini 服务返回异常，请稍后重试。",
+    EMPTY_REPLY: "Gemini 返回为空，请稍后重试。",
+  });
+
+  function extractChatRequestId(response, payload) {
+    const headerRequestId = String(response?.headers?.get("x-request-id") || "").trim();
+    if (headerRequestId) {
+      return headerRequestId;
+    }
+    return String(payload?.requestId || "").trim();
+  }
+
+  function appendRequestId(message, requestId) {
+    const safeMessage = String(message || "").trim() || "聊天请求失败，请稍后重试。";
+    const safeRequestId = String(requestId || "").trim();
+    if (!safeRequestId) {
+      return safeMessage;
+    }
+    return `${safeMessage}（请求号: ${safeRequestId}）`;
+  }
+
   function normalizeChatApiError(response, payload) {
     const status = response?.status;
     const code = String(payload?.error?.code || "").trim();
     const upstreamMessage = String(payload?.error?.message || "").trim();
 
-    if (code === "UNAUTHORIZED") {
-      return upstreamMessage || "登录状态已失效，请重新登录后再试。";
+    if (code) {
+      const mappedMessage = CHAT_API_ERROR_MESSAGE_MAP[code];
+      if (mappedMessage) {
+        if (code === "UNAUTHORIZED" && upstreamMessage) {
+          return upstreamMessage;
+        }
+        return mappedMessage;
+      }
     }
-    if (code === "AUTH_CONFIG_MISSING") {
-      return "服务端缺少 Supabase 校验配置（SUPABASE_URL/SUPABASE_ANON_KEY）。";
-    }
-    if (code === "AUTH_UPSTREAM_ERROR") {
-      return upstreamMessage || "服务端登录态校验失败，请稍后重试。";
-    }
-    if (code === "CONFIG_MISSING") {
-      return "服务端未配置 GEMINI_API_KEY，请在 Cloudflare Pages Secrets 中补充。";
-    }
-    if (code === "MESSAGE_REQUIRED") {
-      return "消息不能为空。";
-    }
-    if (code === "UPSTREAM_NETWORK_ERROR") {
-      return upstreamMessage || "Gemini 网络请求失败，请稍后重试。";
-    }
-    if (code === "UPSTREAM_ERROR") {
-      return upstreamMessage || "Gemini 服务返回异常，请稍后重试。";
-    }
-    if (code === "EMPTY_REPLY") {
-      return "Gemini 返回为空，请稍后重试。";
-    }
+
     if (status === 404) {
       return "未找到 /api/chat。请确认已部署 Cloudflare Pages Functions。";
     }
@@ -1165,11 +1198,12 @@ async function initializeApp() {
     }
   }
 
-  async function requestAiChatReply(message) {
+  async function requestAiChatReply(message, options = {}) {
     const safeMessage = String(message || "").trim();
     if (!safeMessage) {
       throw new Error("消息不能为空。");
     }
+    const safeMode = sanitizeChatMode(options && typeof options === "object" ? options.mode : "");
 
     const accessToken = await getChatAuthToken();
     if (!accessToken) {
@@ -1187,7 +1221,7 @@ async function initializeApp() {
         body: JSON.stringify({
           message: safeMessage,
           context: buildAiChatContextPayload(),
-          mode: "briefing",
+          mode: safeMode,
         }),
       });
     } catch (error) {
@@ -1197,20 +1231,36 @@ async function initializeApp() {
     }
 
     const payload = await parseJsonSafe(response);
+    const requestId = extractChatRequestId(response, payload);
     if (!response.ok) {
-      throw new Error(normalizeChatApiError(response, payload));
+      throw new Error(appendRequestId(normalizeChatApiError(response, payload), requestId));
     }
 
     const reply = String(payload?.reply || "").trim();
-    if (!reply) {
-      throw new Error("服务端未返回有效回复。");
+    const structured = payload?.structured && typeof payload.structured === "object" ? payload.structured : null;
+    const responseMode = sanitizeChatMode(payload?.mode || safeMode);
+    const format = payload?.format === "structured" ? "structured" : "text_fallback";
+    const fallbackReply = reply || String(structured?.summary || "").trim();
+    if (!fallbackReply && !structured) {
+      throw new Error(appendRequestId("服务端未返回有效回复。", requestId));
     }
-    return reply;
+
+    if (requestId) {
+      console.info("[Sales Tool] /api/chat 调用成功。", { requestId, mode: responseMode, format });
+    }
+    return {
+      reply: fallbackReply,
+      structured,
+      mode: responseMode,
+      format,
+      model: String(payload?.model || "").trim(),
+      requestId,
+    };
   }
 
   const aiChatApi = window.__SALES_TOOL_AI_CHAT__;
   if (aiChatApi && typeof aiChatApi.setSendHandler === "function") {
-    aiChatApi.setSendHandler((message) => requestAiChatReply(message));
+    aiChatApi.setSendHandler((message, options) => requestAiChatReply(message, options));
   } else {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象，聊天发送处理器未挂载。");
   }

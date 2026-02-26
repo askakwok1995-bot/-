@@ -66,6 +66,51 @@ function splitRowsIntoChunks(rows, chunkSize) {
   return chunks;
 }
 
+function getErrorMessage(error, fallback = "请稍后重试") {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function classifyBatchInsertFailure(error) {
+  const reason = getErrorMessage(error);
+  const normalizedMessage = String(reason).toLowerCase();
+
+  const uncertainKeywords = [
+    "failed to fetch",
+    "network",
+    "timeout",
+    "timed out",
+    "connection",
+    "offline",
+    "abort",
+    "econn",
+    "gateway",
+    "502",
+    "503",
+    "504",
+  ];
+  const isUncertainByMessage = uncertainKeywords.some((keyword) => normalizedMessage.includes(keyword));
+  if (isUncertainByMessage || error instanceof TypeError) {
+    return {
+      allowRowFallback: false,
+      reason,
+    };
+  }
+
+  const code = String(error && typeof error === "object" ? error.code || "" : "").trim();
+  const status = Number(error && typeof error === "object" ? error.status : NaN);
+  if (code || Number.isInteger(status)) {
+    return {
+      allowRowFallback: true,
+      reason,
+    };
+  }
+
+  return {
+    allowRowFallback: false,
+    reason,
+  };
+}
+
 function createDefaultRecordFilters() {
   return {
     startDate: "",
@@ -607,6 +652,7 @@ dom.importFileInput.addEventListener("change", async (event) => {
 
     showListStatusSafe("正在导入数据，数据较多时耗时会更长，请耐心等待。", "syncing");
     let successRows = 0;
+    let hasUncertainBatchFailure = false;
     const importChunks = splitRowsIntoChunks(preparedRows, IMPORT_BATCH_CHUNK_SIZE);
     for (let chunkIndex = 0; chunkIndex < importChunks.length; chunkIndex += 1) {
       const chunk = importChunks[chunkIndex];
@@ -628,8 +674,23 @@ dom.importFileInput.addEventListener("change", async (event) => {
           successRows += insertedCount;
           chunkInserted = true;
         } catch (batchError) {
+          const failureDecision = classifyBatchInsertFailure(batchError);
+          if (!failureDecision.allowRowFallback) {
+            hasUncertainBatchFailure = true;
+            for (const row of chunk) {
+              summary.errors.push(
+                buildImportError(
+                  row.rowNumber,
+                  `批量保存状态不确定：${failureDecision.reason}。为避免重复插入，系统已停止该批逐行重试；请刷新后核对结果。`,
+                  row.rawRow,
+                ),
+              );
+            }
+            continue;
+          }
+
           if (!hasSingleInsert) {
-            const reason = batchError instanceof Error && batchError.message ? batchError.message : "请稍后重试";
+            const reason = getErrorMessage(batchError);
             for (const row of chunk) {
               summary.errors.push(buildImportError(row.rowNumber, `批量保存失败：${reason}`, row.rawRow));
             }
@@ -676,7 +737,7 @@ dom.importFileInput.addEventListener("change", async (event) => {
             await deps.saveProducts({ products: nextProducts });
             state.products = nextProducts;
           } catch (error) {
-            const reason = error instanceof Error && error.message ? error.message : "请稍后重试";
+            const reason = getErrorMessage(error);
             productSyncIssue = `导入记录已保存，但自动新增产品同步失败：${reason}`;
           }
         }
@@ -691,7 +752,7 @@ dom.importFileInput.addEventListener("change", async (event) => {
                 hasRecovered = true;
               }
             } catch (error) {
-              const reason = error instanceof Error && error.message ? error.message : "请稍后重试";
+              const reason = getErrorMessage(error);
               productSyncIssue = `${productSyncIssue}；云端产品回拉失败：${reason}`;
             }
           }
@@ -709,17 +770,21 @@ dom.importFileInput.addEventListener("change", async (event) => {
       deps.updateSalesFormAvailability();
       deps.updateComputedAmount();
       const { listOk, reportOk } = await refreshRecordListAndReports({ resetPage: true, showStatus: false });
+      const uncertaintyWarning = hasUncertainBatchFailure
+        ? "检测到网络/超时导致的批量写入状态不确定，系统已停止异常批次逐行重试；请刷新页面核对后再决定是否重试"
+        : "";
+      const warningSummary = [productSyncIssue, uncertaintyWarning].filter((message) => message).join("；");
 
       deps.clearListError();
       if (!listOk) {
-        const extra = productSyncIssue ? `；${productSyncIssue}` : "";
+        const extra = warningSummary ? `；${warningSummary}` : "";
         deps.showListError(`导入已提交，但列表刷新失败，请稍后重试${extra}。`);
-      } else if (productSyncIssue) {
-        deps.showListError(`${productSyncIssue}。`);
+      } else if (warningSummary) {
+        deps.showListError(`${warningSummary}。`);
         if (!reportOk) {
           showListStatusSafe("导入已提交，报表稍后更新。", "muted");
         } else {
-          showListStatusSafe("导入完成，但产品主数据存在同步异常。", "muted");
+          showListStatusSafe("导入完成，但存在需人工核对的告警。", "muted");
         }
       } else if (!reportOk) {
         showListStatusSafe("导入已提交，报表稍后更新。", "muted");
@@ -729,7 +794,11 @@ dom.importFileInput.addEventListener("change", async (event) => {
         showListStatusSafe("导入完成，数据已全部加载。", "success");
       }
     } else {
-      deps.showListError("导入失败，数据未更新，请根据失败明细修正后重试。");
+      if (hasUncertainBatchFailure) {
+        deps.showListError("导入请求出现网络/超时异常，写入状态不确定。为避免重复插入，系统未重试；请刷新页面核对后再决定是否重试。");
+      } else {
+        deps.showListError("导入失败，数据未更新，请根据失败明细修正后重试。");
+      }
     }
   } catch (error) {
     const reason = error instanceof Error && error.message ? error.message : "文件解析失败，请确认文件格式和内容。";

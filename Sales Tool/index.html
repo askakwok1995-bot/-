@@ -599,12 +599,23 @@
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>
         </button>
-        <h2 id="ai-chat-title" class="ai-chat-title">AI 助手（UI 预览）</h2>
-        <p class="ai-chat-subtitle">当前仅完成前端界面，尚未接入模型能力。</p>
+        <h2 id="ai-chat-title" class="ai-chat-title">AI 助手</h2>
+        <p class="ai-chat-subtitle">已接入聊天接口链路；需在服务端完成 Gemini 配置后可稳定使用。</p>
+        <div id="ai-chat-mode-group" class="ai-chat-mode-group" role="group" aria-label="选择对话模式">
+          <button type="button" class="ai-chat-mode-btn is-active" data-chat-mode="briefing" aria-pressed="true">
+            简报
+          </button>
+          <button type="button" class="ai-chat-mode-btn" data-chat-mode="diagnosis" aria-pressed="false">
+            诊断
+          </button>
+          <button type="button" class="ai-chat-mode-btn" data-chat-mode="action-plan" aria-pressed="false">
+            行动
+          </button>
+        </div>
       </header>
       <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite">
         <article class="ai-chat-message ai-chat-message--assistant">
-          你好，这里是 AI 对话窗口 UI。后续会接入真实 AI 接口。
+          你好，AI 聊天接口已接线。若无法回复，请先检查登录状态与服务端 Gemini 配置。
         </article>
       </div>
       <form id="ai-chat-form" class="ai-chat-composer" novalidate>
@@ -613,12 +624,12 @@
           class="ai-chat-input"
           type="text"
           aria-label="输入消息"
-          placeholder="请输入消息（当前仅 UI，未接入 AI）"
+          placeholder="请输入消息（需先完成服务端 Gemini 配置）"
           autocomplete="off"
         />
         <button id="ai-chat-send" class="ai-chat-send-btn" type="submit" disabled>发送</button>
       </form>
-      <p id="ai-chat-status" class="ai-chat-status">AI 未接入，当前仅展示交互壳层。</p>
+      <p id="ai-chat-status" class="ai-chat-status">聊天接口已接线；请先登录并完成服务端 Gemini 配置。</p>
     </section>
     <div id="auth-modal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
       <div class="auth-modal-backdrop"></div>

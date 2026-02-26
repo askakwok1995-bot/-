@@ -4,11 +4,101 @@ const CHAT_STATES = {
   COMPACT: "compact",
   EXPANDED: "expanded",
 };
+const CHAT_MODES = {
+  BRIEFING: "briefing",
+  DIAGNOSIS: "diagnosis",
+  ACTION_PLAN: "action-plan",
+};
 
 let initialized = false;
 
 function isValidState(value) {
   return value === CHAT_STATES.CLOSED || value === CHAT_STATES.COMPACT || value === CHAT_STATES.EXPANDED;
+}
+
+function isValidMode(value) {
+  return value === CHAT_MODES.BRIEFING || value === CHAT_MODES.DIAGNOSIS || value === CHAT_MODES.ACTION_PLAN;
+}
+
+function normalizeMode(value) {
+  const candidate = String(value || "").trim();
+  return isValidMode(candidate) ? candidate : CHAT_MODES.BRIEFING;
+}
+
+function getModeLabel(mode) {
+  if (mode === CHAT_MODES.DIAGNOSIS) return "诊断";
+  if (mode === CHAT_MODES.ACTION_PLAN) return "行动";
+  return "简报";
+}
+
+function toText(value) {
+  return String(value || "").trim();
+}
+
+function normalizeStringList(value, maxItems = 6) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => toText(item))
+    .filter((item) => item)
+    .slice(0, maxItems);
+}
+
+function normalizeEvidenceList(value, maxItems = 8) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const label = toText(item.label);
+      const rawValue = item.value;
+      const valueText =
+        typeof rawValue === "number" || typeof rawValue === "string" ? toText(rawValue) : toText(item.valueText);
+      const insight = toText(item.insight);
+      if (!label || !valueText) return null;
+      return { label, value: valueText, insight };
+    })
+    .filter((item) => item !== null)
+    .slice(0, maxItems);
+}
+
+function normalizeActionList(value, maxItems = 6) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const title = toText(item.title);
+      if (!title) return null;
+      return {
+        title,
+        owner: toText(item.owner),
+        timeline: toText(item.timeline),
+        metric: toText(item.metric),
+      };
+    })
+    .filter((item) => item !== null)
+    .slice(0, maxItems);
+}
+
+function normalizeStructuredPayload(value) {
+  if (!value || typeof value !== "object") return null;
+  const summary = toText(value.summary);
+  if (!summary) return null;
+
+  return {
+    summary,
+    highlights: normalizeStringList(value.highlights, 6),
+    evidence: normalizeEvidenceList(value.evidence, 8),
+    risks: normalizeStringList(value.risks, 6),
+    actions: normalizeActionList(value.actions, 6),
+    nextQuestions: normalizeStringList(value.nextQuestions, 6),
+  };
+}
+
+function buildActionMeta(action) {
+  const parts = [];
+  if (action.owner) parts.push(`负责人：${action.owner}`);
+  if (action.timeline) parts.push(`时间：${action.timeline}`);
+  if (action.metric) parts.push(`指标：${action.metric}`);
+  return parts.join(" | ");
 }
 
 export function initAiChatUi(options = {}) {
@@ -22,6 +112,7 @@ export function initAiChatUi(options = {}) {
     sheet: document.getElementById("ai-chat-sheet"),
     resizeBtn: document.getElementById("ai-chat-resize-btn"),
     closeBtn: document.getElementById("ai-chat-close-btn"),
+    modeButtons: Array.from(document.querySelectorAll(".ai-chat-mode-btn[data-chat-mode]")),
     messages: document.getElementById("ai-chat-messages"),
     form: document.getElementById("ai-chat-form"),
     input: document.getElementById("ai-chat-input"),
@@ -29,7 +120,18 @@ export function initAiChatUi(options = {}) {
     statusEl: document.getElementById("ai-chat-status"),
   };
 
-  const required = Object.entries(dom).filter(([, el]) => !(el instanceof HTMLElement));
+  const required = Object.entries({
+    fab: dom.fab,
+    backdrop: dom.backdrop,
+    sheet: dom.sheet,
+    resizeBtn: dom.resizeBtn,
+    closeBtn: dom.closeBtn,
+    messages: dom.messages,
+    form: dom.form,
+    input: dom.input,
+    sendBtn: dom.sendBtn,
+    statusEl: dom.statusEl,
+  }).filter(([, el]) => !(el instanceof HTMLElement));
   if (required.length > 0) {
     console.warn(
       `[Sales Tool] AI chat UI 初始化失败，缺少 DOM：${required.map(([key]) => key).join(", ")}`,
@@ -38,17 +140,18 @@ export function initAiChatUi(options = {}) {
   }
 
   let state = CHAT_STATES.CLOSED;
+  let currentMode = normalizeMode(options.initialMode);
   let sendHandler = null;
   let isSending = false;
 
   const placeholderStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
       ? options.placeholderStatus.trim()
-      : "AI 未接入，当前仅展示交互壳层。";
+      : "聊天接口已接线；请先登录并完成服务端 Gemini 配置。";
   const readyStatus =
     typeof options.readyStatus === "string" && options.readyStatus.trim()
       ? options.readyStatus.trim()
-      : "已接入预留处理器，可继续联调接口。";
+      : "聊天接口已就绪，可开始提问。";
 
   function updateResizeControl() {
     if (state === CHAT_STATES.EXPANDED) {
@@ -59,6 +162,25 @@ export function initAiChatUi(options = {}) {
 
     dom.resizeBtn.setAttribute("data-mode", "expand");
     dom.resizeBtn.setAttribute("aria-label", "放大对话窗口");
+  }
+
+  function updateModeControls() {
+    dom.modeButtons.forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) return;
+      const buttonMode = normalizeMode(button.dataset.chatMode);
+      const isActive = buttonMode === currentMode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+
+  function setMode(nextMode) {
+    currentMode = normalizeMode(nextMode);
+    updateModeControls();
+  }
+
+  function getMode() {
+    return currentMode;
   }
 
   function applyState(nextState) {
@@ -128,8 +250,8 @@ export function initAiChatUi(options = {}) {
     dom.messages.scrollTop = dom.messages.scrollHeight;
   }
 
-  function appendMessage(role, text) {
-    const message = String(text || "").trim();
+  function appendTextMessage(role, text) {
+    const message = toText(text);
     if (!message) return;
 
     const article = document.createElement("article");
@@ -140,26 +262,136 @@ export function initAiChatUi(options = {}) {
     scrollMessagesToBottom();
   }
 
-  function normalizeReplyText(payload) {
+  function appendStructuredAssistantMessage(structured, mode) {
+    const normalized = normalizeStructuredPayload(structured);
+    if (!normalized) return false;
+
+    const article = document.createElement("article");
+    article.className = "ai-chat-message ai-chat-message--assistant ai-chat-structured";
+
+    const summary = document.createElement("p");
+    summary.className = "ai-chat-structured-summary";
+    summary.textContent = normalized.summary;
+    article.appendChild(summary);
+
+    const sections = [
+      { title: "亮点", key: "highlights" },
+      { title: "风险", key: "risks" },
+      { title: "追问建议", key: "nextQuestions" },
+    ];
+
+    sections.forEach((item) => {
+      const values = normalized[item.key];
+      if (!Array.isArray(values) || values.length === 0) return;
+      const section = document.createElement("section");
+      section.className = "ai-chat-structured-section";
+      const title = document.createElement("h4");
+      title.className = "ai-chat-structured-title";
+      title.textContent = item.title;
+      section.appendChild(title);
+      const list = document.createElement("ul");
+      list.className = "ai-chat-structured-list";
+      values.forEach((text) => {
+        const li = document.createElement("li");
+        li.textContent = text;
+        list.appendChild(li);
+      });
+      section.appendChild(list);
+      article.appendChild(section);
+    });
+
+    if (normalized.evidence.length > 0) {
+      const section = document.createElement("section");
+      section.className = "ai-chat-structured-section";
+      const title = document.createElement("h4");
+      title.className = "ai-chat-structured-title";
+      title.textContent = "关键证据";
+      section.appendChild(title);
+      const list = document.createElement("ul");
+      list.className = "ai-chat-structured-list";
+      normalized.evidence.forEach((item) => {
+        const li = document.createElement("li");
+        const label = document.createElement("span");
+        label.className = "ai-chat-structured-evidence-label";
+        label.textContent = `${item.label}：`;
+        li.appendChild(label);
+        li.appendChild(document.createTextNode(`${item.value}`));
+        if (item.insight) {
+          li.appendChild(document.createTextNode(`（${item.insight}）`));
+        }
+        list.appendChild(li);
+      });
+      section.appendChild(list);
+      article.appendChild(section);
+    }
+
+    if (normalized.actions.length > 0) {
+      const section = document.createElement("section");
+      section.className = "ai-chat-structured-section";
+      const title = document.createElement("h4");
+      title.className = "ai-chat-structured-title";
+      title.textContent = "执行动作";
+      section.appendChild(title);
+      const list = document.createElement("ul");
+      list.className = "ai-chat-structured-list";
+      normalized.actions.forEach((item) => {
+        const li = document.createElement("li");
+        const actionTitle = document.createElement("div");
+        actionTitle.className = "ai-chat-structured-action-title";
+        actionTitle.textContent = item.title;
+        li.appendChild(actionTitle);
+        const metaText = buildActionMeta(item);
+        if (metaText) {
+          const meta = document.createElement("div");
+          meta.className = "ai-chat-structured-action-meta";
+          meta.textContent = metaText;
+          li.appendChild(meta);
+        }
+        list.appendChild(li);
+      });
+      section.appendChild(list);
+      article.appendChild(section);
+    }
+
+    article.dataset.chatMode = normalizeMode(mode);
+    dom.messages.appendChild(article);
+    scrollMessagesToBottom();
+    return true;
+  }
+
+  function normalizeReplyPayload(payload) {
     if (typeof payload === "string") {
-      return payload.trim();
+      return {
+        reply: payload.trim(),
+        structured: null,
+        mode: currentMode,
+      };
     }
     if (!payload || typeof payload !== "object") {
-      return "";
+      return {
+        reply: "",
+        structured: null,
+        mode: currentMode,
+      };
     }
 
     const reply =
-      (typeof payload.reply === "string" && payload.reply) ||
-      (typeof payload.message === "string" && payload.message) ||
-      (typeof payload.text === "string" && payload.text) ||
-      "";
-    return String(reply).trim();
+      toText(payload.reply) ||
+      toText(payload.message) ||
+      toText(payload.text);
+    const structured = normalizeStructuredPayload(payload.structured);
+    const mode = normalizeMode(payload.mode || currentMode);
+    return {
+      reply,
+      structured,
+      mode,
+    };
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
 
-    const text = String(dom.input.value || "").trim();
+    const text = toText(dom.input.value);
     if (!text) {
       return;
     }
@@ -170,24 +402,33 @@ export function initAiChatUi(options = {}) {
       return;
     }
 
-    appendMessage("user", text);
+    appendTextMessage("user", text);
     dom.input.value = "";
     isSending = true;
     updateComposerState();
 
     try {
-      const result = await Promise.resolve(sendHandler(text));
-      const replyText = normalizeReplyText(result);
-      if (replyText) {
-        appendMessage("assistant", replyText);
+      const result = await Promise.resolve(sendHandler(text, { mode: currentMode }));
+      const normalized = normalizeReplyPayload(result);
+      let hasRendered = false;
+
+      if (normalized.structured) {
+        hasRendered = appendStructuredAssistantMessage(normalized.structured, normalized.mode);
       }
+      if (!hasRendered && normalized.reply) {
+        appendTextMessage("assistant", normalized.reply);
+        hasRendered = true;
+      }
+
       dom.statusEl.classList.add("ai-chat-status-ready");
-      dom.statusEl.textContent = replyText ? "AI 已回复。" : "处理器已执行，但未返回可显示内容。";
+      dom.statusEl.textContent = hasRendered
+        ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
+        : "处理器已执行，但未返回可显示内容。";
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       dom.statusEl.classList.remove("ai-chat-status-ready");
       dom.statusEl.textContent = `预留处理器执行失败：${message}`;
-      appendMessage("assistant", `调用失败：${message}`);
+      appendTextMessage("assistant", `调用失败：${message}`);
     } finally {
       isSending = false;
       dom.sendBtn.disabled = typeof sendHandler !== "function";
@@ -214,6 +455,14 @@ export function initAiChatUi(options = {}) {
     close();
   });
 
+  dom.modeButtons.forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setMode(button.dataset.chatMode);
+    });
+  });
+
   dom.sheet.addEventListener("click", (event) => {
     event.stopPropagation();
   });
@@ -233,6 +482,8 @@ export function initAiChatUi(options = {}) {
     openExpanded,
     close,
     getState: () => state,
+    getMode,
+    setMode,
     setSendHandler: (handler) => {
       sendHandler = typeof handler === "function" ? handler : null;
       isSending = false;
@@ -243,6 +494,7 @@ export function initAiChatUi(options = {}) {
   window[CHAT_API_KEY] = api;
   initialized = true;
   updateComposerState();
+  updateModeControls();
 
   if (isValidState(options.initialState) && options.initialState !== CHAT_STATES.CLOSED) {
     applyState(options.initialState);

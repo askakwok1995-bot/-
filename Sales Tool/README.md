@@ -35,7 +35,8 @@
 
 ### import
 - 支持下载导入模板（`xlsx`/`exceljs`）。
-- Excel 导入按行写入云端 records。
+- Excel 导入采用 `250 行/块` 的串行分块批量写入云端 records。
+- 批量失败时，仅在可判定的业务/数据错误下逐行回退；网络/超时等状态不确定错误不会逐行重试（避免重复插入）。
 - 导入时若产品不存在会自动新增产品（单价默认 `0`）并同步到云端产品表。
 - 导入重复检测规则：按“日期 + 标准化产品名 + 医院 + 配送 + 数量”识别并提示（不阻断导入）。
 
@@ -144,6 +145,8 @@ npm run dev
 ```
 默认地址：`http://localhost:5173`
 
+> `npm run dev` 仅提供静态页面，不包含 Cloudflare Pages Functions；`/api/chat` 需在 Pages Functions 环境验证。
+
 ### 语法检查
 ```bash
 npm run check
@@ -193,11 +196,13 @@ window.__APP_CONFIG__ = {
 6. 指标修改后刷新仍保留，报表联动变化正确。
 7. 报表表格与图表导出可用（XLSX/PNG）。
 8. 执行 `npm run check` 通过。
+9. 聊天接口错误提示可区分：`UNAUTHORIZED(401)` / `CONFIG_MISSING` / `AUTH_UPSTREAM_TIMEOUT(504)` / `UPSTREAM_TIMEOUT(504)` / `UPSTREAM_ERROR`。
 
 ## 10. 已知边界与后续建议
 
 - 并发冲突策略仍为“最后写入生效”，暂未实现基于 `updated_at` 的乐观锁。
-- Excel 导入按行串行写入，超大文件导入耗时会明显增加。
+- Excel 导入当前为“分块串行”策略，超大文件导入耗时仍可能较长。
+- 当批量写入出现网络/超时等状态不确定异常时，系统不会逐行重试；需刷新页面核对后再决定是否重试。
 - 当前缺少自动化测试（仅有语法检查），建议优先补 records/products/targets 的关键路径测试。
 - 当导入后的产品同步失败时，系统会提示并尝试回拉云端产品；已写入的 records 不会回滚。
 
@@ -253,6 +258,14 @@ window.__APP_CONFIG__ = {
 本仓库已新增 Pages Function：
 - `POST /api/chat`（文件：`functions/api/chat.js`）
 
+请求头要求：
+- `Authorization: Bearer <Supabase access token>`
+- 缺少或无效 Token 时返回 `401`（`UNAUTHORIZED`）。
+
+响应追踪：
+- 所有 `POST /api/chat` 响应都会返回 `x-request-id` 响应头。
+- 响应体也会返回同一个 `requestId`，用于前后端统一排查。
+
 请求体：
 ```json
 {
@@ -269,25 +282,65 @@ window.__APP_CONFIG__ = {
 }
 ```
 
+`mode` 可选值：
+- `briefing`：简报模式（结论+亮点+风险+动作）
+- `diagnosis`：诊断模式（异常定位+原因假设+影响范围）
+- `action-plan`：行动模式（执行清单+负责人+时间+追踪指标）
+
 成功响应：
 ```json
 {
-  "reply": "模型回复文本",
+  "reply": "结构化摘要文本（兼容旧前端）",
   "model": "gemini-2.5-flash",
+  "requestId": "...",
+  "mode": "briefing",
+  "format": "structured",
+  "structured": {
+    "summary": "总体结论",
+    "highlights": ["亮点1", "亮点2"],
+    "evidence": [
+      { "label": "区间销售额", "value": "123456.78", "insight": "较上期回升" }
+    ],
+    "risks": ["风险1"],
+    "actions": [
+      { "title": "动作1", "owner": "销售A", "timeline": "下周", "metric": "达成率" }
+    ],
+    "nextQuestions": ["下次需要补充哪些数据？"]
+  }
+}
+```
+
+结构化回退说明：
+- 当模型输出无法解析为有效 JSON 时，接口返回 `format: "text_fallback"`。
+- 此时 `structured` 为 `null`，`reply` 返回模型原始文本。
+
+失败响应（示例）：
+```json
+{
+  "error": {
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "Gemini 请求超时（>12000ms），请稍后重试。"
+  },
   "requestId": "..."
 }
 ```
 
 ### 12.3 前端接线说明
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
-- 发送消息前会自动组装阶段1指标上下文并调用 `/api/chat`。
-- 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误。
+- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`。
+- 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
+- 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
+- AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
 
 ### 12.4 验收清单
 1. 线上页面登录后可正常使用业务模块。
 2. 发送聊天问题可返回 Gemini 文本。
 3. 前端源码与 `config.js` 中不包含 `GEMINI_API_KEY`。
 4. 关闭或清空 `GEMINI_API_KEY` 时，聊天提示“服务端未配置”。
+5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_ERROR`。
+6. 用户报错时可提供“请求号（requestId）”用于排查。
+7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
+8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
 
 ### 12.5 Supabase 权限核查
 1. `products` / `sales_records` / `sales_targets` 三张表开启 RLS。
