@@ -42,6 +42,74 @@ function renderReportsIfAvailable() {
   }
 }
 
+function clearListStatusSafe() {
+  if (typeof deps.clearListStatus === "function") {
+    deps.clearListStatus();
+  }
+}
+
+function showListStatusSafe(message, tone = "muted") {
+  if (typeof deps.showListStatus === "function") {
+    deps.showListStatus(message, tone);
+  }
+}
+
+function createDefaultRecordFilters() {
+  return {
+    startDate: "",
+    endDate: "",
+    productKeyword: "",
+    hospitalKeyword: "",
+  };
+}
+
+function normalizeRecordFilters(rawFilters) {
+  const source = rawFilters && typeof rawFilters === "object" ? rawFilters : {};
+  return {
+    startDate: String(source.startDate || "").trim(),
+    endDate: String(source.endDate || "").trim(),
+    productKeyword: String(source.productKeyword || "").trim(),
+    hospitalKeyword: String(source.hospitalKeyword || "").trim(),
+  };
+}
+
+function readRecordFiltersFromDom() {
+  return normalizeRecordFilters({
+    startDate: dom.recordFilterStartDateInput instanceof HTMLInputElement ? dom.recordFilterStartDateInput.value : "",
+    endDate: dom.recordFilterEndDateInput instanceof HTMLInputElement ? dom.recordFilterEndDateInput.value : "",
+    productKeyword:
+      dom.recordFilterProductKeywordInput instanceof HTMLInputElement ? dom.recordFilterProductKeywordInput.value : "",
+    hospitalKeyword:
+      dom.recordFilterHospitalKeywordInput instanceof HTMLInputElement ? dom.recordFilterHospitalKeywordInput.value : "",
+  });
+}
+
+function applyRecordFiltersToDom(filters) {
+  const safeFilters = normalizeRecordFilters(filters);
+  if (dom.recordFilterStartDateInput instanceof HTMLInputElement) {
+    dom.recordFilterStartDateInput.value = safeFilters.startDate;
+  }
+  if (dom.recordFilterEndDateInput instanceof HTMLInputElement) {
+    dom.recordFilterEndDateInput.value = safeFilters.endDate;
+  }
+  if (dom.recordFilterProductKeywordInput instanceof HTMLInputElement) {
+    dom.recordFilterProductKeywordInput.value = safeFilters.productKeyword;
+  }
+  if (dom.recordFilterHospitalKeywordInput instanceof HTMLInputElement) {
+    dom.recordFilterHospitalKeywordInput.value = safeFilters.hospitalKeyword;
+  }
+}
+
+function validateRecordFilters(filters) {
+  if (!filters.startDate || !filters.endDate) {
+    return "";
+  }
+  if (filters.startDate > filters.endDate) {
+    return "开始日期不能晚于结束日期。";
+  }
+  return "";
+}
+
 function createEmptySalesDraft() {
   return {
     date: "",
@@ -126,54 +194,260 @@ function bindSalesDraftEvents() {
   }
 }
 
-export function bindRecordEvents(nextState, nextDom, nextDeps) {
-bindContext(nextState, nextDom, nextDeps);
-if (typeof deps.loadSalesDraft === "function") {
-  applySalesDraftToDom(deps.loadSalesDraft());
-}
-bindSalesDraftEvents();
-dom.salesForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  deps.clearSalesError();
-
-  const data = {
-    date: String(dom.dateInput.value || "").trim(),
-    productId: String(dom.productSelect.value || "").trim(),
-    hospital: String(dom.hospitalInput.value || "").trim(),
-    quantity: String(dom.quantityInput.value || "").trim(),
-    delivery: String(dom.deliveryInput.value || "").trim(),
-  };
-
-  const selectedProduct = state.products.find((item) => item.id === data.productId);
-  const validationError = deps.validateSalesInput(data, selectedProduct);
-  if (validationError) {
-    deps.showSalesError(validationError);
-    return;
+async function refreshRecordListFromCloud(options = {}) {
+  if (typeof deps.fetchRecordsPageFromCloud !== "function") {
+    return false;
   }
 
-  const quantityNum = Number(data.quantity);
-  const amount = deps.roundMoney(selectedProduct.unitPrice * quantityNum);
+  const resetPage = Boolean(options.resetPage);
+  const showStatus = options.showStatus !== false;
+  if (resetPage) {
+    state.currentPage = 1;
+  }
 
-  state.records.unshift({
-    id: deps.buildId(),
-    date: data.date,
-    productId: selectedProduct.id,
-    productName: selectedProduct.productName,
-    unitPriceSnapshot: selectedProduct.unitPrice,
-    hospital: data.hospital,
-    quantity: quantityNum,
-    amount,
-    delivery: data.delivery,
+  state.recordFilters = normalizeRecordFilters(state.recordFilters || createDefaultRecordFilters());
+  const filterError = validateRecordFilters(state.recordFilters);
+  if (filterError) {
+    deps.showListError(filterError);
+    return false;
+  }
+
+  if (showStatus) {
+    clearListStatusSafe();
+    showListStatusSafe("正在加载记录...", "syncing");
+  }
+
+  try {
+    const loadCurrentPage = async () =>
+      deps.fetchRecordsPageFromCloud({
+        page: state.currentPage,
+        pageSize: state.pageSize,
+        sortField: state.sortField,
+        sortDirection: state.sortDirection,
+        filters: state.recordFilters,
+      });
+
+    let result = await loadCurrentPage();
+    let items = Array.isArray(result?.items) ? result.items : [];
+    let total = Number(result?.total);
+    total = Number.isInteger(total) && total >= 0 ? total : items.length;
+
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (total > 0 && state.currentPage > totalPages) {
+      state.currentPage = totalPages;
+      result = await loadCurrentPage();
+      items = Array.isArray(result?.items) ? result.items : [];
+      total = Number(result?.total);
+      total = Number.isInteger(total) && total >= 0 ? total : items.length;
+    }
+
+    state.recordListItems = items;
+    state.recordListTotal = total;
+    state.editingRowId = "";
+    if (state.selectedRecordIds instanceof Set) {
+      state.selectedRecordIds.clear();
+    }
+
+    renderRecords();
+    deps.clearListError();
+    if (showStatus) {
+      showListStatusSafe(`加载完成，当前第 ${state.currentPage} 页，共 ${state.recordListTotal} 条记录。`, "success");
+    }
+    return true;
+  } catch (error) {
+    if (showStatus) {
+      clearListStatusSafe();
+    }
+    deps.showListError("加载失败，请稍后重试。");
+    console.error("[Sales Tool] 列表加载失败。", error);
+    return false;
+  }
+}
+
+async function refreshReportRecordsFromCloud() {
+  if (typeof deps.fetchAllRecordsFromCloud !== "function") {
+    state.records = [];
+    state.reportRecords = [];
+    renderReportsIfAvailable();
+    return false;
+  }
+
+  try {
+    const cloudRecords = await deps.fetchAllRecordsFromCloud();
+    state.reportRecords = Array.isArray(cloudRecords) ? cloudRecords : [];
+    state.records = state.reportRecords;
+    renderReportsIfAvailable();
+    return true;
+  } catch (error) {
+    state.records = [];
+    state.reportRecords = [];
+    renderReportsIfAvailable();
+    console.error("[Sales Tool] 报表记录同步失败。", error);
+    return false;
+  }
+}
+
+async function refreshRecordListAndReports(options = {}) {
+  const markInitialLoadDone = Boolean(options.markInitialLoadDone);
+  try {
+    const listOk = await refreshRecordListFromCloud(options);
+    const reportOk = await refreshReportRecordsFromCloud();
+    return { listOk, reportOk };
+  } finally {
+    if (markInitialLoadDone) {
+      state.recordsInitialLoadDone = true;
+    }
+  }
+}
+
+function setDeleteToolbarButtonsDisabled(disabled) {
+  if (dom.deleteSelectedBtn instanceof HTMLButtonElement) {
+    dom.deleteSelectedBtn.disabled = disabled;
+  }
+  if (dom.clearAllRecordsBtn instanceof HTMLButtonElement) {
+    dom.clearAllRecordsBtn.disabled = disabled;
+  }
+}
+
+function setImportControlsDisabled(disabled) {
+  if (dom.importExcelBtn instanceof HTMLButtonElement) {
+    dom.importExcelBtn.disabled = disabled;
+  }
+  if (dom.importFileInput instanceof HTMLInputElement) {
+    dom.importFileInput.disabled = disabled;
+  }
+  if (dom.downloadTemplateBtn instanceof HTMLButtonElement) {
+    dom.downloadTemplateBtn.disabled = disabled;
+  }
+}
+
+export function bindRecordEvents(nextState, nextDom, nextDeps) {
+  bindContext(nextState, nextDom, nextDeps);
+  if (!Array.isArray(state.recordListItems)) {
+    state.recordListItems = [];
+  }
+  state.recordFilters = normalizeRecordFilters(state.recordFilters || createDefaultRecordFilters());
+  state.recordListTotal = Number.isInteger(Number(state.recordListTotal)) && Number(state.recordListTotal) >= 0
+    ? Number(state.recordListTotal)
+    : 0;
+  if (typeof state.recordsInitialLoadDone !== "boolean") {
+    state.recordsInitialLoadDone = false;
+  }
+  applyRecordFiltersToDom(state.recordFilters);
+  if (typeof deps.loadSalesDraft === "function") {
+    applySalesDraftToDom(deps.loadSalesDraft());
+  }
+  bindSalesDraftEvents();
+  void refreshRecordListAndReports({ resetPage: true, showStatus: true, markInitialLoadDone: true });
+
+  if (dom.recordFilterApplyBtn instanceof HTMLButtonElement) {
+    dom.recordFilterApplyBtn.addEventListener("click", () => {
+      state.recordFilters = readRecordFiltersFromDom();
+      state.selectedRecordIds.clear();
+      void refreshRecordListFromCloud({ resetPage: true, showStatus: true });
+    });
+  }
+
+  if (dom.recordFilterResetBtn instanceof HTMLButtonElement) {
+    dom.recordFilterResetBtn.addEventListener("click", () => {
+      state.recordFilters = createDefaultRecordFilters();
+      applyRecordFiltersToDom(state.recordFilters);
+      state.selectedRecordIds.clear();
+      void refreshRecordListFromCloud({ resetPage: true, showStatus: true });
+    });
+  }
+
+  const triggerFilterApplyByEnter = (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    state.recordFilters = readRecordFiltersFromDom();
+    state.selectedRecordIds.clear();
+    void refreshRecordListFromCloud({ resetPage: true, showStatus: true });
+  };
+
+  if (dom.recordFilterStartDateInput instanceof HTMLInputElement) {
+    dom.recordFilterStartDateInput.addEventListener("keydown", triggerFilterApplyByEnter);
+  }
+  if (dom.recordFilterEndDateInput instanceof HTMLInputElement) {
+    dom.recordFilterEndDateInput.addEventListener("keydown", triggerFilterApplyByEnter);
+  }
+  if (dom.recordFilterProductKeywordInput instanceof HTMLInputElement) {
+    dom.recordFilterProductKeywordInput.addEventListener("keydown", triggerFilterApplyByEnter);
+  }
+  if (dom.recordFilterHospitalKeywordInput instanceof HTMLInputElement) {
+    dom.recordFilterHospitalKeywordInput.addEventListener("keydown", triggerFilterApplyByEnter);
+  }
+
+  dom.salesForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    deps.clearSalesError();
+
+    const data = {
+      date: String(dom.dateInput.value || "").trim(),
+      productId: String(dom.productSelect.value || "").trim(),
+      hospital: String(dom.hospitalInput.value || "").trim(),
+      quantity: String(dom.quantityInput.value || "").trim(),
+      delivery: String(dom.deliveryInput.value || "").trim(),
+    };
+
+    const selectedProduct = state.products.find((item) => item.id === data.productId);
+    const validationError = deps.validateSalesInput(data, selectedProduct);
+    if (validationError) {
+      deps.showSalesError(validationError);
+      return;
+    }
+
+    const quantityNum = Number(data.quantity);
+    const amount = deps.roundMoney(selectedProduct.unitPrice * quantityNum);
+    const submitButton = dom.salesSubmitBtn instanceof HTMLButtonElement ? dom.salesSubmitBtn : null;
+    const originalSubmitText = submitButton ? submitButton.textContent : "";
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "提交中...";
+    }
+
+    clearListStatusSafe();
+    showListStatusSafe("正在保存...", "syncing");
+
+    try {
+      if (typeof deps.insertRecordToCloud === "function") {
+        const inserted = await deps.insertRecordToCloud({
+          date: data.date,
+          hospital: data.hospital,
+          productName: selectedProduct.productName,
+          quantity: quantityNum,
+          amount,
+          delivery: data.delivery,
+        });
+
+        if (!inserted?.id) {
+          throw new Error("云端写入成功，但未返回记录 ID。");
+        }
+      }
+
+      const { listOk, reportOk } = await refreshRecordListAndReports({ resetPage: true, showStatus: false });
+      deps.updateComputedAmount();
+      persistSalesDraftFromDom();
+      deps.clearListError();
+      if (listOk && reportOk) {
+        showListStatusSafe("保存成功。", "success");
+      } else if (!listOk) {
+        deps.showListError("保存成功，但列表刷新失败，请稍后重试。");
+      } else {
+        showListStatusSafe("保存成功，报表稍后更新。", "muted");
+      }
+    } catch (error) {
+      deps.showSalesError(`保存失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+      deps.showListError("保存失败，数据未更新，请重试。");
+    } finally {
+      if (submitButton) {
+        submitButton.textContent = originalSubmitText || "新增记录";
+      }
+      if (typeof deps.updateSalesFormAvailability === "function") {
+        deps.updateSalesFormAvailability();
+      }
+    }
   });
-
-  state.editingRowId = "";
-  deps.saveRecords();
-  renderRecords();
-  deps.updateComputedAmount();
-  persistSalesDraftFromDom();
-  deps.clearListError();
-  renderReportsIfAvailable();
-});
 
 dom.downloadTemplateBtn.addEventListener("click", async () => {
   deps.clearListError();
@@ -206,6 +480,8 @@ dom.importFileInput.addEventListener("change", async (event) => {
   if (!file) return;
 
   deps.clearListError();
+  clearListStatusSafe();
+  showListStatusSafe("正在解析导入文件...", "syncing");
 
   if (!isXlsxReady()) {
     dom.importFileInput.value = "";
@@ -220,6 +496,7 @@ dom.importFileInput.addEventListener("change", async (event) => {
     return;
   }
 
+  setImportControlsDisabled(true);
   state.editingRowId = "";
   renderRecords();
 
@@ -281,29 +558,63 @@ dom.importFileInput.addEventListener("change", async (event) => {
     }
 
     const processResult = processImportRows(dataRows);
-    const { nextProducts, nextRecords, ...summary } = processResult;
+    const { nextProducts, preparedRows, summary } = processResult;
+
+    if (typeof deps.insertRecordToCloud !== "function") {
+      throw new Error("云端导入接口未就绪，请刷新页面后重试。");
+    }
+
+    showListStatusSafe("正在导入数据，数据较多时耗时会更长，请耐心等待。", "syncing");
+    let successRows = 0;
+    for (const row of preparedRows) {
+      try {
+        await deps.insertRecordToCloud(row.payload);
+        successRows += 1;
+      } catch (error) {
+        summary.errors.push(
+          buildImportError(
+            row.rowNumber,
+            `保存失败：${error instanceof Error ? error.message : "请稍后重试"}`,
+            row.rawRow,
+          ),
+        );
+      }
+    }
+
+    summary.successRows = successRows;
+    summary.failedRows = summary.errors.length;
+    summary.duplicateDetectedRows = summary.duplicates.length;
     setImportResult(summary);
 
     if (summary.successRows > 0) {
       state.products = nextProducts;
-      state.records = nextRecords;
       deps.saveProducts();
-      deps.saveRecords();
       deps.renderProductMaster();
       deps.renderProductSelectOptions();
       deps.updateSalesFormAvailability();
       deps.updateComputedAmount();
-      renderRecords();
+      const { listOk, reportOk } = await refreshRecordListAndReports({ resetPage: true, showStatus: false });
+
       deps.clearListError();
-      renderReportsIfAvailable();
+      if (!listOk) {
+        deps.showListError("导入已提交，但列表刷新失败，请稍后重试。");
+      } else if (!reportOk) {
+        showListStatusSafe("导入已提交，报表稍后更新。", "muted");
+      } else if (summary.failedRows > 0) {
+        showListStatusSafe(`导入部分成功：成功 ${summary.successRows}，失败 ${summary.failedRows}。`, "muted");
+      } else {
+        showListStatusSafe("导入完成，数据已全部加载。", "success");
+      }
     } else {
-      deps.showListError("未导入任何记录，请根据失败明细修正后重试。");
+      deps.showListError("导入失败，数据未更新，请根据失败明细修正后重试。");
     }
-  } catch (_error) {
-    const failure = createImportFailure("文件解析失败，请确认文件格式和内容。", 0, {});
+  } catch (error) {
+    const reason = error instanceof Error && error.message ? error.message : "文件解析失败，请确认文件格式和内容。";
+    const failure = createImportFailure(reason, 0, {});
     setImportResult(failure);
-    deps.showListError("文件解析失败，请确认文件格式和内容。");
+    deps.showListError(reason);
   } finally {
+    setImportControlsDisabled(false);
     dom.importFileInput.value = "";
   }
 });
@@ -334,7 +645,8 @@ dom.pageSizeSelect.addEventListener("change", () => {
 
   state.pageSize = nextPageSize;
   state.currentPage = 1;
-  renderRecords();
+  state.selectedRecordIds.clear();
+  void refreshRecordListFromCloud({ resetPage: true, showStatus: false });
 });
 
 dom.multiSelectToggleBtn.addEventListener("click", () => {
@@ -358,14 +670,16 @@ dom.clearAllRecordsBtn.addEventListener("click", () => {
 dom.prevPageBtn.addEventListener("click", () => {
   if (state.currentPage <= 1) return;
   state.currentPage -= 1;
-  renderRecords();
+  state.selectedRecordIds.clear();
+  void refreshRecordListFromCloud({ showStatus: false });
 });
 
 dom.nextPageBtn.addEventListener("click", () => {
   const totalPages = getTotalPages();
   if (state.currentPage >= totalPages) return;
   state.currentPage += 1;
-  renderRecords();
+  state.selectedRecordIds.clear();
+  void refreshRecordListFromCloud({ showStatus: false });
 });
 
 dom.recordsHead.addEventListener("change", (event) => {
@@ -388,6 +702,8 @@ dom.recordsHead.addEventListener("click", (event) => {
   if (!SORTABLE_RECORD_FIELDS.has(field)) return;
 
   toggleSort(field);
+  state.selectedRecordIds.clear();
+  void refreshRecordListFromCloud({ resetPage: true, showStatus: false });
 });
 
 dom.productSelect.addEventListener("change", () => {
@@ -402,7 +718,7 @@ dom.quantityInput.addEventListener("input", () => {
   persistSalesDraftFromDom();
 });
 
-dom.recordsBody.addEventListener("click", (event) => {
+dom.recordsBody.addEventListener("click", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
 
@@ -410,15 +726,50 @@ dom.recordsBody.addEventListener("click", (event) => {
   if (!id) return;
 
   if (target.classList.contains("delete-record-btn")) {
-    state.records = state.records.filter((item) => item.id !== id);
-    state.selectedRecordIds.delete(id);
-    if (state.editingRowId === id) {
-      state.editingRowId = "";
+    const deleteBtn = target instanceof HTMLButtonElement ? target : null;
+    let shouldRestoreToolbar = true;
+
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
     }
-    deps.saveRecords();
-    renderRecords();
-    deps.clearListError();
-    renderReportsIfAvailable();
+    setDeleteToolbarButtonsDisabled(true);
+    clearListStatusSafe();
+    showListStatusSafe("正在删除记录...", "syncing");
+
+    try {
+      if (typeof deps.deleteRecordFromCloud === "function") {
+        const result = await deps.deleteRecordFromCloud(id);
+        const deletedIds = Array.isArray(result?.deletedIds) ? result.deletedIds : [];
+        if (!deletedIds.includes(id)) {
+          await refreshRecordListFromCloud({ showStatus: false });
+          await refreshReportRecordsFromCloud();
+          deps.showListError("未找到该记录，列表已刷新同步。");
+          return;
+        }
+      }
+
+      const { listOk, reportOk } = await refreshRecordListAndReports({ showStatus: false });
+      if (!listOk) {
+        deps.showListError("删除成功，但列表刷新失败，请稍后重试。");
+        return;
+      }
+      deps.clearListError();
+      if (reportOk) {
+        showListStatusSafe("记录已删除。", "success");
+      } else {
+        showListStatusSafe("记录已删除，报表稍后更新。", "muted");
+      }
+      shouldRestoreToolbar = false;
+    } catch (error) {
+      deps.showListError("删除失败，记录未变更。请重试。");
+    } finally {
+      if (deleteBtn instanceof HTMLButtonElement && document.body.contains(deleteBtn)) {
+        deleteBtn.disabled = false;
+      }
+      if (shouldRestoreToolbar) {
+        setDeleteToolbarButtonsDisabled(false);
+      }
+    }
     return;
   }
 
@@ -437,7 +788,7 @@ dom.recordsBody.addEventListener("click", (event) => {
   }
 
   if (target.classList.contains("save-record-btn")) {
-    saveInlineEdit(id, target);
+    await saveInlineEdit(id, target);
   }
 });
 
@@ -469,7 +820,7 @@ dom.recordsBody.addEventListener("change", (event) => {
   updateInlineAmount(row);
 });
 
-dom.recordsBody.addEventListener("keydown", (event) => {
+dom.recordsBody.addEventListener("keydown", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
 
@@ -484,7 +835,7 @@ dom.recordsBody.addEventListener("keydown", (event) => {
     const id = saveBtn.dataset.id;
     if (!id) return;
 
-    saveInlineEdit(id, saveBtn);
+    await saveInlineEdit(id, saveBtn);
     return;
   }
 
@@ -503,12 +854,12 @@ export function renderRecords(nextState, nextDom, nextDeps) {
   clearInvalidSelections();
   clampCurrentPage();
 
-  const pageRecords = getPagedRecords();
+  const pageRecords = state.recordListItems;
   renderRecordsHead(pageRecords);
   renderListToolsState(pageRecords);
   renderPagination();
 
-  if (state.records.length === 0 || pageRecords.length === 0) {
+  if (state.recordListItems.length === 0 || pageRecords.length === 0) {
     dom.recordsBody.innerHTML = `
       <tr>
         <td colspan="${getRecordsColumnCount()}" class="empty">暂无记录</td>
@@ -636,11 +987,11 @@ function renderListToolsState(pageRecords) {
   const selectedCount = state.selectedRecordIds.size;
   dom.deleteSelectedBtn.textContent = `删除已选(${selectedCount})`;
   dom.deleteSelectedBtn.disabled = selectedCount === 0;
-  dom.clearAllRecordsBtn.disabled = state.records.length === 0;
+  dom.clearAllRecordsBtn.disabled = state.recordListTotal === 0;
 }
 
 function renderPagination() {
-  const hasRecords = state.records.length > 0;
+  const hasRecords = state.recordListTotal > 0;
   const totalPages = getTotalPages();
 
   dom.pageInfoEl.textContent = hasRecords ? `第 ${state.currentPage} / ${totalPages} 页` : "第 1 / 1 页";
@@ -649,7 +1000,7 @@ function renderPagination() {
 }
 
 function getTotalPages() {
-  const total = Math.ceil(state.records.length / state.pageSize);
+  const total = Math.ceil(state.recordListTotal / state.pageSize);
   return total > 0 ? total : 1;
 }
 
@@ -663,27 +1014,11 @@ function clampCurrentPage() {
 }
 
 function getPagedRecords() {
-  const start = (state.currentPage - 1) * state.pageSize;
-  const sortedRecords = getSortedRecords();
-  return sortedRecords.slice(start, start + state.pageSize);
+  return state.recordListItems;
 }
 
 function getSortedRecords() {
-  if (!state.sortField || !state.sortDirection) {
-    return state.records;
-  }
-
-  const direction = state.sortDirection === "desc" ? -1 : 1;
-  return state.records
-    .map((record, index) => ({ record, index }))
-    .sort((left, right) => {
-      const compared = compareRecordValue(left.record, right.record, state.sortField);
-      if (compared !== 0) {
-        return compared * direction;
-      }
-      return left.index - right.index;
-    })
-    .map((item) => item.record);
+  return state.recordListItems;
 }
 
 function compareRecordValue(leftRecord, rightRecord, field) {
@@ -714,7 +1049,6 @@ function toggleSort(field) {
   }
 
   state.currentPage = 1;
-  renderRecords();
 }
 
 function getRecordsColumnCount() {
@@ -726,7 +1060,7 @@ function isAllCurrentPageSelected(pageRecords) {
 }
 
 function clearInvalidSelections() {
-  const existingIds = new Set(state.records.map((record) => record.id));
+  const existingIds = new Set(state.recordListItems.map((record) => record.id));
   for (const id of state.selectedRecordIds) {
     if (!existingIds.has(id)) {
       state.selectedRecordIds.delete(id);
@@ -772,7 +1106,7 @@ function toggleSelectCurrentPage(selectAll) {
   renderRecords();
 }
 
-function handleBatchDelete() {
+async function handleBatchDelete() {
   const selectedCount = state.selectedRecordIds.size;
   if (selectedCount === 0) {
     deps.showListError("请先选择记录。");
@@ -782,33 +1116,97 @@ function handleBatchDelete() {
   const confirmed = window.confirm(`确定删除已选 ${selectedCount} 条记录？`);
   if (!confirmed) return;
 
-  state.records = state.records.filter((record) => !state.selectedRecordIds.has(record.id));
-  state.selectedRecordIds.clear();
-  state.editingRowId = "";
+  const selectedIds = Array.from(state.selectedRecordIds);
+  let shouldRestoreToolbar = true;
+  setDeleteToolbarButtonsDisabled(true);
+  clearListStatusSafe();
+  showListStatusSafe("正在批量删除记录...", "syncing");
 
-  deps.saveRecords();
-  deps.clearListError();
-  renderRecords();
-  renderReportsIfAvailable();
+  try {
+    let deletedIds = selectedIds;
+    if (typeof deps.deleteRecordsFromCloud === "function") {
+      const result = await deps.deleteRecordsFromCloud(selectedIds);
+      deletedIds = Array.isArray(result?.deletedIds) ? result.deletedIds : [];
+    }
+
+    const deletedSet = new Set(deletedIds);
+    const successCount = deletedSet.size;
+    const failCount = selectedCount - successCount;
+
+    if (successCount === 0) {
+      deps.showListError("批量删除失败，记录未变更。请重试。");
+      return;
+    }
+
+    const { listOk, reportOk } = await refreshRecordListAndReports({ showStatus: false });
+    if (!listOk) {
+      deps.showListError("批量删除已提交，但列表刷新失败，请稍后重试。");
+      return;
+    }
+    shouldRestoreToolbar = false;
+
+    if (failCount > 0) {
+      deps.clearListError();
+      if (reportOk) {
+        showListStatusSafe(`批量删除部分成功：成功 ${successCount}，失败 ${failCount}。`, "muted");
+      } else {
+        showListStatusSafe(`批量删除部分成功：成功 ${successCount}，失败 ${failCount}（报表稍后更新）。`, "muted");
+      }
+    } else {
+      deps.clearListError();
+      if (reportOk) {
+        showListStatusSafe("批量删除完成。", "success");
+      } else {
+        showListStatusSafe("批量删除完成，报表稍后更新。", "muted");
+      }
+    }
+  } catch (error) {
+    deps.showListError("批量删除失败，记录未变更。请重试。");
+  } finally {
+    if (shouldRestoreToolbar) {
+      setDeleteToolbarButtonsDisabled(false);
+    }
+  }
 }
 
-function handleClearAllRecords() {
-  if (state.records.length === 0) {
+async function handleClearAllRecords() {
+  if (state.recordListTotal === 0) {
     deps.showListError("当前没有可清空的记录。");
     return;
   }
 
-  const confirmed = window.confirm(`确定清空全部 ${state.records.length} 条记录？此操作不可撤销。`);
+  const confirmed = window.confirm(`确定清空全部 ${state.recordListTotal} 条记录？此操作不可撤销。`);
   if (!confirmed) return;
 
-  state.records = [];
-  state.selectedRecordIds.clear();
-  state.editingRowId = "";
+  let shouldRestoreToolbar = true;
+  setDeleteToolbarButtonsDisabled(true);
+  clearListStatusSafe();
+  showListStatusSafe("正在清空记录...", "syncing");
 
-  deps.saveRecords();
-  deps.clearListError();
-  renderRecords();
-  renderReportsIfAvailable();
+  try {
+    if (typeof deps.deleteAllRecordsFromCloud === "function") {
+      await deps.deleteAllRecordsFromCloud();
+    }
+
+    const { listOk, reportOk } = await refreshRecordListAndReports({ resetPage: true, showStatus: false });
+    if (!listOk) {
+      deps.showListError("清空已提交，但列表刷新失败，请稍后重试。");
+      return;
+    }
+    deps.clearListError();
+    if (reportOk) {
+      showListStatusSafe("当前账号记录已清空。", "success");
+    } else {
+      showListStatusSafe("当前账号记录已清空，报表稍后更新。", "muted");
+    }
+    shouldRestoreToolbar = false;
+  } catch (error) {
+    deps.showListError("清空失败，记录未变更。请重试。");
+  } finally {
+    if (shouldRestoreToolbar) {
+      setDeleteToolbarButtonsDisabled(false);
+    }
+  }
 }
 
 function renderEditingRow(record) {
@@ -862,7 +1260,7 @@ function buildProductOptions(selectedId) {
   return options.join("");
 }
 
-function saveInlineEdit(id, trigger) {
+async function saveInlineEdit(id, trigger) {
   const row = trigger.closest("tr");
   if (!(row instanceof HTMLTableRowElement)) return;
 
@@ -884,27 +1282,59 @@ function saveInlineEdit(id, trigger) {
   const quantityNum = Number(data.quantity);
   const amount = deps.roundMoney(selectedProduct.unitPrice * quantityNum);
 
-  state.records = state.records.map((record) => {
-    if (record.id !== id) return record;
+  const saveBtn = row.querySelector(".save-record-btn");
+  const cancelBtn = row.querySelector(".cancel-record-btn");
+  if (saveBtn instanceof HTMLButtonElement) {
+    saveBtn.disabled = true;
+  }
+  if (cancelBtn instanceof HTMLButtonElement) {
+    cancelBtn.disabled = true;
+  }
 
-    return {
-      ...record,
-      date: data.date,
-      productId: selectedProduct.id,
-      productName: selectedProduct.productName,
-      unitPriceSnapshot: selectedProduct.unitPrice,
-      hospital: data.hospital,
-      quantity: quantityNum,
-      amount,
-      delivery: data.delivery,
-    };
-  });
+  clearListStatusSafe();
+  showListStatusSafe("正在保存修改...", "syncing");
 
-  state.editingRowId = "";
-  deps.saveRecords();
-  deps.clearListError();
-  renderRecords();
-  renderReportsIfAvailable();
+  try {
+    if (typeof deps.updateRecordInCloud === "function") {
+      const { updatedCount } = await deps.updateRecordInCloud(id, {
+        date: data.date,
+        hospital: data.hospital,
+        productName: selectedProduct.productName,
+        quantity: quantityNum,
+        amount,
+        delivery: data.delivery,
+      });
+
+      if (!updatedCount) {
+        await refreshRecordListFromCloud({ showStatus: false });
+        await refreshReportRecordsFromCloud();
+        deps.clearListError();
+        showListStatusSafe("记录不存在，已同步最新数据。", "muted");
+        return;
+      }
+    }
+
+    const { listOk, reportOk } = await refreshRecordListAndReports({ showStatus: false });
+    if (!listOk) {
+      deps.showListError("修改成功，但列表刷新失败，请稍后重试。");
+      return;
+    }
+    deps.clearListError();
+    if (reportOk) {
+      showListStatusSafe("修改已保存。", "success");
+    } else {
+      showListStatusSafe("修改已保存，报表稍后更新。", "muted");
+    }
+  } catch (error) {
+    deps.showListError("修改失败，原数据未变更。请重试。");
+  } finally {
+    if (saveBtn instanceof HTMLButtonElement && document.body.contains(saveBtn)) {
+      saveBtn.disabled = false;
+    }
+    if (cancelBtn instanceof HTMLButtonElement && document.body.contains(cancelBtn)) {
+      cancelBtn.disabled = false;
+    }
+  }
 }
 
 function getRowFieldValue(row, fieldName) {
@@ -936,7 +1366,6 @@ function updateInlineAmount(row) {
 
 function processImportRows(dataRows) {
   const nextProducts = state.products.map((item) => ({ ...item }));
-  const nextRecords = state.records.map((item) => ({ ...item }));
 
   const productNameMap = new Map();
   for (const product of nextProducts) {
@@ -947,7 +1376,8 @@ function processImportRows(dataRows) {
   }
 
   const duplicateSourceMap = new Map();
-  nextRecords.forEach((record, index) => {
+  const existingRecords = Array.isArray(state.reportRecords) ? state.reportRecords : state.records;
+  existingRecords.forEach((record, index) => {
     const normalizedName = deps.normalizeText(record.productName);
     const mappedProduct = productNameMap.get(normalizedName);
     const fallbackKey = record.productId || (mappedProduct ? mappedProduct.id : `name:${normalizedName}`);
@@ -967,6 +1397,7 @@ function processImportRows(dataRows) {
     errors: [],
     duplicates: [],
   };
+  const preparedRows = [];
 
   for (const rowInfo of dataRows) {
     const parsed = normalizeImportDataRow(rowInfo.rowNumber, rowInfo.cells);
@@ -1007,28 +1438,33 @@ function processImportRows(dataRows) {
       duplicateSourceMap.set(duplicateKey, { type: "import", rowNumber: rowInfo.rowNumber });
     }
 
-    nextRecords.unshift({
-      id: deps.buildId(),
-      date: data.date,
-      productId: product.id,
-      productName: product.productName,
-      unitPriceSnapshot: product.unitPrice,
-      hospital: data.hospital,
-      quantity: data.quantity,
-      amount: deps.roundMoney(product.unitPrice * data.quantity),
-      delivery: data.delivery,
+    preparedRows.push({
+      rowNumber: rowInfo.rowNumber,
+      rawRow: {
+        日期: rowInfo.cells[0],
+        "产品/规格": rowInfo.cells[1],
+        医院: rowInfo.cells[2],
+        "采购数量（盒）": rowInfo.cells[3],
+        配送: rowInfo.cells[4],
+      },
+      payload: {
+        date: data.date,
+        hospital: data.hospital,
+        productName: product.productName,
+        quantity: data.quantity,
+        amount: deps.roundMoney(product.unitPrice * data.quantity),
+        delivery: data.delivery,
+      },
     });
-
-    summary.successRows += 1;
   }
 
   summary.failedRows = summary.errors.length;
   summary.duplicateDetectedRows = summary.duplicates.length;
 
   return {
-    ...summary,
     nextProducts,
-    nextRecords,
+    preparedRows,
+    summary,
   };
 }
 

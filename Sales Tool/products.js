@@ -26,6 +26,53 @@ function renderTargetsIfAvailable(deps) {
   }
 }
 
+async function syncReportRecordsForReports(state, deps) {
+  if (typeof deps.fetchAllRecordsFromCloud !== "function") {
+    return;
+  }
+
+  try {
+    const cloudRecords = await deps.fetchAllRecordsFromCloud();
+    const safeRecords = Array.isArray(cloudRecords) ? cloudRecords : [];
+    state.reportRecords = safeRecords;
+    state.records = safeRecords;
+  } catch (error) {
+    if (Array.isArray(state.records)) {
+      state.reportRecords = state.records.map((record) => ({ ...record }));
+    } else {
+      state.reportRecords = [];
+    }
+    console.error("[Sales Tool] 报表记录同步失败。", error);
+  }
+}
+
+function getProductUsageRecords(state) {
+  if (Array.isArray(state.reportRecords) && state.reportRecords.length > 0) {
+    return state.reportRecords;
+  }
+  if (Array.isArray(state.records)) {
+    return state.records;
+  }
+  return [];
+}
+
+function isProductUsedByAnyRecord(state, deps, productId, productName) {
+  const safeProductId = String(productId || "").trim();
+  const normalizedProductName = deps.normalizeText(productName);
+  const records = getProductUsageRecords(state);
+
+  return records.some((record) => {
+    const linkedProductId = String(record?.productId || "").trim();
+    if (safeProductId && linkedProductId === safeProductId) {
+      return true;
+    }
+    if (!normalizedProductName) {
+      return false;
+    }
+    return deps.normalizeText(record?.productName) === normalizedProductName;
+  });
+}
+
 export function validateSalesInput(state, data, selectedProduct) {
   if (state.products.length === 0) return "请先维护产品配置。";
   if (!data.date) return "请填写日期。";
@@ -110,7 +157,7 @@ export function renderProductSelectOptions(state, dom, deps) {
   }
 }
 
-export function saveProductInlineEdit(state, dom, deps, id, trigger) {
+export async function saveProductInlineEdit(state, dom, deps, id, trigger) {
   const row = trigger.closest("tr");
   if (!(row instanceof HTMLTableRowElement)) return;
 
@@ -129,53 +176,106 @@ export function saveProductInlineEdit(state, dom, deps, id, trigger) {
   }
 
   const oldProductName = targetProduct.productName;
+  const isRenaming = deps.normalizeText(productName) !== deps.normalizeText(oldProductName);
+  const hasLinkedRecords = isProductUsedByAnyRecord(state, deps, id, oldProductName);
+  if (hasLinkedRecords && isRenaming) {
+    deps.showProductError("已有记录使用该产品，不能修改名称；如需调整请仅修改单价。");
+    return;
+  }
+
   const oldUnitPrice = deps.roundMoney(targetProduct.unitPrice);
   const nextUnitPrice = deps.roundMoney(Number(unitPriceRaw));
+  const saveBtn = row.querySelector(".save-product-btn");
+  const cancelBtn = row.querySelector(".cancel-product-btn");
+  if (saveBtn instanceof HTMLButtonElement) {
+    saveBtn.disabled = true;
+  }
+  if (cancelBtn instanceof HTMLButtonElement) {
+    cancelBtn.disabled = true;
+  }
 
-  state.products = state.products.map((item) => {
-    if (item.id !== id) return item;
-    return {
-      ...item,
-      productName,
-      unitPrice: nextUnitPrice,
-    };
-  });
+  try {
+    if (typeof deps.updateProductInCloud === "function") {
+      const { updatedCount } = await deps.updateProductInCloud(id, {
+        productName,
+        unitPrice: nextUnitPrice,
+      });
 
-  let hasRecordUpdates = false;
-  if (nextUnitPrice !== oldUnitPrice) {
-    state.records = state.records.map((record) => {
-      const isLinkedById = record.productId === id;
-      const isLegacyLinkedByName =
-        !String(record.productId || "").trim() && deps.normalizeText(record.productName) === deps.normalizeText(oldProductName);
+      if (!updatedCount) {
+        if (typeof deps.fetchProductsFromCloud === "function") {
+          const cloudProducts = await deps.fetchProductsFromCloud();
+          if (Array.isArray(cloudProducts)) {
+            state.products = cloudProducts;
+          }
+        }
+        state.editingProductId = "";
+        deps.renderProductMaster();
+        deps.renderProductSelectOptions();
+        updateSalesFormAvailability(state, dom);
+        updateComputedAmount(state, dom, deps);
+        deps.showProductError("产品不存在，已同步最新数据。");
+        return;
+      }
+    }
 
-      if (!isLinkedById && !isLegacyLinkedByName) {
-        return record;
+    let hasRecordUpdates = false;
+    if (nextUnitPrice !== oldUnitPrice) {
+      if (typeof deps.repriceRecordsByProductName === "function") {
+        await deps.repriceRecordsByProductName(oldProductName, nextUnitPrice);
       }
 
-      hasRecordUpdates = true;
+      state.records = state.records.map((record) => {
+        const isLinkedById = record.productId === id;
+        const isLegacyLinkedByName =
+          !String(record.productId || "").trim() && deps.normalizeText(record.productName) === deps.normalizeText(oldProductName);
+
+        if (!isLinkedById && !isLegacyLinkedByName) {
+          return record;
+        }
+
+        hasRecordUpdates = true;
+        return {
+          ...record,
+          unitPriceSnapshot: nextUnitPrice,
+          amount: deps.roundMoney(nextUnitPrice * record.quantity),
+        };
+      });
+    }
+
+    state.products = state.products.map((item) => {
+      if (item.id !== id) return item;
       return {
-        ...record,
-        unitPriceSnapshot: nextUnitPrice,
-        amount: deps.roundMoney(nextUnitPrice * record.quantity),
+        ...item,
+        productName,
+        unitPrice: nextUnitPrice,
       };
     });
-  }
 
-  state.editingProductId = "";
-  deps.saveProducts(state);
-  if (hasRecordUpdates) {
-    deps.saveRecords(state);
-  }
+    state.editingProductId = "";
+    if (hasRecordUpdates) {
+      deps.saveRecords(state);
+      await syncReportRecordsForReports(state, deps);
+    }
 
-  deps.clearProductError();
-  deps.clearListError();
-  renderProductMaster(state, dom, deps);
-  renderProductSelectOptions(state, dom, deps);
-  updateSalesFormAvailability(state, dom);
-  updateComputedAmount(state, dom, deps);
-  deps.renderRecords();
-  renderReportsIfAvailable(deps);
-  renderTargetsIfAvailable(deps);
+    deps.clearProductError();
+    deps.clearListError();
+    renderProductMaster(state, dom, deps);
+    renderProductSelectOptions(state, dom, deps);
+    updateSalesFormAvailability(state, dom);
+    updateComputedAmount(state, dom, deps);
+    deps.renderRecords();
+    renderReportsIfAvailable(deps);
+    renderTargetsIfAvailable(deps);
+  } catch (error) {
+    deps.showProductError(`保存失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+  } finally {
+    if (saveBtn instanceof HTMLButtonElement && document.body.contains(saveBtn)) {
+      saveBtn.disabled = false;
+    }
+    if (cancelBtn instanceof HTMLButtonElement && document.body.contains(cancelBtn)) {
+      cancelBtn.disabled = false;
+    }
+  }
 }
 
 export function getProductRowFieldValue(row, fieldName) {
@@ -204,7 +304,7 @@ export function updateComputedAmount(state, dom, deps) {
 }
 
 export function bindProductEvents(state, dom, deps) {
-  dom.productForm.addEventListener("submit", (event) => {
+  dom.productForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     deps.clearProductError();
 
@@ -223,19 +323,40 @@ export function bindProductEvents(state, dom, deps) {
       unitPrice: deps.roundMoney(Number(unitPriceRaw)),
     };
 
-    state.products.unshift(newProduct);
-    deps.saveProducts(state);
-    renderProductMaster(state, dom, deps);
-    renderProductSelectOptions(state, dom, deps);
-    updateSalesFormAvailability(state, dom);
-    updateComputedAmount(state, dom, deps);
-    dom.productForm.reset();
-    deps.clearListError();
-    deps.renderRecords();
-    renderTargetsIfAvailable(deps);
+    const submitButton = dom.productForm.querySelector('button[type="submit"]');
+    const submitBtn = submitButton instanceof HTMLButtonElement ? submitButton : null;
+    const originalText = submitBtn ? submitBtn.textContent : "";
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "保存中...";
+    }
+
+    try {
+      let insertedProduct = newProduct;
+      if (typeof deps.insertProductToCloud === "function") {
+        insertedProduct = await deps.insertProductToCloud(newProduct);
+      }
+
+      state.products.unshift(insertedProduct);
+      renderProductMaster(state, dom, deps);
+      renderProductSelectOptions(state, dom, deps);
+      updateSalesFormAvailability(state, dom);
+      updateComputedAmount(state, dom, deps);
+      dom.productForm.reset();
+      deps.clearListError();
+      deps.renderRecords();
+      renderTargetsIfAvailable(deps);
+    } catch (error) {
+      deps.showProductError(`新增失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+    } finally {
+      if (submitBtn instanceof HTMLButtonElement) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText || "新增产品";
+      }
+    }
   });
 
-  dom.productMasterBody.addEventListener("click", (event) => {
+  dom.productMasterBody.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     const id = target.dataset.id;
@@ -258,7 +379,7 @@ export function bindProductEvents(state, dom, deps) {
     }
 
     if (target.classList.contains("save-product-btn")) {
-      saveProductInlineEdit(state, dom, deps, id, target);
+      await saveProductInlineEdit(state, dom, deps, id, target);
       return;
     }
 
@@ -267,32 +388,78 @@ export function bindProductEvents(state, dom, deps) {
       state.editingProductId = "";
     }
 
-    const usedByRecords = state.records.some((record) => record.productId === id);
+    const deletingProduct = state.products.find((item) => item.id === id);
+    const deletingProductName = String(deletingProduct?.productName || "").trim();
+
+    if (!state.recordsInitialLoadDone) {
+      deps.showProductError("记录加载中，暂时不能删除产品，请稍后重试。");
+      return;
+    }
+
+    const usedByRecords = isProductUsedByAnyRecord(state, deps, id, deletingProductName);
     if (usedByRecords) {
       deps.showProductError("已有记录使用该产品，不能删除。");
       return;
     }
 
-    state.products = state.products.filter((item) => item.id !== id);
-    deps.saveProducts(state);
-    renderProductMaster(state, dom, deps);
-    renderProductSelectOptions(state, dom, deps);
-    updateSalesFormAvailability(state, dom);
-    updateComputedAmount(state, dom, deps);
-    deps.clearListError();
-
-    if (state.editingRowId) {
-      const editingRecord = state.records.find((item) => item.id === state.editingRowId);
-      if (!editingRecord || !state.products.some((item) => item.id === editingRecord.productId)) {
-        state.editingRowId = "";
-      }
-      deps.renderRecords();
+    const deleteBtn = target instanceof HTMLButtonElement ? target : null;
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
     }
 
-    renderTargetsIfAvailable(deps);
+    try {
+      if (typeof deps.checkProductUsageInCloud === "function" && deletingProductName) {
+        const usedByCloudRecords = await deps.checkProductUsageInCloud(deletingProductName);
+        if (usedByCloudRecords) {
+          deps.showProductError("已有云端记录使用该产品，不能删除。");
+          return;
+        }
+      }
+
+      if (typeof deps.deleteProductFromCloud === "function") {
+        const { deletedCount } = await deps.deleteProductFromCloud(id);
+        if (!deletedCount) {
+          if (typeof deps.fetchProductsFromCloud === "function") {
+            const cloudProducts = await deps.fetchProductsFromCloud();
+            if (Array.isArray(cloudProducts)) {
+              state.products = cloudProducts;
+            }
+          }
+          renderProductMaster(state, dom, deps);
+          renderProductSelectOptions(state, dom, deps);
+          updateSalesFormAvailability(state, dom);
+          updateComputedAmount(state, dom, deps);
+          deps.showProductError("产品不存在，已同步最新数据。");
+          return;
+        }
+      }
+
+      state.products = state.products.filter((item) => item.id !== id);
+      renderProductMaster(state, dom, deps);
+      renderProductSelectOptions(state, dom, deps);
+      updateSalesFormAvailability(state, dom);
+      updateComputedAmount(state, dom, deps);
+      deps.clearListError();
+
+      if (state.editingRowId) {
+        const editingRecord = state.records.find((item) => item.id === state.editingRowId);
+        if (!editingRecord || !state.products.some((item) => item.id === editingRecord.productId)) {
+          state.editingRowId = "";
+        }
+        deps.renderRecords();
+      }
+
+      renderTargetsIfAvailable(deps);
+    } catch (error) {
+      deps.showProductError(`删除失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+    } finally {
+      if (deleteBtn instanceof HTMLButtonElement && document.body.contains(deleteBtn)) {
+        deleteBtn.disabled = false;
+      }
+    }
   });
 
-  dom.productMasterBody.addEventListener("keydown", (event) => {
+  dom.productMasterBody.addEventListener("keydown", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
 
@@ -307,7 +474,7 @@ export function bindProductEvents(state, dom, deps) {
       const id = saveBtn.dataset.id;
       if (!id) return;
 
-      saveProductInlineEdit(state, dom, deps, id, saveBtn);
+      await saveProductInlineEdit(state, dom, deps, id, saveBtn);
       return;
     }
 
