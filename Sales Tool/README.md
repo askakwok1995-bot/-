@@ -105,8 +105,10 @@
 ├── reports.js                 # 报表计算、图表渲染、导出
 ├── config.example.js          # Supabase 配置模板
 ├── config.js                  # 运行时配置（构建生成，已 gitignore）
+├── dist/                      # Cloudflare Pages 静态产物目录（构建生成，已 gitignore）
 ├── scripts/
-│   └── generate-config.js     # 按环境变量生成 config.js
+│   ├── generate-config.js     # 按环境变量生成 config.js（本地）
+│   └── build-pages.js         # 生成 dist/ 并写入 dist/config.js（部署）
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -133,7 +135,7 @@ cp config.example.js config.js
 ```bash
 SUPABASE_URL=https://<your-project-ref>.supabase.co \
 SUPABASE_ANON_KEY=<your-anon-or-publishable-key> \
-npm run build:cf
+npm run gen:config
 ```
 
 ### 启动本地服务
@@ -169,7 +171,7 @@ window.__APP_CONFIG__ = {
 
 - Root directory：`Sales Tool`
 - Build command：`npm ci && npm run build:cf`
-- Build output directory：`.`
+- Build output directory：`dist`
 - Environment Variables（Production/Preview）：
   - `SUPABASE_URL`
   - `SUPABASE_ANON_KEY`
@@ -239,7 +241,7 @@ window.__APP_CONFIG__ = {
 2. `Settings` -> `Builds & deployments`，确认：
    - Root directory: `Sales Tool`
    - Build command: `npm ci && npm run build:cf`
-   - Build output directory: `.`
+   - Build output directory: `dist`
 3. `Settings` -> `Environment variables`（Production / Preview）：
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`

@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "http-server . -a localhost -p 5173 -c-1",
-    "build:cf": "node scripts/generate-config.js",
+    "gen:config": "node scripts/generate-config.js",
+    "build:cf": "node scripts/build-pages.js",
     "check": "npm run check:js",
     "check:js": "node --check main.js && node --check auth.js && node --check storage.js && node --check products.js && node --check records.js && node --check targets.js && node --check reports.js"
   },
