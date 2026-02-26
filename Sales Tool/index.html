@@ -559,6 +559,66 @@
         </details>
       </section>
     </main>
+    <button
+      id="ai-chat-fab"
+      class="ai-chat-fab"
+      type="button"
+      aria-label="打开 AI 对话窗口"
+      aria-controls="ai-chat-sheet"
+      aria-expanded="false"
+    >
+      AI
+    </button>
+    <div id="ai-chat-backdrop" class="ai-chat-backdrop" hidden></div>
+    <section id="ai-chat-sheet" class="ai-chat-sheet" role="dialog" aria-labelledby="ai-chat-title" aria-hidden="true">
+      <header class="ai-chat-head">
+        <button
+          id="ai-chat-resize-btn"
+          class="ai-chat-head-btn ai-chat-head-btn--resize secondary-btn"
+          type="button"
+          aria-label="放大对话窗口"
+          data-mode="expand"
+        >
+          <svg class="ai-chat-head-icon ai-chat-head-icon--expand" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 4H4v5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+            <path d="M9 9L4 4M15 9l5-5M15 15l5 5M9 15l-5 5" />
+          </svg>
+          <svg class="ai-chat-head-icon ai-chat-head-icon--shrink" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 4H4v5M20 9V4h-5M15 20h5v-5M4 15v5h5" />
+            <path d="M4 4l5 5M20 4l-5 5M20 20l-5-5M4 20l5-5" />
+          </svg>
+        </button>
+        <button
+          id="ai-chat-close-btn"
+          class="ai-chat-head-btn ai-chat-head-btn--close secondary-btn"
+          type="button"
+          aria-label="关闭对话窗口"
+        >
+          <svg class="ai-chat-head-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+        <h2 id="ai-chat-title" class="ai-chat-title">AI 助手（UI 预览）</h2>
+        <p class="ai-chat-subtitle">当前仅完成前端界面，尚未接入模型能力。</p>
+      </header>
+      <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite">
+        <article class="ai-chat-message ai-chat-message--assistant">
+          你好，这里是 AI 对话窗口 UI。后续会接入真实 AI 接口。
+        </article>
+      </div>
+      <form id="ai-chat-form" class="ai-chat-composer" novalidate>
+        <input
+          id="ai-chat-input"
+          class="ai-chat-input"
+          type="text"
+          aria-label="输入消息"
+          placeholder="请输入消息（当前仅 UI，未接入 AI）"
+          autocomplete="off"
+        />
+        <button id="ai-chat-send" class="ai-chat-send-btn" type="submit" disabled>发送</button>
+      </form>
+      <p id="ai-chat-status" class="ai-chat-status">AI 未接入，当前仅展示交互壳层。</p>
+    </section>
     <div id="auth-modal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
       <div class="auth-modal-backdrop"></div>
       <section class="auth-modal-card" aria-describedby="auth-status">
