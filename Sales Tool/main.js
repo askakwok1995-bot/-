@@ -55,7 +55,11 @@ window.__SALES_TOOL_MODULE_BOOT_ERROR__ = false;
 
 async function initializeApp() {
   const defaultReportRange = getDefaultReportRange();
-  const initialReportRange = loadReportRange(defaultReportRange) || defaultReportRange;
+  const loadedReportRange = loadReportRange(defaultReportRange);
+  const initialReportRange =
+    loadedReportRange && typeof loadedReportRange === "object"
+      ? loadedReportRange
+      : defaultReportRange;
   const initialReportChartPaletteId = loadReportChartPalette(DEFAULT_REPORT_CHART_PALETTE_ID);
   const initialReportChartDataLabelMode = loadReportChartDataLabelMode(DEFAULT_REPORT_CHART_DATA_LABEL_MODE);
   const initialReportAmountUnitId = loadReportAmountUnit(DEFAULT_REPORT_AMOUNT_UNIT_ID);
@@ -850,6 +854,24 @@ async function initializeApp() {
     dom.salesErrorEl.textContent = "";
   }
 
+  function showSalesTip(message, tone = "muted") {
+    if (!(dom.salesTipEl instanceof HTMLElement)) {
+      return;
+    }
+
+    dom.salesTipEl.textContent = message;
+    dom.salesTipEl.classList.toggle("hint-success", tone === "success");
+  }
+
+  function clearSalesTip() {
+    if (!(dom.salesTipEl instanceof HTMLElement)) {
+      return;
+    }
+
+    dom.salesTipEl.textContent = "";
+    dom.salesTipEl.classList.remove("hint-success");
+  }
+
   function showListError(message) {
     clearListStatus();
     dom.listErrorEl.textContent = message;
@@ -971,6 +993,8 @@ async function initializeApp() {
     clearProductError,
     showSalesError,
     clearSalesError,
+    showSalesTip,
+    clearSalesTip,
     showListError,
     clearListError,
     showListStatus,

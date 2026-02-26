@@ -321,6 +321,10 @@ button:disabled {
   font-size: 12px;
 }
 
+.error:empty {
+  display: none;
+}
+
 #list-error:empty {
   display: none;
 }
@@ -1350,6 +1354,15 @@ h3 {
   margin: 4px 0 0;
   color: var(--subtle);
   font-size: 12px;
+}
+
+.hint:empty {
+  display: none;
+}
+
+.hint-success {
+  color: var(--success);
+  font-weight: 600;
 }
 
 .product-submit-btn {

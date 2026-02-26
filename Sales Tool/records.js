@@ -165,6 +165,9 @@ function resetSalesFormAndDraft() {
   dom.quantityInput.value = "";
   dom.deliveryInput.value = "";
   deps.clearSalesError();
+  if (typeof deps.clearSalesTip === "function") {
+    deps.clearSalesTip();
+  }
   if (typeof deps.clearSalesDraft === "function") {
     deps.clearSalesDraft();
   }
@@ -176,14 +179,23 @@ function resetSalesFormAndDraft() {
 
 function bindSalesDraftEvents() {
   dom.dateInput.addEventListener("change", () => {
+    if (typeof deps.clearSalesTip === "function") {
+      deps.clearSalesTip();
+    }
     persistSalesDraftFromDom();
   });
 
   dom.hospitalInput.addEventListener("input", () => {
+    if (typeof deps.clearSalesTip === "function") {
+      deps.clearSalesTip();
+    }
     persistSalesDraftFromDom();
   });
 
   dom.deliveryInput.addEventListener("input", () => {
+    if (typeof deps.clearSalesTip === "function") {
+      deps.clearSalesTip();
+    }
     persistSalesDraftFromDom();
   });
 
@@ -381,6 +393,9 @@ export function bindRecordEvents(nextState, nextDom, nextDeps) {
   dom.salesForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     deps.clearSalesError();
+    if (typeof deps.clearSalesTip === "function") {
+      deps.clearSalesTip();
+    }
 
     const data = {
       date: String(dom.dateInput.value || "").trim(),
@@ -429,6 +444,9 @@ export function bindRecordEvents(nextState, nextDom, nextDeps) {
       deps.updateComputedAmount();
       persistSalesDraftFromDom();
       deps.clearListError();
+      if (typeof deps.showSalesTip === "function") {
+        deps.showSalesTip("记录新增成功。", "success");
+      }
       if (listOk && reportOk) {
         showListStatusSafe("保存成功。", "success");
       } else if (!listOk) {
@@ -708,12 +726,18 @@ dom.recordsHead.addEventListener("click", (event) => {
 
 dom.productSelect.addEventListener("change", () => {
   deps.clearSalesError();
+  if (typeof deps.clearSalesTip === "function") {
+    deps.clearSalesTip();
+  }
   deps.updateComputedAmount();
   persistSalesDraftFromDom();
 });
 
 dom.quantityInput.addEventListener("input", () => {
   deps.clearSalesError();
+  if (typeof deps.clearSalesTip === "function") {
+    deps.clearSalesTip();
+  }
   deps.updateComputedAmount();
   persistSalesDraftFromDom();
 });

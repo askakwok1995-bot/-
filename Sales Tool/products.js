@@ -288,7 +288,15 @@ export function updateSalesFormAvailability(state, dom) {
   const hasProducts = state.products.length > 0;
   dom.productSelect.disabled = !hasProducts;
   dom.salesSubmitBtn.disabled = !hasProducts;
-  dom.salesTipEl.textContent = hasProducts ? "" : "请先在上方维护产品规格和单盒考核价。";
+  if (!hasProducts) {
+    dom.salesTipEl.classList.remove("hint-success");
+    dom.salesTipEl.textContent = "请先在上方维护产品规格和单盒考核价。";
+    return;
+  }
+
+  if (dom.salesTipEl.textContent === "请先在上方维护产品规格和单盒考核价。") {
+    dom.salesTipEl.textContent = "";
+  }
 }
 
 export function updateComputedAmount(state, dom, deps) {
