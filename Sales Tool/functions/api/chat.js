@@ -8,6 +8,9 @@ const MAX_REPAIR_SOURCE_CHARS = 8000;
 const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
+const TOTAL_CHAT_BUDGET_MS = 35000;
+const FIRST_STAGE_BUDGET_MS = 18000;
+const FIRST_AND_RETRY_BUDGET_MS = 24000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
@@ -147,13 +150,28 @@ function ndjsonResponse(stream, requestId = "") {
   });
 }
 
-function errorResponse(code, message, status, requestId) {
+function errorResponse(code, message, status, requestId, details = null) {
+  const errorPayload = {
+    code,
+    message,
+  };
+  const safeDetails = details && typeof details === "object" ? details : null;
+  const safeStage = trimString(safeDetails?.stage);
+  if (safeStage === "first" || safeStage === "retry" || safeStage === "repair") {
+    errorPayload.stage = safeStage;
+  }
+  const safeUpstreamStatus = Number(safeDetails?.upstreamStatus);
+  if (Number.isFinite(safeUpstreamStatus) && safeUpstreamStatus > 0) {
+    errorPayload.upstreamStatus = Math.floor(safeUpstreamStatus);
+  }
+  const safeDurationMs = Number(safeDetails?.durationMs);
+  if (Number.isFinite(safeDurationMs) && safeDurationMs >= 0) {
+    errorPayload.durationMs = Math.floor(safeDurationMs);
+  }
+
   return jsonResponse(
     {
-      error: {
-        code,
-        message,
-      },
+      error: errorPayload,
       requestId,
     },
     status,
@@ -249,6 +267,48 @@ function formatHistoryText(history) {
     .join("\n");
 }
 
+function safeJsonLength(value) {
+  try {
+    return JSON.stringify(value).length;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function sanitizeContextPayload(rawContext) {
+  if (!rawContext || typeof rawContext !== "object") {
+    return {};
+  }
+  return rawContext;
+}
+
+function getModeTokenProfile(mode, messageLength = 0) {
+  const safeMode = sanitizeMode(mode);
+  let first = DEFAULT_MAX_OUTPUT_TOKENS;
+  let retry = RETRY_MAX_OUTPUT_TOKENS;
+  if (safeMode === CHAT_MODES.BRIEFING) {
+    first = 640;
+    retry = 1024;
+  } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
+    first = 896;
+    retry = 1280;
+  } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
+    first = 1152;
+    retry = 1536;
+  }
+
+  const safeLength = Number.isFinite(Number(messageLength)) ? Math.floor(Number(messageLength)) : 0;
+  if (safeLength > 120) {
+    first = Math.min(first + 256, RETRY_MAX_OUTPUT_TOKENS);
+    retry = Math.min(retry + 256, 2048);
+  } else if (safeLength > 0 && safeLength < 30) {
+    first = Math.max(512, first - 128);
+    retry = Math.max(896, retry - 128);
+  }
+
+  return { first, retry };
+}
+
 function buildChatSuccessPayload(params) {
   const {
     evaluation,
@@ -259,12 +319,26 @@ function buildChatSuccessPayload(params) {
     repairApplied = false,
     repairSucceeded = false,
     attemptCount = 1,
+    totalDurationMs = 0,
+    stageDurations = {},
+    finalStage = "first",
+    contextChars = 0,
+    historyChars = 0,
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const structured = format === "structured" ? evaluation.structured : null;
   const fallbackReply = trimString(evaluation?.reply) || "结构化输出未完成，请重试。";
   const reply = format === "structured" ? structured.summary : fallbackReply;
   const safeAttemptCount = Number.isFinite(Number(attemptCount)) && Number(attemptCount) > 0 ? Math.floor(Number(attemptCount)) : 1;
+  const totalDuration = Number.isFinite(Number(totalDurationMs)) && Number(totalDurationMs) >= 0 ? Math.floor(Number(totalDurationMs)) : 0;
+  const safeFirstDuration = Number.isFinite(Number(stageDurations?.first)) && Number(stageDurations.first) >= 0 ? Math.floor(Number(stageDurations.first)) : 0;
+  const safeRetryDuration = Number.isFinite(Number(stageDurations?.retry)) && Number(stageDurations.retry) >= 0 ? Math.floor(Number(stageDurations.retry)) : undefined;
+  const safeRepairDuration = Number.isFinite(Number(stageDurations?.repair)) && Number(stageDurations.repair) >= 0 ? Math.floor(Number(stageDurations.repair)) : undefined;
+  const safeFinalStage = trimString(finalStage);
+  const normalizedFinalStage =
+    safeFinalStage === "retry" || safeFinalStage === "repair" ? safeFinalStage : "first";
+  const safeContextChars = Number.isFinite(Number(contextChars)) && Number(contextChars) >= 0 ? Math.floor(Number(contextChars)) : 0;
+  const safeHistoryChars = Number.isFinite(Number(historyChars)) && Number(historyChars) >= 0 ? Math.floor(Number(historyChars)) : 0;
 
   return {
     reply,
@@ -281,6 +355,15 @@ function buildChatSuccessPayload(params) {
       repairApplied: Boolean(repairApplied),
       repairSucceeded: Boolean(repairSucceeded),
       attemptCount: safeAttemptCount,
+      totalDurationMs: totalDuration,
+      stageDurations: {
+        first: safeFirstDuration,
+        retry: safeRetryDuration,
+        repair: safeRepairDuration,
+      },
+      finalStage: normalizedFinalStage,
+      contextChars: safeContextChars,
+      historyChars: safeHistoryChars,
     },
   };
 }
@@ -829,23 +912,47 @@ async function parseJsonSafe(response) {
     return null;
   }
 }
-function buildChatError(code, message, status) {
-  return {
+function buildChatError(code, message, status, details = null) {
+  const error = {
     code,
     message,
     status,
   };
+  const safeDetails = details && typeof details === "object" ? details : null;
+  const safeStage = trimString(safeDetails?.stage);
+  if (safeStage === "first" || safeStage === "retry" || safeStage === "repair") {
+    error.stage = safeStage;
+  }
+  const safeUpstreamStatus = Number(safeDetails?.upstreamStatus);
+  if (Number.isFinite(safeUpstreamStatus) && safeUpstreamStatus > 0) {
+    error.upstreamStatus = Math.floor(safeUpstreamStatus);
+  }
+  const safeDurationMs = Number(safeDetails?.durationMs);
+  if (Number.isFinite(safeDurationMs) && safeDurationMs >= 0) {
+    error.durationMs = Math.floor(safeDurationMs);
+  }
+  return error;
 }
 
-function mapGeminiUpstreamHttpError(status, upstreamMessage) {
+function mapGeminiUpstreamHttpError(status, upstreamMessage, diagnostics = null) {
   const safeStatus = Number(status);
   const safeMessage = trimString(upstreamMessage);
+  const safeDiagnostics =
+    diagnostics && typeof diagnostics === "object"
+      ? {
+          ...diagnostics,
+          upstreamStatus: safeStatus,
+        }
+      : {
+          upstreamStatus: safeStatus,
+        };
 
   if (safeStatus === 401 || safeStatus === 403) {
     return buildChatError(
       CHAT_ERROR_CODES.UPSTREAM_AUTH_ERROR,
       safeMessage || "Gemini Key 无效或无权限，请检查 GEMINI_API_KEY 配置。",
       502,
+      safeDiagnostics,
     );
   }
 
@@ -854,13 +961,21 @@ function mapGeminiUpstreamHttpError(status, upstreamMessage) {
       CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT,
       safeMessage || "Gemini 请求过于频繁或配额受限，请稍后重试。",
       429,
+      safeDiagnostics,
     );
   }
 
-  return buildChatError(CHAT_ERROR_CODES.UPSTREAM_ERROR, safeMessage || `Gemini 返回异常状态：HTTP ${safeStatus}`, 502);
+  return buildChatError(
+    CHAT_ERROR_CODES.UPSTREAM_ERROR,
+    safeMessage || `Gemini 返回异常状态：HTTP ${safeStatus}`,
+    502,
+    safeDiagnostics,
+  );
 }
 
-async function requestGeminiNonStreaming(model, key, upstreamPayload) {
+async function requestGeminiNonStreaming(model, key, upstreamPayload, options = null) {
+  const stage = trimString(options?.stage);
+  const startedAt = Date.now();
   const endpoint = buildGeminiEndpoint(model, false);
 
   let upstreamResponse;
@@ -885,6 +1000,10 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload) {
           CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
           `Gemini 请求超时（>${GEMINI_UPSTREAM_TIMEOUT_MS}ms），请稍后重试。`,
           504,
+          {
+            stage,
+            durationMs: Date.now() - startedAt,
+          },
         ),
       };
     }
@@ -894,6 +1013,10 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload) {
         CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
         `Gemini 网络请求失败：${error instanceof Error ? error.message : "请稍后重试"}`,
         502,
+        {
+          stage,
+          durationMs: Date.now() - startedAt,
+        },
       ),
     };
   }
@@ -903,7 +1026,10 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload) {
     const upstreamMessage = readUpstreamErrorMessage(upstreamData);
     return {
       ok: false,
-      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage),
+      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage, {
+        stage,
+        durationMs: Date.now() - startedAt,
+      }),
     };
   }
 
@@ -925,7 +1051,9 @@ async function attemptRepairStructured(model, key, rawReply, mode) {
   }
 
   const repairPayload = buildGeminiRepairPayload(sourceText, mode);
-  const repairAttempt = await requestGeminiNonStreaming(model, key, repairPayload);
+  const repairAttempt = await requestGeminiNonStreaming(model, key, repairPayload, {
+    stage: "repair",
+  });
   if (!repairAttempt.ok) {
     return {
       ok: false,
@@ -982,7 +1110,9 @@ function flushSseState(state, onEventData) {
   }
 }
 
-async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
+async function requestGeminiStreaming(model, key, upstreamPayload, onDelta, options = null) {
+  const stage = trimString(options?.stage);
+  const startedAt = Date.now();
   const endpoint = buildGeminiEndpoint(model, true);
 
   let upstreamResponse;
@@ -1007,6 +1137,10 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
           CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
           `Gemini 请求超时（>${GEMINI_UPSTREAM_TIMEOUT_MS}ms），请稍后重试。`,
           504,
+          {
+            stage,
+            durationMs: Date.now() - startedAt,
+          },
         ),
       };
     }
@@ -1016,6 +1150,10 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
         CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
         `Gemini 网络请求失败：${error instanceof Error ? error.message : "请稍后重试"}`,
         502,
+        {
+          stage,
+          durationMs: Date.now() - startedAt,
+        },
       ),
     };
   }
@@ -1025,14 +1163,20 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
     const upstreamMessage = readUpstreamErrorMessage(upstreamData);
     return {
       ok: false,
-      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage),
+      error: mapGeminiUpstreamHttpError(upstreamResponse.status, upstreamMessage, {
+        stage,
+        durationMs: Date.now() - startedAt,
+      }),
     };
   }
 
   if (!upstreamResponse.body || typeof upstreamResponse.body.getReader !== "function") {
     return {
       ok: false,
-      error: buildChatError(CHAT_ERROR_CODES.UPSTREAM_ERROR, "Gemini 流式响应不可读。", 502),
+      error: buildChatError(CHAT_ERROR_CODES.UPSTREAM_ERROR, "Gemini 流式响应不可读。", 502, {
+        stage,
+        durationMs: Date.now() - startedAt,
+      }),
     };
   }
 
@@ -1105,6 +1249,10 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
         CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
         `Gemini 流式读取失败：${error instanceof Error ? error.message : "请稍后重试"}`,
         502,
+        {
+          stage,
+          durationMs: Date.now() - startedAt,
+        },
       ),
       hasDelta,
       partialReply: fullReply,
@@ -1127,38 +1275,55 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta) {
 }
 
 async function generateChatResponse(model, key, message, contextPayload, mode, history) {
+  const startedAt = Date.now();
+  const hasBudgetForNextAttempt = () => Date.now() - startedAt < TOTAL_CHAT_BUDGET_MS;
+  const stageDurations = {};
+  const modeTokenProfile = getModeTokenProfile(mode, trimString(message).length);
+  const safeContextChars = safeJsonLength(contextPayload);
+  const safeHistoryChars = safeJsonLength(history);
   let attemptCount = 0;
   let retryCount = 0;
   let repairApplied = false;
   let repairSucceeded = false;
+  let finalStage = "first";
 
   const firstAttemptPayload = buildGeminiPayload({
     message,
     contextPayload,
     history,
     mode,
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: modeTokenProfile.first,
     strictJsonOnly: false,
   });
   attemptCount += 1;
-  const firstAttempt = await requestGeminiNonStreaming(model, key, firstAttemptPayload);
+  const firstStageStartedAt = Date.now();
+  const firstAttempt = await requestGeminiNonStreaming(model, key, firstAttemptPayload, {
+    stage: "first",
+  });
+  stageDurations.first = Date.now() - firstStageStartedAt;
   if (!firstAttempt.ok) {
     return firstAttempt;
   }
 
   let finalEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason);
-  if (finalEvaluation.shouldRetry) {
+  const firstElapsed = stageDurations.first;
+  if (finalEvaluation.shouldRetry && hasBudgetForNextAttempt() && firstElapsed < FIRST_STAGE_BUDGET_MS) {
     retryCount = 1;
+    finalStage = "retry";
     const retryPayload = buildGeminiPayload({
       message,
       contextPayload,
       history,
       mode,
-      maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: modeTokenProfile.retry,
       strictJsonOnly: true,
     });
     attemptCount += 1;
-    const retryAttempt = await requestGeminiNonStreaming(model, key, retryPayload);
+    const retryStageStartedAt = Date.now();
+    const retryAttempt = await requestGeminiNonStreaming(model, key, retryPayload, {
+      stage: "retry",
+    });
+    stageDurations.retry = Date.now() - retryStageStartedAt;
     if (retryAttempt.ok) {
       const retryEvaluation = evaluateGeminiOutput(retryAttempt.reply, retryAttempt.finishReason);
       if (retryEvaluation.format === "structured" || retryEvaluation.reply) {
@@ -1167,10 +1332,21 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     }
   }
 
-  if (finalEvaluation.format !== "structured" && trimString(finalEvaluation.reply)) {
+  const elapsedAfterRetry = Date.now() - startedAt;
+  const shouldAttemptRepair =
+    finalEvaluation.format !== "structured" &&
+    trimString(finalEvaluation.reply) &&
+    hasBudgetForNextAttempt() &&
+    elapsedAfterRetry < FIRST_AND_RETRY_BUDGET_MS &&
+    (finalEvaluation.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED ||
+      finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED);
+  if (shouldAttemptRepair) {
     repairApplied = true;
+    finalStage = "repair";
     attemptCount += 1;
+    const repairStageStartedAt = Date.now();
     const repairAttempt = await attemptRepairStructured(model, key, finalEvaluation.reply, mode);
+    stageDurations.repair = Date.now() - repairStageStartedAt;
     if (repairAttempt.ok && repairAttempt.evaluation) {
       if (repairAttempt.evaluation.format === "structured") {
         finalEvaluation = repairAttempt.evaluation;
@@ -1186,6 +1362,11 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     repairApplied,
     repairSucceeded,
     attemptCount,
+    totalDurationMs: Date.now() - startedAt,
+    stageDurations,
+    finalStage,
+    contextChars: safeContextChars,
+    historyChars: safeHistoryChars,
   };
 }
 
@@ -1215,10 +1396,12 @@ export async function onRequestPost(context) {
   }
 
   const message = trimString(body && body.message);
-  const contextPayload = body && typeof body.context === "object" && body.context ? body.context : {};
+  const contextPayload = sanitizeContextPayload(body && body.context);
   const history = sanitizeHistoryList(body && body.history);
   const mode = sanitizeMode(body && body.mode);
   const stream = Boolean(body && body.stream);
+  const requestContextChars = safeJsonLength(contextPayload);
+  const requestHistoryChars = safeJsonLength(history);
 
   if (!message) {
     return errorResponse(CHAT_ERROR_CODES.MESSAGE_REQUIRED, "message 不能为空。", 400, requestId);
@@ -1238,7 +1421,9 @@ export async function onRequestPost(context) {
     const readable = new ReadableStream({
       start: async (controller) => {
         let hasDelta = false;
+        const streamStartedAt = Date.now();
         const emit = (event) => writeNdjsonEvent(controller, encoder, event);
+        const modeTokenProfile = getModeTokenProfile(mode, message.length);
 
         try {
           emit({ type: "start", requestId, mode });
@@ -1249,20 +1434,28 @@ export async function onRequestPost(context) {
             contextPayload,
             history,
             mode,
-            maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: modeTokenProfile.first,
             strictJsonOnly: false,
           });
 
-          const streamResult = await requestGeminiStreaming(model, key, streamPayload, (delta) => {
-            const safeDelta = typeof delta === "string" ? delta : String(delta || "");
-            if (!safeDelta) return;
-            hasDelta = true;
-            emit({
-              type: "delta",
-              requestId,
-              text: safeDelta,
-            });
-          });
+          const streamResult = await requestGeminiStreaming(
+            model,
+            key,
+            streamPayload,
+            (delta) => {
+              const safeDelta = typeof delta === "string" ? delta : String(delta || "");
+              if (!safeDelta) return;
+              hasDelta = true;
+              emit({
+                type: "delta",
+                requestId,
+                text: safeDelta,
+              });
+            },
+            {
+              stage: "first",
+            },
+          );
 
           if (!streamResult.ok) {
             if (!hasDelta) {
@@ -1277,6 +1470,11 @@ export async function onRequestPost(context) {
                   repairApplied: fallback.repairApplied,
                   repairSucceeded: fallback.repairSucceeded,
                   attemptCount: fallback.attemptCount,
+                  totalDurationMs: fallback.totalDurationMs,
+                  stageDurations: fallback.stageDurations,
+                  finalStage: fallback.finalStage,
+                  contextChars: fallback.contextChars,
+                  historyChars: fallback.historyChars,
                 });
                 emit({
                   type: "done",
@@ -1294,6 +1492,13 @@ export async function onRequestPost(context) {
               error: {
                 code: errorInfo.code,
                 message: errorInfo.message,
+                stage: trimString(errorInfo.stage),
+                upstreamStatus: Number.isFinite(Number(errorInfo.upstreamStatus))
+                  ? Math.floor(Number(errorInfo.upstreamStatus))
+                  : undefined,
+                durationMs: Number.isFinite(Number(errorInfo.durationMs))
+                  ? Math.floor(Number(errorInfo.durationMs))
+                  : undefined,
               },
             });
             controller.close();
@@ -1312,6 +1517,11 @@ export async function onRequestPost(context) {
                 repairApplied: fallback.repairApplied,
                 repairSucceeded: fallback.repairSucceeded,
                 attemptCount: fallback.attemptCount,
+                totalDurationMs: fallback.totalDurationMs,
+                stageDurations: fallback.stageDurations,
+                finalStage: fallback.finalStage,
+                contextChars: fallback.contextChars,
+                historyChars: fallback.historyChars,
               });
               emit({
                 type: "done",
@@ -1327,6 +1537,13 @@ export async function onRequestPost(context) {
               error: {
                 code: fallback.error.code,
                 message: fallback.error.message,
+                stage: trimString(fallback.error.stage),
+                upstreamStatus: Number.isFinite(Number(fallback.error.upstreamStatus))
+                  ? Math.floor(Number(fallback.error.upstreamStatus))
+                  : undefined,
+                durationMs: Number.isFinite(Number(fallback.error.durationMs))
+                  ? Math.floor(Number(fallback.error.durationMs))
+                  : undefined,
               },
             });
             controller.close();
@@ -1343,6 +1560,13 @@ export async function onRequestPost(context) {
             repairApplied: false,
             repairSucceeded: false,
             attemptCount: 1,
+            totalDurationMs: Date.now() - streamStartedAt,
+            stageDurations: {
+              first: Date.now() - streamStartedAt,
+            },
+            finalStage: "first",
+            contextChars: requestContextChars,
+            historyChars: requestHistoryChars,
           });
           emit({
             type: "done",
@@ -1368,7 +1592,11 @@ export async function onRequestPost(context) {
 
   const generated = await generateChatResponse(model, key, message, contextPayload, mode, history);
   if (!generated.ok) {
-    return errorResponse(generated.error.code, generated.error.message, generated.error.status, requestId);
+    return errorResponse(generated.error.code, generated.error.message, generated.error.status, requestId, {
+      stage: generated.error.stage,
+      upstreamStatus: generated.error.upstreamStatus,
+      durationMs: generated.error.durationMs,
+    });
   }
 
   return jsonResponse(
@@ -1381,6 +1609,11 @@ export async function onRequestPost(context) {
       repairApplied: generated.repairApplied,
       repairSucceeded: generated.repairSucceeded,
       attemptCount: generated.attemptCount,
+      totalDurationMs: generated.totalDurationMs,
+      stageDurations: generated.stageDurations,
+      finalStage: generated.finalStage,
+      contextChars: generated.contextChars,
+      historyChars: generated.historyChars,
     }),
     200,
     requestId,

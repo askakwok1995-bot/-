@@ -313,11 +313,20 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
 - 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
-- 若首轮 + 纠错重试后仍是坏 JSON，会触发一次“结构化修复调用”，仅修复一次，避免无限重试。
-- 默认输出 token：首轮 `1536`，重试 `2048`。
+- 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”；`schema_invalid` 不再进入 repair（减少上游调用次数）。
+- 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
+- 按 mode 动态 token（并按问题长度上下浮动 1 档）：
+  - `briefing`: first `640` / retry `1024`
+  - `diagnosis`: first `896` / retry `1280`
+  - `action-plan`: first `1152` / retry `1536`
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
 - 结构化质量门槛（稳定版）：`summary` 长度至少 70 字，且 `highlights/evidence/actions` 至少各 1 条。
-- 会话历史门槛：最多携带最近 6 轮（12 条）`history`，总字符上限约 `4000`。
+- 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
+- 上下文瘦身策略（按模式）：
+  - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
+  - `briefing`：基础字段 + `trend.items` Top 1
+  - `diagnosis`：`trend.items` Top 2（摘要与建议做长度截断）
+  - `action-plan`：`trend.items` Top 1 + `product/hospital` Top 2（evidence 精简为 1 条）
 
 非流式成功响应（`stream=false`，默认）：
 ```json
@@ -334,7 +343,12 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "outputChars": 386,
     "repairApplied": false,
     "repairSucceeded": false,
-    "attemptCount": 1
+    "attemptCount": 1,
+    "totalDurationMs": 8421,
+    "stageDurations": { "first": 8421, "retry": 0, "repair": 0 },
+    "finalStage": "first",
+    "contextChars": 2521,
+    "historyChars": 864
   },
   "structured": {
     "summary": "总体结论",
@@ -377,13 +391,20 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.repairApplied` 表示本次是否触发了修复调用。
 - `meta.repairSucceeded` 表示修复调用是否成功恢复结构化结果。
 - `meta.attemptCount` 表示总尝试次数（首轮 + 重试 + 修复）。
+- `meta.totalDurationMs` 为本次请求端到端处理耗时（服务端）。
+- `meta.stageDurations` 为分阶段耗时（`first/retry/repair`）。
+- `meta.finalStage` 为最终命中的阶段。
+- `meta.contextChars/historyChars` 用于观察请求体体量。
 
 失败响应（示例）：
 ```json
 {
   "error": {
     "code": "UPSTREAM_TIMEOUT",
-    "message": "Gemini 请求超时（>30000ms），请稍后重试。"
+    "message": "Gemini 请求超时（>30000ms），请稍后重试。",
+    "stage": "retry",
+    "upstreamStatus": 503,
+    "durationMs": 30012
   },
   "requestId": "..."
 }
@@ -392,12 +413,20 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 ### 12.3 前端接线说明
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
 - 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`，默认 `stream=false`（稳态优先）。
-- 前端会在内存中维护最近 6 轮会话历史（刷新页面即清空），并随请求透传到 `history`。
+- 前端会在内存中维护最近 6 轮会话历史用于 UI 连续性，但请求透传会裁剪为最多 4 轮（8 条，2000 字符）。
 - 仅当显式传入 `stream=true` 时才走流式增量渲染；流式失败时前端不会再发起二次补发请求。
 - 发送后会先显示 `AI 思考中...` 占位消息（带三点动画），随后按 `delta` 事件逐步更新文本。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
 - 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
 - 仅在 `formatReason` 为 `json_parse_failed/output_truncated` 且 `repairSucceeded=false` 时，前端才提示“结构化输出未完成，请重试”。
+- 若连续失败达到阈值，发送按钮会短暂冷却：
+  - 连续失败 2 次：冷却 3 秒
+  - 连续失败 3 次及以上：冷却 5 秒
+  - 成功一次后失败计数清零
+- 错误提示会附带诊断片段（如 `阶段: retry, 上游: 503`），便于快速排障。
+- 默认用户态不展示“耗时/阶段/attemptCount”；仅开发态优先显示：
+  - `localhost/127.0.0.1` 自动显示
+  - 或控制台设置 `window.__SALES_TOOL_CHAT_DEBUG__ = true`
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
 - AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
 - 调试桥接：
@@ -411,12 +440,43 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 4. 关闭或清空 `GEMINI_API_KEY` 时，聊天提示“服务端未配置”。
 5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_AUTH_ERROR`、`UPSTREAM_RATE_LIMIT`、`UPSTREAM_ERROR`。
 6. 用户报错时可提供“请求号（requestId）”用于排查。
-7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
-8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-9. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount` 在响应中存在且可用于排障。
-10. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
+7. 错误响应中可见 `error.stage/upstreamStatus/durationMs`（如上游 503 位于 retry 阶段）。
+8. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
+9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
+10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars` 在响应中存在且可用于排障。
+11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查
 1. `products` / `sales_records` / `sales_targets` 三张表开启 RLS。
 2. 策略基于 `auth.uid()` 隔离用户数据。
 3. 前端只使用 anon key，禁止 `service_role` 出现在客户端或仓库。
+
+### 12.6 稳态压测（10 次连续提问）
+为快速验证“止血改动”是否生效，提供脚本化压测命令：
+
+```bash
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability
+```
+
+可选参数：
+- `--delayMs 4000`：请求间隔（默认 4000ms）
+- `--stream false`：默认走非流式稳态路径
+
+脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
+1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/elapsedMs`）
+2. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`p95 elapsedMs`）
+3. 总体耗时统计（`p50/p95 elapsedMs`）
+4. 阈值判定（Pass/Fail）：
+   - 总失败率 `<= 20%`
+   - `UPSTREAM_TIMEOUT` 占比 `<= 10%`
+   - `attemptCount=3` 占比 `<= 30%`
+   - `structured` 占比 `>= 60%`
+   - `p95 elapsedMs <= 15000ms`（目标值）
+5. 自动日志判读建议（基于错误码与阶段）
+
+注意：
+- 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。
+- 当 `p95` 落在 `15000~18000ms` 区间时，脚本会输出详细耗时分布，默认进入“温和优化”而非激进降质。
+- 若命令返回 exit code `2`，代表压测完成但至少一个阈值未达标。

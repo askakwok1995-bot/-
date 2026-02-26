@@ -18,6 +18,8 @@ const CHAT_FORMAT_REASONS = {
 };
 const CHAT_HISTORY_MAX_ROUNDS = 6;
 const CHAT_HISTORY_MAX_ITEMS = CHAT_HISTORY_MAX_ROUNDS * 2;
+const CHAT_FAILURE_COOLDOWN_SHORT_SEC = 3;
+const CHAT_FAILURE_COOLDOWN_LONG_SEC = 5;
 
 let initialized = false;
 
@@ -57,6 +59,19 @@ function getFormatReasonLabel(reason) {
   if (safeReason === CHAT_FORMAT_REASONS.EMPTY_REPLY) return "输出为空";
   if (safeReason === CHAT_FORMAT_REASONS.STRUCTURED_OK) return "结构化成功";
   return "结构化解析失败";
+}
+
+function formatDurationSeconds(durationMs) {
+  const safe = Number(durationMs);
+  if (!Number.isFinite(safe) || safe <= 0) {
+    return "0.0";
+  }
+  return (safe / 1000).toFixed(1);
+}
+
+function isLikelyDevHost() {
+  const host = String(window?.location?.hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1";
 }
 
 function looksLikeJsonFragment(text) {
@@ -186,6 +201,9 @@ export function initAiChatUi(options = {}) {
   let sendHandler = null;
   let isSending = false;
   let sessionHistory = [];
+  let consecutiveFailureCount = 0;
+  let cooldownUntilMs = 0;
+  let cooldownTimerId = 0;
 
   const placeholderStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
@@ -195,6 +213,8 @@ export function initAiChatUi(options = {}) {
     typeof options.readyStatus === "string" && options.readyStatus.trim()
       ? options.readyStatus.trim()
       : "聊天接口已就绪，可开始提问。";
+  const debugStatusDetails =
+    Boolean(options.debugStatusDetails) || Boolean(window.__SALES_TOOL_CHAT_DEBUG__) || isLikelyDevHost();
 
   function updateResizeControl() {
     if (state === CHAT_STATES.EXPANDED) {
@@ -281,10 +301,83 @@ export function initAiChatUi(options = {}) {
     applyState(CHAT_STATES.COMPACT);
   }
 
+  function getCooldownRemainingMs() {
+    if (!Number.isFinite(cooldownUntilMs) || cooldownUntilMs <= 0) {
+      return 0;
+    }
+    return Math.max(0, cooldownUntilMs - Date.now());
+  }
+
+  function isInCooldown() {
+    return getCooldownRemainingMs() > 0;
+  }
+
+  function clearCooldownTimer() {
+    if (!cooldownTimerId) {
+      return;
+    }
+    window.clearTimeout(cooldownTimerId);
+    cooldownTimerId = 0;
+  }
+
+  function renderCooldownStatus() {
+    const remainingMs = getCooldownRemainingMs();
+    if (remainingMs <= 0) {
+      return false;
+    }
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    dom.statusEl.classList.remove("ai-chat-status-ready");
+    dom.statusEl.textContent = `调用过于频繁，${remainingSec} 秒后可重试。`;
+    return true;
+  }
+
+  function scheduleCooldownTick() {
+    clearCooldownTimer();
+    if (!isInCooldown()) {
+      cooldownUntilMs = 0;
+      return;
+    }
+
+    const tick = () => {
+      const hasHandler = typeof sendHandler === "function";
+      const cooling = renderCooldownStatus();
+      dom.sendBtn.disabled = !hasHandler || isSending || cooling;
+      if (!cooling) {
+        cooldownUntilMs = 0;
+        clearCooldownTimer();
+        updateComposerState();
+        return;
+      }
+      cooldownTimerId = window.setTimeout(tick, 250);
+    };
+
+    tick();
+  }
+
+  function startFailureCooldown(seconds) {
+    const safeSeconds = Number(seconds);
+    if (!Number.isFinite(safeSeconds) || safeSeconds <= 0) {
+      return;
+    }
+    cooldownUntilMs = Date.now() + Math.floor(safeSeconds * 1000);
+    scheduleCooldownTick();
+  }
+
+  function resetFailureState() {
+    consecutiveFailureCount = 0;
+    cooldownUntilMs = 0;
+    clearCooldownTimer();
+  }
+
   function updateComposerState() {
     const hasHandler = typeof sendHandler === "function";
-    dom.sendBtn.disabled = !hasHandler || isSending;
+    const cooling = isInCooldown();
+    dom.sendBtn.disabled = !hasHandler || isSending || cooling;
     dom.input.disabled = isSending;
+    if (cooling) {
+      renderCooldownStatus();
+      return;
+    }
     dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
     dom.statusEl.textContent = hasHandler ? readyStatus : placeholderStatus;
   }
@@ -549,6 +642,12 @@ export function initAiChatUi(options = {}) {
           attemptCount: Number.isFinite(Number(rawMeta.attemptCount)) && Number(rawMeta.attemptCount) > 0
             ? Math.floor(Number(rawMeta.attemptCount))
             : 1,
+          totalDurationMs: Number.isFinite(Number(rawMeta.totalDurationMs)) && Number(rawMeta.totalDurationMs) >= 0
+            ? Math.floor(Number(rawMeta.totalDurationMs))
+            : 0,
+          finalStage: ["first", "retry", "repair"].includes(String(rawMeta.finalStage || "").trim())
+            ? String(rawMeta.finalStage).trim()
+            : "first",
         }
       : null;
     return {
@@ -564,6 +663,11 @@ export function initAiChatUi(options = {}) {
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (isInCooldown()) {
+      renderCooldownStatus();
+      return;
+    }
 
     const text = toText(dom.input.value);
     if (!text) {
@@ -623,6 +727,7 @@ export function initAiChatUi(options = {}) {
       if (assistantHistoryText) {
         pushHistory("assistant", assistantHistoryText);
       }
+      resetFailureState();
 
       dom.statusEl.classList.add("ai-chat-status-ready");
       if (normalized.format === "text_fallback") {
@@ -646,9 +751,15 @@ export function initAiChatUi(options = {}) {
         }
         dom.statusEl.textContent = fallbackStatus || "已回退文本显示。";
       } else {
-        dom.statusEl.textContent = hasRendered
-          ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
-          : "处理器已执行，但未返回可显示内容。";
+        if (hasRendered && debugStatusDetails && normalized.meta) {
+          dom.statusEl.textContent = `AI 已按${getModeLabel(normalized.mode)}模式回复（耗时 ${formatDurationSeconds(
+            normalized.meta.totalDurationMs,
+          )}s，阶段 ${normalized.meta.finalStage}，尝试 ${normalized.meta.attemptCount} 次）。`;
+        } else {
+          dom.statusEl.textContent = hasRendered
+            ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
+            : "处理器已执行，但未返回可显示内容。";
+        }
       }
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
@@ -658,10 +769,19 @@ export function initAiChatUi(options = {}) {
         removeLiveMessage(liveMessage);
         appendTextMessage("assistant", `调用失败：${message}`);
       }
+      consecutiveFailureCount += 1;
+      if (consecutiveFailureCount >= 3) {
+        startFailureCooldown(CHAT_FAILURE_COOLDOWN_LONG_SEC);
+      } else if (consecutiveFailureCount >= 2) {
+        startFailureCooldown(CHAT_FAILURE_COOLDOWN_SHORT_SEC);
+      }
     } finally {
       isSending = false;
-      dom.sendBtn.disabled = typeof sendHandler !== "function";
+      dom.sendBtn.disabled = typeof sendHandler !== "function" || isInCooldown();
       dom.input.disabled = false;
+      if (isInCooldown()) {
+        renderCooldownStatus();
+      }
       dom.input.focus();
     }
   }
@@ -718,6 +838,9 @@ export function initAiChatUi(options = {}) {
     setSendHandler: (handler) => {
       sendHandler = typeof handler === "function" ? handler : null;
       isSending = false;
+      if (!sendHandler) {
+        resetFailureState();
+      }
       updateComposerState();
     },
   };

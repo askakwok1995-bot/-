@@ -1080,6 +1080,18 @@ async function initializeApp() {
   };
 
   const AI_CHAT_CONTEXT_TOP_N = 3;
+  const AI_CHAT_MODE_EXTRA_TOP_N = 2;
+  const AI_CHAT_MIN_CONTEXT_TREND_ITEMS = 1;
+  const AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS = 1;
+
+  function clampText(value, maxChars = 0) {
+    const text = String(value || "").trim();
+    const limit = Number(maxChars);
+    if (!text || !Number.isFinite(limit) || limit <= 0 || text.length <= limit) {
+      return text;
+    }
+    return `${text.slice(0, limit)}...`;
+  }
 
   function compactInsightEvidence(entries, maxItems = 2) {
     if (!Array.isArray(entries)) {
@@ -1101,7 +1113,12 @@ async function initializeApp() {
       .filter((entry) => entry !== null);
   }
 
-  function compactInsightItems(items, maxItems = AI_CHAT_CONTEXT_TOP_N) {
+  function compactInsightItems(items, maxItems = AI_CHAT_CONTEXT_TOP_N, options = {}) {
+    const evidenceMaxItemsRaw = Number(options.maxEvidenceItems);
+    const evidenceMaxItems =
+      Number.isFinite(evidenceMaxItemsRaw) && evidenceMaxItemsRaw > 0 ? Math.floor(evidenceMaxItemsRaw) : 2;
+    const summaryMaxChars = Number(options.maxSummaryChars);
+    const suggestionMaxChars = Number(options.maxSuggestionChars);
     if (!Array.isArray(items)) {
       return [];
     }
@@ -1120,39 +1137,93 @@ async function initializeApp() {
           id: String(item.id || "").trim(),
           level: String(item.level || "info").trim() || "info",
           title,
-          summary,
-          evidence: compactInsightEvidence(item.evidence, 2),
-          suggestion: String(item.suggestion || "").trim(),
+          summary: clampText(summary, summaryMaxChars),
+          evidence: compactInsightEvidence(item.evidence, evidenceMaxItems),
+          suggestion: clampText(String(item.suggestion || "").trim(), suggestionMaxChars),
         };
       })
       .filter((item) => item !== null);
   }
 
-  function compactOutlinePayload(outlinePayload) {
+  function pickOverviewMetric(metrics) {
+    if (!metrics || typeof metrics !== "object") {
+      return null;
+    }
+    const entries = Object.entries(metrics);
+    for (const [label, rawValue] of entries) {
+      if (typeof rawValue !== "number" && typeof rawValue !== "string") {
+        continue;
+      }
+      const value = String(rawValue).trim();
+      if (!value) {
+        continue;
+      }
+      return {
+        label: String(label || "").trim() || "总览指标",
+        value,
+      };
+    }
+    return null;
+  }
+
+  function pickFirstEvidence(...collections) {
+    for (const collection of collections) {
+      if (!Array.isArray(collection)) {
+        continue;
+      }
+      for (const item of collection) {
+        if (!item || typeof item !== "object" || !Array.isArray(item.evidence) || item.evidence.length === 0) {
+          continue;
+        }
+        const firstEvidence = item.evidence.find((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return false;
+          }
+          const label = String(entry.label || "").trim();
+          const value = entry.value;
+          return Boolean(label) && (typeof value === "number" || typeof value === "string");
+        });
+        if (!firstEvidence) {
+          continue;
+        }
+        return {
+          label: String(firstEvidence.label || "").trim(),
+          value: String(firstEvidence.value).trim(),
+          source: String(item.id || item.title || "insight").trim(),
+        };
+      }
+    }
+    return null;
+  }
+
+  function compactOutlinePayload(outlinePayload, options = {}) {
     if (!outlinePayload || typeof outlinePayload !== "object") {
       return { ok: false, sections: [] };
     }
     const sections = Array.isArray(outlinePayload.sections) ? outlinePayload.sections : [];
+    const maxSectionsRaw = Number(options.maxSections);
+    const maxSections = Number.isFinite(maxSectionsRaw) && maxSectionsRaw > 0 ? Math.floor(maxSectionsRaw) : 4;
     return {
       ok: Boolean(outlinePayload.ok),
       title: String(outlinePayload.title || "").trim(),
       range: outlinePayload.range && typeof outlinePayload.range === "object" ? outlinePayload.range : {},
       source: String(outlinePayload.source || "").trim(),
-      sections: sections.slice(0, 4).map((section) => ({
+      sections: sections.slice(0, maxSections).map((section) => ({
         key: String(section?.key || "").trim(),
         title: String(section?.title || "").trim(),
         points: Array.isArray(section?.points)
           ? section.points.slice(0, 2).map((point) => ({
-              summary: String(point?.summary || "").trim(),
-              evidence: compactInsightEvidence(point?.evidence, 2),
-              suggestion: String(point?.suggestion || "").trim(),
+              summary: clampText(String(point?.summary || "").trim(), 140),
+              evidence: compactInsightEvidence(point?.evidence, AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS),
+              suggestion: clampText(String(point?.suggestion || "").trim(), 120),
             }))
           : [],
       })),
     };
   }
 
-  function buildAiChatContextPayload(rangeOverride) {
+  function buildAiChatContextPayload(mode, rangeOverride) {
+    const safeMode = sanitizeChatMode(mode);
     const analysisContext = buildAnalyticsContext(rangeOverride);
     const kpi = getKpiOverview(analysisContext);
     const trend = getTrendInsights(analysisContext);
@@ -1160,8 +1231,51 @@ async function initializeApp() {
     const hospital = getHospitalInsights(analysisContext, { topN: AI_CHAT_CONTEXT_TOP_N });
     const risk = getRiskAlerts(analysisContext);
     const outline = buildBriefingOutline(analysisContext);
+    const compactKpiItems = compactInsightItems(kpi?.items, AI_CHAT_CONTEXT_TOP_N, {
+      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+    });
+    const compactTrendItems = compactInsightItems(trend?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+      maxSummaryChars: 120,
+      maxSuggestionChars: 120,
+      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+    });
+    const compactProductItems = compactInsightItems(product?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+      maxSummaryChars: 120,
+      maxSuggestionChars: 120,
+      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+    });
+    const compactHospitalItems = compactInsightItems(hospital?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+      maxSummaryChars: 120,
+      maxSuggestionChars: 120,
+      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+    });
+    const compactRiskItems = compactInsightItems(risk?.items, AI_CHAT_CONTEXT_TOP_N, {
+      maxSummaryChars: 120,
+      maxSuggestionChars: 120,
+      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+    });
+    const overviewMetric = pickOverviewMetric(kpi?.metrics);
+    const keyEvidence =
+      pickFirstEvidence(compactKpiItems, compactTrendItems, compactProductItems, compactHospitalItems, compactRiskItems) ||
+      (overviewMetric
+        ? {
+            label: overviewMetric.label,
+            value: overviewMetric.value,
+            source: "overview_metric",
+          }
+        : {
+            label: "数据状态",
+            value: analysisContext?.meta?.hasData ? "有数据" : "数据不足",
+            source: "analysis_meta",
+          });
+    const trendOverview = {
+      ok: Boolean(trend?.ok),
+      summary: String(trend?.summary || "").trim(),
+      item: compactTrendItems[0] || null,
+    };
+    const outlineMaxSections = safeMode === CHAT_MODES.ACTION_PLAN ? 3 : 4;
 
-    return {
+    const payload = {
       analysis: {
         ok: analysisContext.ok,
         range: analysisContext.range,
@@ -1173,30 +1287,52 @@ async function initializeApp() {
         ok: Boolean(kpi?.ok),
         summary: String(kpi?.summary || "").trim(),
         metrics: kpi?.metrics && typeof kpi.metrics === "object" ? kpi.metrics : {},
-        items: compactInsightItems(kpi?.items, AI_CHAT_CONTEXT_TOP_N),
-      },
-      trend: {
-        ok: Boolean(trend?.ok),
-        summary: String(trend?.summary || "").trim(),
-        items: compactInsightItems(trend?.items, AI_CHAT_CONTEXT_TOP_N),
-      },
-      product: {
-        ok: Boolean(product?.ok),
-        summary: String(product?.summary || "").trim(),
-        items: compactInsightItems(product?.items, AI_CHAT_CONTEXT_TOP_N),
-      },
-      hospital: {
-        ok: Boolean(hospital?.ok),
-        summary: String(hospital?.summary || "").trim(),
-        items: compactInsightItems(hospital?.items, AI_CHAT_CONTEXT_TOP_N),
+        items: compactKpiItems,
       },
       risk: {
         ok: Boolean(risk?.ok),
         summary: String(risk?.summary || "").trim(),
-        items: compactInsightItems(risk?.items, AI_CHAT_CONTEXT_TOP_N),
+        items: compactRiskItems,
       },
-      outline: compactOutlinePayload(outline),
+      trendOverview,
+      overviewMetric,
+      keyEvidence,
+      outline: compactOutlinePayload(outline, {
+        maxSections: outlineMaxSections,
+      }),
     };
+
+    if (safeMode === CHAT_MODES.DIAGNOSIS) {
+      payload.trend = {
+        ok: Boolean(trend?.ok),
+        summary: String(trend?.summary || "").trim(),
+        items: compactTrendItems.slice(0, Math.max(AI_CHAT_MODE_EXTRA_TOP_N, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
+      };
+    } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
+      payload.trend = {
+        ok: Boolean(trend?.ok),
+        summary: String(trend?.summary || "").trim(),
+        items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
+      };
+      payload.product = {
+        ok: Boolean(product?.ok),
+        summary: String(product?.summary || "").trim(),
+        items: compactProductItems,
+      };
+      payload.hospital = {
+        ok: Boolean(hospital?.ok),
+        summary: String(hospital?.summary || "").trim(),
+        items: compactHospitalItems,
+      };
+    } else {
+      payload.trend = {
+        ok: Boolean(trend?.ok),
+        summary: String(trend?.summary || "").trim(),
+        items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
+      };
+    }
+
+    return payload;
   }
 
   async function parseJsonSafe(response) {
@@ -1220,8 +1356,8 @@ async function initializeApp() {
     DIAGNOSIS: "diagnosis",
     ACTION_PLAN: "action-plan",
   });
-  const CHAT_HISTORY_MAX_ITEMS = 12;
-  const CHAT_HISTORY_MAX_CHARS = 4000;
+  const CHAT_HISTORY_MAX_ITEMS = 8;
+  const CHAT_HISTORY_MAX_CHARS = 2000;
 
   function isValidChatMode(mode) {
     return mode === CHAT_MODES.BRIEFING || mode === CHAT_MODES.DIAGNOSIS || mode === CHAT_MODES.ACTION_PLAN;
@@ -1350,12 +1486,30 @@ async function initializeApp() {
         repairApplied: false,
         repairSucceeded: false,
         attemptCount: 1,
+        totalDurationMs: 0,
+        stageDurations: {
+          first: 0,
+          retry: 0,
+          repair: 0,
+        },
+        finalStage: "first",
+        contextChars: 0,
+        historyChars: 0,
       };
     }
 
     const retryCount = Number(meta.retryCount) === 1 ? 1 : 0;
     const outputCharsRaw = Number(meta.outputChars);
     const attemptCountRaw = Number(meta.attemptCount);
+    const totalDurationRaw = Number(meta.totalDurationMs);
+    const stageFirstRaw = Number(meta.stageDurations?.first);
+    const stageRetryRaw = Number(meta.stageDurations?.retry);
+    const stageRepairRaw = Number(meta.stageDurations?.repair);
+    const contextCharsRaw = Number(meta.contextChars);
+    const historyCharsRaw = Number(meta.historyChars);
+    const finalStageCandidate = String(meta.finalStage || "").trim();
+    const finalStage =
+      finalStageCandidate === "retry" || finalStageCandidate === "repair" ? finalStageCandidate : "first";
     return {
       formatReason: normalizeChatFormatReason(meta.formatReason),
       retryCount,
@@ -1364,6 +1518,15 @@ async function initializeApp() {
       repairApplied: Boolean(meta.repairApplied),
       repairSucceeded: Boolean(meta.repairSucceeded),
       attemptCount: Number.isFinite(attemptCountRaw) && attemptCountRaw > 0 ? Math.floor(attemptCountRaw) : 1,
+      totalDurationMs: Number.isFinite(totalDurationRaw) && totalDurationRaw >= 0 ? Math.floor(totalDurationRaw) : 0,
+      stageDurations: {
+        first: Number.isFinite(stageFirstRaw) && stageFirstRaw >= 0 ? Math.floor(stageFirstRaw) : 0,
+        retry: Number.isFinite(stageRetryRaw) && stageRetryRaw >= 0 ? Math.floor(stageRetryRaw) : 0,
+        repair: Number.isFinite(stageRepairRaw) && stageRepairRaw >= 0 ? Math.floor(stageRepairRaw) : 0,
+      },
+      finalStage,
+      contextChars: Number.isFinite(contextCharsRaw) && contextCharsRaw >= 0 ? Math.floor(contextCharsRaw) : 0,
+      historyChars: Number.isFinite(historyCharsRaw) && historyCharsRaw >= 0 ? Math.floor(historyCharsRaw) : 0,
     };
   }
 
@@ -1377,27 +1540,45 @@ async function initializeApp() {
     const status = response?.status;
     const code = String(payload?.error?.code || "").trim();
     const upstreamMessage = String(payload?.error?.message || "").trim();
+    const stage = String(payload?.error?.stage || "").trim();
+    const upstreamStatusRaw = Number(payload?.error?.upstreamStatus);
+    const upstreamStatus =
+      Number.isFinite(upstreamStatusRaw) && upstreamStatusRaw > 0 ? Math.floor(upstreamStatusRaw) : null;
+    const diagnostics = [];
+    if (stage) {
+      diagnostics.push(`阶段: ${stage}`);
+    }
+    if (upstreamStatus !== null) {
+      diagnostics.push(`上游: ${upstreamStatus}`);
+    }
+    const withDiagnostics = (message) => {
+      const safeMessage = String(message || "").trim() || "聊天请求失败，请稍后重试。";
+      if (diagnostics.length === 0) {
+        return safeMessage;
+      }
+      return `${safeMessage}（${diagnostics.join(", ")}）`;
+    };
 
     if (code) {
       const mappedMessage = CHAT_API_ERROR_MESSAGE_MAP[code];
       if (mappedMessage) {
         if (code === "UNAUTHORIZED" && upstreamMessage) {
-          return upstreamMessage;
+          return withDiagnostics(upstreamMessage);
         }
-        return mappedMessage;
+        return withDiagnostics(mappedMessage);
       }
     }
 
     if (status === 404) {
-      return "未找到 /api/chat。请确认已部署 Cloudflare Pages Functions。";
+      return withDiagnostics("未找到 /api/chat。请确认已部署 Cloudflare Pages Functions。");
     }
     if (upstreamMessage) {
-      return upstreamMessage;
+      return withDiagnostics(upstreamMessage);
     }
     if (Number.isFinite(status)) {
-      return `聊天请求失败（HTTP ${status}）。`;
+      return withDiagnostics(`聊天请求失败（HTTP ${status}）。`);
     }
-    return "聊天请求失败，请稍后重试。";
+    return withDiagnostics("聊天请求失败，请稍后重试。");
   }
 
   function isNdjsonResponse(response) {
@@ -1563,7 +1744,7 @@ async function initializeApp() {
 
     const requestBody = {
       message: safeMessage,
-      context: buildAiChatContextPayload(),
+      context: buildAiChatContextPayload(safeMode),
       mode: safeMode,
       stream: streamEnabled,
       history,
