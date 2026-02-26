@@ -287,6 +287,12 @@ window.__APP_CONFIG__ = {
 - `diagnosis`：诊断模式（异常定位+原因假设+影响范围）
 - `action-plan`：行动模式（执行清单+负责人+时间+追踪指标）
 
+结构化生成策略：
+- 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
+- 首轮输出若出现“截断/坏 JSON/结构化字段不完整”，服务端会自动重试 1 次（纠错模式）。
+- 默认输出 token：首轮 `1536`，重试 `2048`。
+- 结构化质量门槛：`summary` 长度至少 40 字，且 `highlights/evidence/actions` 至少各 1 条。
+
 成功响应：
 ```json
 {
@@ -295,6 +301,12 @@ window.__APP_CONFIG__ = {
   "requestId": "...",
   "mode": "briefing",
   "format": "structured",
+  "meta": {
+    "formatReason": "structured_ok",
+    "retryCount": 0,
+    "finishReason": "STOP",
+    "outputChars": 386
+  },
   "structured": {
     "summary": "总体结论",
     "highlights": ["亮点1", "亮点2"],
@@ -311,8 +323,14 @@ window.__APP_CONFIG__ = {
 ```
 
 结构化回退说明：
-- 当模型输出无法解析为有效 JSON 时，接口返回 `format: "text_fallback"`。
-- 此时 `structured` 为 `null`，`reply` 返回模型原始文本。
+- 当模型输出无法解析为有效 JSON、字段不完整或输出截断时，接口返回 `format: "text_fallback"`。
+- 此时 `structured` 为 `null`，`reply` 返回模型原始文本（或服务端兜底提示）。
+- `meta.formatReason` 用于定位回退原因，可取值：
+  - `structured_ok`
+  - `json_parse_failed`
+  - `schema_invalid`
+  - `output_truncated`
+  - `empty_reply`
 
 失败响应（示例）：
 ```json
@@ -329,6 +347,8 @@ window.__APP_CONFIG__ = {
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
 - 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
+- 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
+- 若回退文本疑似 JSON 残片（以 `{` 开头但不可解析），前端会提示“结构化输出未完成，请重试”。
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
 - AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
 
@@ -341,6 +361,7 @@ window.__APP_CONFIG__ = {
 6. 用户报错时可提供“请求号（requestId）”用于排查。
 7. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 8. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
+9. `meta.formatReason/retryCount/finishReason/outputChars` 在响应中存在且可用于排障。
 
 ### 12.5 Supabase 权限核查
 1. `products` / `sales_records` / `sales_targets` 三张表开启 RLS。

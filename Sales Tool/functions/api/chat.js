@@ -6,6 +6,9 @@ const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 12000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
+const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
+const RETRY_MAX_OUTPUT_TOKENS = 2048;
+const MIN_SUMMARY_CHARS = 40;
 
 const CHAT_ERROR_CODES = Object.freeze({
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -28,6 +31,14 @@ const CHAT_MODES = Object.freeze({
   ACTION_PLAN: "action-plan",
 });
 
+const CHAT_FORMAT_REASONS = Object.freeze({
+  STRUCTURED_OK: "structured_ok",
+  JSON_PARSE_FAILED: "json_parse_failed",
+  SCHEMA_INVALID: "schema_invalid",
+  OUTPUT_TRUNCATED: "output_truncated",
+  EMPTY_REPLY: "empty_reply",
+});
+
 const MODE_DEFINITIONS = Object.freeze({
   [CHAT_MODES.BRIEFING]: {
     label: "简报模式",
@@ -43,6 +54,51 @@ const MODE_DEFINITIONS = Object.freeze({
     label: "行动模式",
     goal: "用于制定执行清单，输出可落地动作。",
     focus: "强调负责人、时间、追踪指标与下一步检查点。",
+  },
+});
+
+const CHAT_RESPONSE_SCHEMA = Object.freeze({
+  type: "OBJECT",
+  required: ["summary", "highlights", "evidence", "risks", "actions", "nextQuestions"],
+  properties: {
+    summary: { type: "STRING" },
+    highlights: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
+    evidence: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        required: ["label", "value", "insight"],
+        properties: {
+          label: { type: "STRING" },
+          value: { type: "STRING" },
+          insight: { type: "STRING" },
+        },
+      },
+    },
+    risks: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
+    actions: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        required: ["title", "owner", "timeline", "metric"],
+        properties: {
+          title: { type: "STRING" },
+          owner: { type: "STRING" },
+          timeline: { type: "STRING" },
+          metric: { type: "STRING" },
+        },
+      },
+    },
+    nextQuestions: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
   },
 });
 
@@ -116,11 +172,12 @@ function safeContextText(context) {
   }
 }
 
-function buildPrompt(message, context, mode) {
+function buildPrompt(message, context, mode, options = {}) {
   const safeMessage = trimString(message);
   const safeMode = sanitizeMode(mode);
   const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
   const contextText = safeContextText(context);
+  const strictJsonOnly = Boolean(options && options.strictJsonOnly);
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -128,6 +185,9 @@ function buildPrompt(message, context, mode) {
     `当前模式：${modeDefinition.label}。`,
     `模式目标：${modeDefinition.goal}`,
     `模式重点：${modeDefinition.focus}`,
+    strictJsonOnly
+      ? "本次为纠错重试：你上次输出未通过结构化校验。请只返回合法 JSON。"
+      : "本次为首轮输出，请优先保证结构化完整性和可读性。",
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
@@ -142,18 +202,26 @@ function buildPrompt(message, context, mode) {
 }
 
 function pickGeminiReply(data) {
-  if (!data || typeof data !== "object") return "";
+  if (!data || typeof data !== "object") return { reply: "", finishReason: "" };
   const candidates = Array.isArray(data.candidates) ? data.candidates : [];
   for (const candidate of candidates) {
+    const finishReason = trimString(candidate?.finishReason);
     const parts = candidate && candidate.content && Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
     const chunks = parts
       .map((part) => trimString(part && part.text))
       .filter((text) => text);
     if (chunks.length > 0) {
-      return chunks.join("\n");
+      return {
+        reply: chunks.join("\n"),
+        finishReason,
+      };
     }
   }
-  return "";
+
+  return {
+    reply: "",
+    finishReason: trimString(candidates[0]?.finishReason),
+  };
 }
 
 function normalizeStringList(value, maxItems = 6) {
@@ -258,6 +326,141 @@ function extractStructuredPayload(rawReply) {
   }
 
   return null;
+}
+
+function isTruncatedFinishReason(reason) {
+  const safeReason = trimString(reason).toUpperCase();
+  if (!safeReason) return false;
+  return (
+    safeReason === "MAX_TOKENS" ||
+    safeReason === "MAX_OUTPUT_TOKENS" ||
+    safeReason === "STOP_REASON_MAX_TOKENS" ||
+    safeReason.includes("MAX_TOKENS")
+  );
+}
+
+function validateStructuredQuality(structured) {
+  if (!structured || typeof structured !== "object") {
+    return {
+      ok: false,
+      reason: CHAT_FORMAT_REASONS.JSON_PARSE_FAILED,
+    };
+  }
+
+  if (structured.summary.length < MIN_SUMMARY_CHARS) {
+    return {
+      ok: false,
+      reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
+    };
+  }
+
+  if (structured.highlights.length < 1 || structured.evidence.length < 1 || structured.actions.length < 1) {
+    return {
+      ok: false,
+      reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+  };
+}
+
+function evaluateGeminiOutput(reply, finishReason) {
+  const safeReply = trimString(reply);
+  const safeFinishReason = trimString(finishReason);
+  const outputChars = safeReply.length;
+
+  if (!safeReply) {
+    return {
+      format: "text_fallback",
+      structured: null,
+      reply: "",
+      formatReason: CHAT_FORMAT_REASONS.EMPTY_REPLY,
+      finishReason: safeFinishReason,
+      outputChars,
+      shouldRetry: true,
+    };
+  }
+
+  if (isTruncatedFinishReason(safeFinishReason)) {
+    return {
+      format: "text_fallback",
+      structured: null,
+      reply: safeReply,
+      formatReason: CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED,
+      finishReason: safeFinishReason,
+      outputChars,
+      shouldRetry: true,
+    };
+  }
+
+  const structured = extractStructuredPayload(safeReply);
+  if (!structured) {
+    return {
+      format: "text_fallback",
+      structured: null,
+      reply: safeReply,
+      formatReason: CHAT_FORMAT_REASONS.JSON_PARSE_FAILED,
+      finishReason: safeFinishReason,
+      outputChars,
+      shouldRetry: true,
+    };
+  }
+
+  const quality = validateStructuredQuality(structured);
+  if (!quality.ok) {
+    return {
+      format: "text_fallback",
+      structured: null,
+      reply: safeReply,
+      formatReason: quality.reason,
+      finishReason: safeFinishReason,
+      outputChars,
+      shouldRetry: true,
+    };
+  }
+
+  return {
+    format: "structured",
+    structured,
+    reply: safeReply,
+    formatReason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+    finishReason: safeFinishReason,
+    outputChars,
+    shouldRetry: false,
+  };
+}
+
+function buildGeminiPayload(params) {
+  const {
+    message,
+    contextPayload,
+    mode,
+    maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
+    strictJsonOnly = false,
+  } = params || {};
+
+  return {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: buildPrompt(message, contextPayload, mode, { strictJsonOnly }),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens,
+      responseMimeType: "application/json",
+      responseSchema: CHAT_RESPONSE_SCHEMA,
+    },
+  };
 }
 
 function readUpstreamErrorMessage(payload) {
@@ -424,6 +627,68 @@ async function parseJsonSafe(response) {
   }
 }
 
+async function requestGemini(model, key, upstreamPayload, requestId) {
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetchWithTimeout(
+      endpoint,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": key,
+        },
+        body: JSON.stringify(upstreamPayload),
+      },
+      GEMINI_UPSTREAM_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return {
+        ok: false,
+        response: errorResponse(
+          CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
+          `Gemini 请求超时（>${GEMINI_UPSTREAM_TIMEOUT_MS}ms），请稍后重试。`,
+          504,
+          requestId,
+        ),
+      };
+    }
+    return {
+      ok: false,
+      response: errorResponse(
+        CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
+        `Gemini 网络请求失败：${error instanceof Error ? error.message : "请稍后重试"}`,
+        502,
+        requestId,
+      ),
+    };
+  }
+
+  const upstreamData = await parseJsonSafe(upstreamResponse);
+  if (!upstreamResponse.ok) {
+    const upstreamMessage = readUpstreamErrorMessage(upstreamData);
+    return {
+      ok: false,
+      response: errorResponse(
+        CHAT_ERROR_CODES.UPSTREAM_ERROR,
+        upstreamMessage || `Gemini 返回异常状态：HTTP ${upstreamResponse.status}`,
+        502,
+        requestId,
+      ),
+    };
+  }
+
+  const picked = pickGeminiReply(upstreamData);
+  return {
+    ok: true,
+    reply: picked.reply,
+    finishReason: picked.finishReason,
+  };
+}
+
 export async function onRequestPost(context) {
   const requestId = crypto.randomUUID();
   const authResult = await verifySupabaseAccessToken(context.request, context.env);
@@ -462,76 +727,44 @@ export async function onRequestPost(context) {
     );
   }
 
-  const upstreamPayload = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: buildPrompt(message, contextPayload, mode),
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      topP: 0.9,
-      maxOutputTokens: 1024,
-    },
-  };
+  const firstAttemptPayload = buildGeminiPayload({
+    message,
+    contextPayload,
+    mode,
+    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    strictJsonOnly: false,
+  });
+  const firstAttempt = await requestGemini(model, key, firstAttemptPayload, requestId);
+  if (!firstAttempt.ok) {
+    return firstAttempt.response;
+  }
 
-  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+  const firstEvaluation = evaluateGeminiOutput(firstAttempt.reply, firstAttempt.finishReason);
+  let finalEvaluation = firstEvaluation;
+  let retryCount = 0;
 
-  let upstreamResponse;
-  try {
-    upstreamResponse = await fetchWithTimeout(
-      endpoint,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": key,
-        },
-        body: JSON.stringify(upstreamPayload),
-      },
-      GEMINI_UPSTREAM_TIMEOUT_MS,
-    );
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      return errorResponse(
-        CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
-        `Gemini 请求超时（>${GEMINI_UPSTREAM_TIMEOUT_MS}ms），请稍后重试。`,
-        504,
-        requestId,
-      );
+  if (firstEvaluation.shouldRetry) {
+    retryCount = 1;
+    const retryPayload = buildGeminiPayload({
+      message,
+      contextPayload,
+      mode,
+      maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
+      strictJsonOnly: true,
+    });
+    const retryAttempt = await requestGemini(model, key, retryPayload, requestId);
+    if (retryAttempt.ok) {
+      const retryEvaluation = evaluateGeminiOutput(retryAttempt.reply, retryAttempt.finishReason);
+      if (retryEvaluation.format === "structured" || retryEvaluation.reply) {
+        finalEvaluation = retryEvaluation;
+      }
     }
-    return errorResponse(
-      CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
-      `Gemini 网络请求失败：${error instanceof Error ? error.message : "请稍后重试"}`,
-      502,
-      requestId,
-    );
   }
 
-  const upstreamData = await parseJsonSafe(upstreamResponse);
-  if (!upstreamResponse.ok) {
-    const upstreamMessage = readUpstreamErrorMessage(upstreamData);
-    return errorResponse(
-      CHAT_ERROR_CODES.UPSTREAM_ERROR,
-      upstreamMessage || `Gemini 返回异常状态：HTTP ${upstreamResponse.status}`,
-      502,
-      requestId,
-    );
-  }
-
-  const reply = pickGeminiReply(upstreamData);
-  if (!reply) {
-    return errorResponse(CHAT_ERROR_CODES.EMPTY_REPLY, "Gemini 返回为空，请稍后重试。", 502, requestId);
-  }
-
-  const structured = extractStructuredPayload(reply);
-  const format = structured ? "structured" : "text_fallback";
-  const safeReply = structured ? structured.summary : reply;
+  const format = finalEvaluation.format === "structured" ? "structured" : "text_fallback";
+  const structured = format === "structured" ? finalEvaluation.structured : null;
+  const fallbackReply = finalEvaluation.reply || "结构化输出未完成，请重试。";
+  const safeReply = format === "structured" ? structured.summary : fallbackReply;
 
   return jsonResponse(
     {
@@ -541,6 +774,12 @@ export async function onRequestPost(context) {
       mode,
       format,
       structured,
+      meta: {
+        formatReason: finalEvaluation.formatReason,
+        retryCount,
+        finishReason: finalEvaluation.finishReason,
+        outputChars: finalEvaluation.outputChars,
+      },
     },
     200,
     requestId,

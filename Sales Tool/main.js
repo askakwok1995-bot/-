@@ -1136,6 +1136,22 @@ async function initializeApp() {
     EMPTY_REPLY: "Gemini 返回为空，请稍后重试。",
   });
 
+  const CHAT_FORMAT_REASONS = Object.freeze({
+    STRUCTURED_OK: "structured_ok",
+    JSON_PARSE_FAILED: "json_parse_failed",
+    SCHEMA_INVALID: "schema_invalid",
+    OUTPUT_TRUNCATED: "output_truncated",
+    EMPTY_REPLY: "empty_reply",
+  });
+
+  const CHAT_FORMAT_REASON_MESSAGE_MAP = Object.freeze({
+    [CHAT_FORMAT_REASONS.STRUCTURED_OK]: "结构化输出可用。",
+    [CHAT_FORMAT_REASONS.JSON_PARSE_FAILED]: "模型输出不是合法结构化 JSON。",
+    [CHAT_FORMAT_REASONS.SCHEMA_INVALID]: "结构化字段不完整或不符合约束。",
+    [CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED]: "模型输出被截断。",
+    [CHAT_FORMAT_REASONS.EMPTY_REPLY]: "模型未返回有效内容。",
+  });
+
   function extractChatRequestId(response, payload) {
     const headerRequestId = String(response?.headers?.get("x-request-id") || "").trim();
     if (headerRequestId) {
@@ -1151,6 +1167,40 @@ async function initializeApp() {
       return safeMessage;
     }
     return `${safeMessage}（请求号: ${safeRequestId}）`;
+  }
+
+  function normalizeChatFormatReason(value) {
+    const candidate = String(value || "").trim();
+    const reasons = Object.values(CHAT_FORMAT_REASONS);
+    return reasons.includes(candidate) ? candidate : CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+  }
+
+  function normalizeChatMeta(meta, fallbackFormat = "structured") {
+    const defaultFormatReason =
+      fallbackFormat === "text_fallback" ? CHAT_FORMAT_REASONS.JSON_PARSE_FAILED : CHAT_FORMAT_REASONS.STRUCTURED_OK;
+    if (!meta || typeof meta !== "object") {
+      return {
+        formatReason: defaultFormatReason,
+        retryCount: 0,
+        finishReason: "",
+        outputChars: 0,
+      };
+    }
+
+    const retryCount = Number(meta.retryCount) === 1 ? 1 : 0;
+    const outputCharsRaw = Number(meta.outputChars);
+    return {
+      formatReason: normalizeChatFormatReason(meta.formatReason),
+      retryCount,
+      finishReason: String(meta.finishReason || "").trim(),
+      outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw > 0 ? Math.floor(outputCharsRaw) : 0,
+    };
+  }
+
+  function buildChatFallbackNotice(meta, requestId) {
+    const reasonCode = normalizeChatFormatReason(meta?.formatReason);
+    const reasonText = CHAT_FORMAT_REASON_MESSAGE_MAP[reasonCode] || "结构化输出不可用。";
+    return appendRequestId(`已回退为文本显示：${reasonText}（原因码: ${reasonCode}）`, requestId);
   }
 
   function normalizeChatApiError(response, payload) {
@@ -1240,13 +1290,20 @@ async function initializeApp() {
     const structured = payload?.structured && typeof payload.structured === "object" ? payload.structured : null;
     const responseMode = sanitizeChatMode(payload?.mode || safeMode);
     const format = payload?.format === "structured" ? "structured" : "text_fallback";
+    const normalizedMeta = normalizeChatMeta(payload?.meta, format);
     const fallbackReply = reply || String(structured?.summary || "").trim();
     if (!fallbackReply && !structured) {
       throw new Error(appendRequestId("服务端未返回有效回复。", requestId));
     }
 
     if (requestId) {
-      console.info("[Sales Tool] /api/chat 调用成功。", { requestId, mode: responseMode, format });
+      console.info("[Sales Tool] /api/chat 调用成功。", {
+        requestId,
+        mode: responseMode,
+        format,
+        formatReason: normalizedMeta.formatReason,
+        retryCount: normalizedMeta.retryCount,
+      });
     }
     return {
       reply: fallbackReply,
@@ -1255,6 +1312,8 @@ async function initializeApp() {
       format,
       model: String(payload?.model || "").trim(),
       requestId,
+      meta: normalizedMeta,
+      fallbackNotice: format === "text_fallback" ? buildChatFallbackNotice(normalizedMeta, requestId) : "",
     };
   }
 

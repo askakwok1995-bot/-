@@ -9,6 +9,13 @@ const CHAT_MODES = {
   DIAGNOSIS: "diagnosis",
   ACTION_PLAN: "action-plan",
 };
+const CHAT_FORMAT_REASONS = {
+  STRUCTURED_OK: "structured_ok",
+  JSON_PARSE_FAILED: "json_parse_failed",
+  SCHEMA_INVALID: "schema_invalid",
+  OUTPUT_TRUNCATED: "output_truncated",
+  EMPTY_REPLY: "empty_reply",
+};
 
 let initialized = false;
 
@@ -33,6 +40,35 @@ function getModeLabel(mode) {
 
 function toText(value) {
   return String(value || "").trim();
+}
+
+function normalizeFormatReason(value) {
+  const candidate = toText(value);
+  const allowed = Object.values(CHAT_FORMAT_REASONS);
+  return allowed.includes(candidate) ? candidate : CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+}
+
+function getFormatReasonLabel(reason) {
+  const safeReason = normalizeFormatReason(reason);
+  if (safeReason === CHAT_FORMAT_REASONS.SCHEMA_INVALID) return "结构化字段不完整";
+  if (safeReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED) return "输出被截断";
+  if (safeReason === CHAT_FORMAT_REASONS.EMPTY_REPLY) return "输出为空";
+  if (safeReason === CHAT_FORMAT_REASONS.STRUCTURED_OK) return "结构化成功";
+  return "结构化解析失败";
+}
+
+function looksLikeJsonFragment(text) {
+  const safeText = toText(text);
+  if (!safeText || !safeText.startsWith("{")) {
+    return false;
+  }
+
+  try {
+    JSON.parse(safeText);
+    return false;
+  } catch (_error) {
+    return true;
+  }
 }
 
 function normalizeStringList(value, maxItems = 6) {
@@ -365,6 +401,10 @@ export function initAiChatUi(options = {}) {
         reply: payload.trim(),
         structured: null,
         mode: currentMode,
+        format: "text_fallback",
+        requestId: "",
+        meta: null,
+        fallbackNotice: "",
       };
     }
     if (!payload || typeof payload !== "object") {
@@ -372,6 +412,10 @@ export function initAiChatUi(options = {}) {
         reply: "",
         structured: null,
         mode: currentMode,
+        format: "text_fallback",
+        requestId: "",
+        meta: null,
+        fallbackNotice: "",
       };
     }
 
@@ -381,10 +425,23 @@ export function initAiChatUi(options = {}) {
       toText(payload.text);
     const structured = normalizeStructuredPayload(payload.structured);
     const mode = normalizeMode(payload.mode || currentMode);
+    const format = payload.format === "structured" ? "structured" : "text_fallback";
+    const requestId = toText(payload.requestId);
+    const rawMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
+    const meta = rawMeta
+      ? {
+          formatReason: normalizeFormatReason(rawMeta.formatReason),
+          retryCount: Number(rawMeta.retryCount) === 1 ? 1 : 0,
+        }
+      : null;
     return {
       reply,
       structured,
       mode,
+      format,
+      requestId,
+      meta,
+      fallbackNotice: toText(payload.fallbackNotice),
     };
   }
 
@@ -421,9 +478,25 @@ export function initAiChatUi(options = {}) {
       }
 
       dom.statusEl.classList.add("ai-chat-status-ready");
-      dom.statusEl.textContent = hasRendered
-        ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
-        : "处理器已执行，但未返回可显示内容。";
+      if (normalized.format === "text_fallback") {
+        let fallbackStatus = normalized.fallbackNotice;
+        if (!fallbackStatus && normalized.meta) {
+          fallbackStatus = `已回退文本显示：${getFormatReasonLabel(normalized.meta.formatReason)}（原因码: ${normalized.meta.formatReason}）`;
+        }
+        if (looksLikeJsonFragment(normalized.reply)) {
+          fallbackStatus = "结构化输出未完成，请重试。";
+        }
+        if (normalized.requestId && !fallbackStatus.includes("请求号")) {
+          fallbackStatus = fallbackStatus
+            ? `${fallbackStatus}（请求号: ${normalized.requestId}）`
+            : `已回退文本显示（请求号: ${normalized.requestId}）。`;
+        }
+        dom.statusEl.textContent = fallbackStatus || "已回退文本显示。";
+      } else {
+        dom.statusEl.textContent = hasRendered
+          ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
+          : "处理器已执行，但未返回可显示内容。";
+      }
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       dom.statusEl.classList.remove("ai-chat-status-ready");
