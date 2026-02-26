@@ -445,13 +445,9 @@ function buildSplitLineTheme(palette) {
 }
 
 export function getDefaultReportRange() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-
   return {
-    startYm: `${year}-01`,
-    endYm: `${year}-${String(month).padStart(2, "0")}`,
+    startYm: "",
+    endYm: "",
   };
 }
 
@@ -463,6 +459,21 @@ export function normalizeReportRange(state, dom, deps) {
 
   let startYm = normalizeYm(state.reportStartYm) || normalizeYm(startInput ? startInput.value : "") || defaults.startYm;
   let endYm = normalizeYm(state.reportEndYm) || normalizeYm(endInput ? endInput.value : "") || defaults.endYm;
+
+  if (!startYm || !endYm) {
+    state.reportStartYm = startYm;
+    state.reportEndYm = endYm;
+    state.reportRangeError = "请选择起始月和结束月";
+
+    if (startInput) startInput.value = startYm;
+    if (endInput) endInput.value = endYm;
+
+    return {
+      startYm,
+      endYm,
+      error: state.reportRangeError,
+    };
+  }
 
   if (compareYm(startYm, endYm) > 0) {
     state.reportStartYm = startYm;
@@ -1004,7 +1015,7 @@ function downloadReportTablesXlsx(state, dom, deps) {
 
   const range = normalizeReportRange(state, dom, deps);
   if (range.error) {
-    showReportExportHint(dom, "起始月不能晚于结束月。", true);
+    showReportExportHint(dom, `${range.error}。`, true);
     return;
   }
 
