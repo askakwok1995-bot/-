@@ -13,6 +13,9 @@ const FIRST_STAGE_BUDGET_MS = 18000;
 const FIRST_AND_RETRY_BUDGET_MS = 24000;
 const SCHEMA_INVALID_REPAIR_BUDGET_MS = 22000;
 const SCHEMA_INVALID_REPAIR_MIN_OUTPUT_CHARS = 300;
+const FIRST_TRANSPORT_RETRY_BASE_DELAY_MS = 350;
+const FIRST_TRANSPORT_RETRY_JITTER_MS = 150;
+const FIRST_TRANSPORT_MIN_REMAINING_BUDGET_MS = 2500;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
@@ -197,6 +200,17 @@ function errorResponse(code, message, status, requestId, details = null) {
   if (Number.isFinite(safeDurationMs) && safeDurationMs >= 0) {
     errorPayload.durationMs = Math.floor(safeDurationMs);
   }
+  const safeFirstTransportAttempts = Number(safeDetails?.firstTransportAttempts);
+  if (Number.isFinite(safeFirstTransportAttempts) && safeFirstTransportAttempts > 0) {
+    errorPayload.firstTransportAttempts = Math.floor(safeFirstTransportAttempts);
+  }
+  const safeFirstTransportStatuses = normalizeStatusCodeList(safeDetails?.firstTransportStatuses);
+  if (safeFirstTransportStatuses.length > 0) {
+    errorPayload.firstTransportStatuses = safeFirstTransportStatuses;
+  }
+  if (typeof safeDetails?.firstTransportRetryApplied === "boolean") {
+    errorPayload.firstTransportRetryApplied = safeDetails.firstTransportRetryApplied;
+  }
 
   return jsonResponse(
     {
@@ -210,6 +224,16 @@ function errorResponse(code, message, status, requestId, details = null) {
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeStatusCodeList(rawStatuses) {
+  if (!Array.isArray(rawStatuses)) {
+    return [];
+  }
+  return rawStatuses
+    .map((status) => Number(status))
+    .filter((status) => Number.isFinite(status) && status > 0)
+    .map((status) => Math.floor(status));
 }
 
 function getEnvString(env, name) {
@@ -351,6 +375,10 @@ function buildChatSuccessPayload(params) {
     contextChars = 0,
     historyChars = 0,
     attemptDiagnostics = [],
+    firstTransportAttempts = 1,
+    firstTransportRetryApplied = false,
+    firstTransportRetryRecovered = false,
+    firstTransportStatuses = [],
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const structured = format === "structured" ? evaluation.structured : null;
@@ -392,6 +420,13 @@ function buildChatSuccessPayload(params) {
         })
         .filter((item) => item !== null)
     : [];
+  const safeFirstTransportAttempts =
+    Number.isFinite(Number(firstTransportAttempts)) && Number(firstTransportAttempts) > 0
+      ? Math.floor(Number(firstTransportAttempts))
+      : 1;
+  const safeFirstTransportRetryApplied = Boolean(firstTransportRetryApplied);
+  const safeFirstTransportRetryRecovered = Boolean(firstTransportRetryRecovered);
+  const safeFirstTransportStatuses = normalizeStatusCodeList(firstTransportStatuses);
 
   return {
     reply,
@@ -418,6 +453,10 @@ function buildChatSuccessPayload(params) {
       contextChars: safeContextChars,
       historyChars: safeHistoryChars,
       attemptDiagnostics: safeAttemptDiagnostics,
+      firstTransportAttempts: safeFirstTransportAttempts,
+      firstTransportRetryApplied: safeFirstTransportRetryApplied,
+      firstTransportRetryRecovered: safeFirstTransportRetryRecovered,
+      firstTransportStatuses: safeFirstTransportStatuses,
     },
   };
 }
@@ -860,6 +899,16 @@ function isTimeoutError(error) {
   return Boolean(error && typeof error === "object" && error.code === FETCH_TIMEOUT_CODE);
 }
 
+function sleep(ms) {
+  const safeMs = Number(ms);
+  if (!Number.isFinite(safeMs) || safeMs <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.floor(safeMs));
+  });
+}
+
 async function fetchWithTimeout(url, init = {}, timeoutMs = 12000) {
   const timeout = Number(timeoutMs);
   if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -1021,6 +1070,17 @@ function buildChatError(code, message, status, details = null) {
   if (Number.isFinite(safeDurationMs) && safeDurationMs >= 0) {
     error.durationMs = Math.floor(safeDurationMs);
   }
+  const safeFirstTransportAttempts = Number(safeDetails?.firstTransportAttempts);
+  if (Number.isFinite(safeFirstTransportAttempts) && safeFirstTransportAttempts > 0) {
+    error.firstTransportAttempts = Math.floor(safeFirstTransportAttempts);
+  }
+  const safeFirstTransportStatuses = normalizeStatusCodeList(safeDetails?.firstTransportStatuses);
+  if (safeFirstTransportStatuses.length > 0) {
+    error.firstTransportStatuses = safeFirstTransportStatuses;
+  }
+  if (typeof safeDetails?.firstTransportRetryApplied === "boolean") {
+    error.firstTransportRetryApplied = safeDetails.firstTransportRetryApplied;
+  }
   return error;
 }
 
@@ -1128,6 +1188,86 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload, options = 
     ok: true,
     reply: picked.reply,
     finishReason: picked.finishReason,
+    upstreamStatus: upstreamResponse.status,
+  };
+}
+
+function isRetryableUpstreamStatus(status) {
+  const safeStatus = Number(status);
+  return safeStatus === 500 || safeStatus === 502 || safeStatus === 503 || safeStatus === 429;
+}
+
+function pickAttemptUpstreamStatus(attempt) {
+  if (!attempt || typeof attempt !== "object") {
+    return 0;
+  }
+  if (attempt.ok) {
+    const safeStatus = Number(attempt.upstreamStatus);
+    return Number.isFinite(safeStatus) && safeStatus > 0 ? Math.floor(safeStatus) : 200;
+  }
+  const errorStatus = Number(attempt.error?.upstreamStatus);
+  return Number.isFinite(errorStatus) && errorStatus > 0 ? Math.floor(errorStatus) : 0;
+}
+
+async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstreamPayload, options = null) {
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const requestStartedAt = Number(safeOptions.requestStartedAt);
+  const canUseBudget =
+    Number.isFinite(requestStartedAt) &&
+    requestStartedAt > 0 &&
+    requestStartedAt <= Date.now();
+
+  const firstAttempt = await requestGeminiNonStreaming(model, key, upstreamPayload, {
+    stage: "first",
+  });
+  const firstStatus = pickAttemptUpstreamStatus(firstAttempt);
+  const firstTransportStatuses = firstStatus > 0 ? [firstStatus] : [];
+  const firstTransport = {
+    firstTransportAttempts: 1,
+    firstTransportRetryApplied: false,
+    firstTransportRetryRecovered: false,
+    firstTransportStatuses,
+  };
+  if (firstAttempt.ok) {
+    return {
+      ...firstAttempt,
+      firstTransport,
+    };
+  }
+
+  const errorCode = trimString(firstAttempt.error?.code);
+  const retryableCode =
+    errorCode === CHAT_ERROR_CODES.UPSTREAM_ERROR || errorCode === CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT;
+  const retryableStatus = isRetryableUpstreamStatus(firstAttempt.error?.upstreamStatus);
+  const remainingBudgetMs = canUseBudget ? TOTAL_CHAT_BUDGET_MS - (Date.now() - requestStartedAt) : TOTAL_CHAT_BUDGET_MS;
+  const canRetry = retryableCode && retryableStatus && remainingBudgetMs >= FIRST_TRANSPORT_MIN_REMAINING_BUDGET_MS;
+  if (!canRetry) {
+    return {
+      ...firstAttempt,
+      firstTransport,
+    };
+  }
+
+  const retryDelayMs =
+    FIRST_TRANSPORT_RETRY_BASE_DELAY_MS +
+    Math.floor(Math.random() * (FIRST_TRANSPORT_RETRY_JITTER_MS + 1));
+  await sleep(retryDelayMs);
+  const secondAttempt = await requestGeminiNonStreaming(model, key, upstreamPayload, {
+    stage: "first",
+  });
+  const secondStatus = pickAttemptUpstreamStatus(secondAttempt);
+  if (secondStatus > 0) {
+    firstTransportStatuses.push(secondStatus);
+  }
+
+  return {
+    ...secondAttempt,
+    firstTransport: {
+      firstTransportAttempts: 2,
+      firstTransportRetryApplied: true,
+      firstTransportRetryRecovered: Boolean(secondAttempt.ok),
+      firstTransportStatuses,
+    },
   };
 }
 
@@ -1414,6 +1554,10 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
   let repairSucceeded = false;
   let finalStage = "first";
   let retryEvaluated = false;
+  let firstTransportAttempts = 1;
+  let firstTransportRetryApplied = false;
+  let firstTransportRetryRecovered = false;
+  let firstTransportStatuses = [];
   const attemptDiagnostics = [];
 
   const firstAttemptPayload = buildGeminiPayload({
@@ -1426,11 +1570,20 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
   });
   attemptCount += 1;
   const firstStageStartedAt = Date.now();
-  const firstAttempt = await requestGeminiNonStreaming(model, key, firstAttemptPayload, {
-    stage: "first",
+  const firstAttempt = await requestGeminiFirstStageWithAvailabilityRetry(model, key, firstAttemptPayload, {
+    requestStartedAt: startedAt,
   });
   stageDurations.first = Date.now() - firstStageStartedAt;
+  firstTransportAttempts = Number(firstAttempt?.firstTransport?.firstTransportAttempts) > 1 ? 2 : 1;
+  firstTransportRetryApplied = Boolean(firstAttempt?.firstTransport?.firstTransportRetryApplied);
+  firstTransportRetryRecovered = Boolean(firstAttempt?.firstTransport?.firstTransportRetryRecovered);
+  firstTransportStatuses = normalizeStatusCodeList(firstAttempt?.firstTransport?.firstTransportStatuses);
   if (!firstAttempt.ok) {
+    if (firstAttempt.error && typeof firstAttempt.error === "object") {
+      firstAttempt.error.firstTransportAttempts = firstTransportAttempts;
+      firstAttempt.error.firstTransportRetryApplied = firstTransportRetryApplied;
+      firstAttempt.error.firstTransportStatuses = firstTransportStatuses;
+    }
     return firstAttempt;
   }
 
@@ -1526,6 +1679,10 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     contextChars: safeContextChars,
     historyChars: safeHistoryChars,
     attemptDiagnostics,
+    firstTransportAttempts,
+    firstTransportRetryApplied,
+    firstTransportRetryRecovered,
+    firstTransportStatuses,
   };
 }
 

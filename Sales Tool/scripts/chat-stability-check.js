@@ -132,6 +132,16 @@ function trim(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeStatusCodeList(rawStatuses) {
+  if (!Array.isArray(rawStatuses)) {
+    return [];
+  }
+  return rawStatuses
+    .map((status) => Number(status))
+    .filter((status) => Number.isFinite(status) && status > 0)
+    .map((status) => Math.floor(status));
+}
+
 function classifyWaitFeeling(durationMs) {
   const safe = toInt(durationMs, 0);
   if (safe <= 3000) return "快";
@@ -216,6 +226,27 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
   const totalDurationMs =
     Number.isFinite(totalDurationRaw) && totalDurationRaw >= 0 ? Math.floor(totalDurationRaw) : toInt(durationMs, 0);
   const elapsedMs = toInt(durationMs, 0);
+  const firstTransportAttemptsRaw = Number(meta?.firstTransportAttempts ?? error?.firstTransportAttempts);
+  const firstTransportAttempts =
+    Number.isFinite(firstTransportAttemptsRaw) && firstTransportAttemptsRaw > 0
+      ? Math.floor(firstTransportAttemptsRaw)
+      : null;
+  const firstTransportRetryApplied =
+    typeof meta?.firstTransportRetryApplied === "boolean"
+      ? meta.firstTransportRetryApplied
+      : typeof error?.firstTransportRetryApplied === "boolean"
+        ? error.firstTransportRetryApplied
+        : null;
+  const firstTransportRetryRecovered =
+    typeof meta?.firstTransportRetryRecovered === "boolean" ? meta.firstTransportRetryRecovered : null;
+  const firstTransportStatuses = normalizeStatusCodeList(meta?.firstTransportStatuses);
+  const firstTransportStatusesFromError =
+    firstTransportStatuses.length > 0 ? firstTransportStatuses : normalizeStatusCodeList(error?.firstTransportStatuses);
+  const mergedStatuses = [...firstTransportStatusesFromError];
+  if (upstreamStatus === 503 && !mergedStatuses.includes(503)) {
+    mergedStatuses.push(503);
+  }
+  const hasUpstream503 = mergedStatuses.includes(503);
 
   return {
     row: index + 1,
@@ -241,6 +272,21 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     finalStage: finalStage || "-",
     metaFormatReason,
     attemptDiagnostics,
+    firstTransportAttempts: firstTransportAttempts === null ? "-" : String(firstTransportAttempts),
+    firstTransportRetryApplied:
+      firstTransportRetryApplied === null
+        ? "-"
+        : firstTransportRetryApplied
+          ? "true"
+          : "false",
+    firstTransportRetryRecovered:
+      firstTransportRetryRecovered === null
+        ? "-"
+        : firstTransportRetryRecovered
+          ? "true"
+          : "false",
+    firstTransportStatuses: mergedStatuses,
+    hasUpstream503,
     isFailure: response.status >= 400 || Boolean(code),
   };
 }
@@ -361,13 +407,18 @@ function pickTopReason(stageStats) {
   return `${first.reason} (${first.count})`;
 }
 
-function printFocusMetrics(summary, modeStats, reasonStats) {
+function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats) {
   console.log("\n=== 重点指标 ===");
   console.log(`- structured 占比: ${toPercent(summary.metrics.structuredRate)}`);
   console.log(`- finalStage=first 占比: ${toPercent(summary.metrics.finalStageFirstRate)}`);
   console.log("- text_fallback by mode:");
   for (const item of modeStats) {
     console.log(`  - ${item.mode}: ${toPercent(item.textFallbackRate)}`);
+  }
+  if (firstTransportStats && typeof firstTransportStats === "object") {
+    console.log(`- firstTransportRetryApplied 占比: ${toPercent(firstTransportStats.overall.appliedRate)}`);
+    console.log(`- firstTransportRetryRecovered 占比: ${toPercent(firstTransportStats.overall.recoveredRate)}`);
+    console.log(`- upstreamStatus=503 占比: ${toPercent(firstTransportStats.overall.upstream503Rate)}`);
   }
   console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
   console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
@@ -415,6 +466,9 @@ function buildModeStats(results) {
     const finalStageRepairCount = rows.filter((row) => row.finalStage === "repair").length;
     const elapsedValues = rows.map((row) => Number(row.elapsedMs)).filter((value) => Number.isFinite(value) && value >= 0);
     const p95 = calcPercentile(elapsedValues, 95);
+    const firstTransportRetryAppliedCount = rows.filter((row) => row.firstTransportRetryApplied === "true").length;
+    const firstTransportRetryRecoveredCount = rows.filter((row) => row.firstTransportRetryRecovered === "true").length;
+    const upstream503Count = rows.filter((row) => Boolean(row.hasUpstream503)).length;
     return {
       mode,
       total,
@@ -423,9 +477,38 @@ function buildModeStats(results) {
       finalStageFirstRate: finalStageFirstCount / total,
       finalStageRetryRate: finalStageRetryCount / total,
       finalStageRepairRate: finalStageRepairCount / total,
+      firstTransportRetryAppliedRate: firstTransportRetryAppliedCount / total,
+      firstTransportRetryRecoveredRate: firstTransportRetryRecoveredCount / total,
+      upstream503Rate: upstream503Count / total,
       p95ElapsedMs: p95,
     };
   });
+}
+
+function buildFirstTransportStats(results) {
+  const total = results.length || 1;
+  const overallAppliedCount = results.filter((row) => row.firstTransportRetryApplied === "true").length;
+  const overallRecoveredCount = results.filter((row) => row.firstTransportRetryRecovered === "true").length;
+  const overallUpstream503Count = results.filter((row) => Boolean(row.hasUpstream503)).length;
+  const modeStats = buildModeStats(results).map((item) => ({
+    mode: item.mode,
+    total: item.total,
+    appliedRate: item.firstTransportRetryAppliedRate,
+    recoveredRate: item.firstTransportRetryRecoveredRate,
+    upstream503Rate: item.upstream503Rate,
+  }));
+  return {
+    overall: {
+      total,
+      appliedRate: overallAppliedCount / total,
+      recoveredRate: overallRecoveredCount / total,
+      upstream503Rate: overallUpstream503Count / total,
+      appliedCount: overallAppliedCount,
+      recoveredCount: overallRecoveredCount,
+      upstream503Count: overallUpstream503Count,
+    },
+    byMode: modeStats,
+  };
 }
 
 function evaluateThresholds(results) {
@@ -538,14 +621,14 @@ function buildDiagnosis(results, summary = null) {
 
 function printTable(results) {
   console.log(
-    "| # | mode | 问题类型 | HTTP | error.code | stage | upstreamStatus | durationMs | format | attemptCount | repairApplied | finalStage | elapsedMs | requestId | 等待体感 |",
+    "| # | mode | 问题类型 | HTTP | error.code | stage | upstreamStatus | durationMs | format | attemptCount | repairApplied | finalStage | firstTxAttempts | firstTxRetry | firstTxRecovered | elapsedMs | requestId | 等待体感 |",
   );
   console.log(
-    "|---|------|----------|------|------------|-------|----------------|------------|--------|--------------|---------------|------------|-----------|-----------|----------|",
+    "|---|------|----------|------|------------|-------|----------------|------------|--------|--------------|---------------|------------|-----------------|--------------|------------------|-----------|-----------|----------|",
   );
   for (const row of results) {
     console.log(
-      `| ${row.row} | ${row.mode} | ${row.questionType} | ${row.http} | ${row.errorCode} | ${row.stage} | ${row.upstreamStatus} | ${row.durationMs} | ${row.format} | ${row.attemptCount} | ${row.repairApplied} | ${row.finalStage} | ${row.elapsedMs} | ${row.requestId} | ${row.waitFeeling} |`,
+      `| ${row.row} | ${row.mode} | ${row.questionType} | ${row.http} | ${row.errorCode} | ${row.stage} | ${row.upstreamStatus} | ${row.durationMs} | ${row.format} | ${row.attemptCount} | ${row.repairApplied} | ${row.finalStage} | ${row.firstTransportAttempts} | ${row.firstTransportRetryApplied} | ${row.firstTransportRetryRecovered} | ${row.elapsedMs} | ${row.requestId} | ${row.waitFeeling} |`,
     );
   }
 }
@@ -561,6 +644,25 @@ function printModeStats(results) {
   for (const item of stats) {
     console.log(
       `| ${item.mode} | ${item.total} | ${toPercent(item.attempt3Rate)} | ${toPercent(item.textFallbackRate)} | ${toPercent(item.finalStageFirstRate)} | ${toPercent(item.finalStageRetryRate)} | ${toPercent(item.finalStageRepairRate)} | ${item.p95ElapsedMs}ms |`,
+    );
+  }
+  return stats;
+}
+
+function printFirstTransportStats(results) {
+  const stats = buildFirstTransportStats(results);
+  console.log("\n=== 首轮可用性重试统计（overall）===");
+  console.log("| firstTransportRetryApplied 占比 | firstTransportRetryRecovered 占比 | upstreamStatus=503 占比 |");
+  console.log("|-------------------------------|----------------------------------|-----------------------|");
+  console.log(
+    `| ${toPercent(stats.overall.appliedRate)} | ${toPercent(stats.overall.recoveredRate)} | ${toPercent(stats.overall.upstream503Rate)} |`,
+  );
+  console.log("\n=== 首轮可用性重试统计（by mode）===");
+  console.log("| mode | 样本数 | firstTransportRetryApplied 占比 | firstTransportRetryRecovered 占比 | upstreamStatus=503 占比 |");
+  console.log("|------|--------|-------------------------------|----------------------------------|-----------------------|");
+  for (const item of stats.byMode) {
+    console.log(
+      `| ${item.mode} | ${item.total} | ${toPercent(item.appliedRate)} | ${toPercent(item.recoveredRate)} | ${toPercent(item.upstream503Rate)} |`,
     );
   }
   return stats;
@@ -708,6 +810,11 @@ async function run() {
         finalStage: "-",
         metaFormatReason: "-",
         attemptDiagnostics: [],
+        firstTransportAttempts: "-",
+        firstTransportRetryApplied: "-",
+        firstTransportRetryRecovered: "-",
+        firstTransportStatuses: [],
+        hasUpstream503: false,
         elapsedMs: toInt(Date.now() - startedAt, 0),
         totalDurationMs: toInt(Date.now() - startedAt, 0),
         requestId: "-",
@@ -743,9 +850,10 @@ async function run() {
   console.log("\n=== 按 mode 统计 ===");
   const modeStats = printModeStats(results);
   const reasonStats = printAttemptReasonStats(results);
+  const firstTransportStats = printFirstTransportStats(results);
 
   const summary = evaluateThresholds(results);
-  printFocusMetrics(summary, modeStats, reasonStats);
+  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats);
   console.log("\n=== FinalStage 总体占比 ===");
   printFinalStageSummary(summary);
   console.log("\n=== 判定结果 ===");

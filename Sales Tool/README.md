@@ -316,6 +316,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
+- 首轮可用性重试（仅 non-streaming）：`first` 阶段命中 `500/502/503/429` 时会做 1 次短退避重试（约 `350ms + 随机0~150ms`）；`401/403` 与 `UPSTREAM_TIMEOUT` 不参与该重试；不启用模型回退。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
   - `briefing`: first `1280` / retry `1408`
   - `diagnosis`: first `1408` / retry `1792`
@@ -364,6 +365,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "finalStage": "first",
     "contextChars": 2521,
     "historyChars": 864,
+    "firstTransportAttempts": 2,
+    "firstTransportRetryApplied": true,
+    "firstTransportRetryRecovered": true,
+    "firstTransportStatuses": [503, 200],
     "attemptDiagnostics": [
       {
         "stage": "first",
@@ -421,6 +426,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.stageDurations` 为分阶段耗时（`first/retry/repair`）。
 - `meta.finalStage` 为最终命中的阶段。
 - `meta.contextChars/historyChars` 用于观察请求体体量。
+- `meta.firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses` 用于观察“首轮可用性重试”是否触发及是否恢复成功。
 - `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens`），用于定位“首轮命中低”或“repair 依赖高”。
 
 失败响应（示例）：
@@ -431,7 +437,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "message": "Gemini 请求超时（>30000ms），请稍后重试。",
     "stage": "retry",
     "upstreamStatus": 503,
-    "durationMs": 30012
+    "durationMs": 30012,
+    "firstTransportAttempts": 2,
+    "firstTransportStatuses": [503, 503],
+    "firstTransportRetryApplied": true
   },
   "requestId": "..."
 }
@@ -467,10 +476,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 4. 关闭或清空 `GEMINI_API_KEY` 时，聊天提示“服务端未配置”。
 5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_AUTH_ERROR`、`UPSTREAM_RATE_LIMIT`、`UPSTREAM_ERROR`。
 6. 用户报错时可提供“请求号（requestId）”用于排查。
-7. 错误响应中可见 `error.stage/upstreamStatus/durationMs`（如上游 503 位于 retry 阶段）。
+7. 错误响应中可见 `error.stage/upstreamStatus/durationMs/firstTransportAttempts/firstTransportStatuses/firstTransportRetryApplied`（如首轮两次都遇到 503）。
 8. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/attemptDiagnostics` 在响应中存在且可用于排障。
+10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics` 在响应中存在且可用于排障。
 11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查
@@ -492,7 +501,7 @@ npm run check:chat-stability
 - `--stream false`：默认走非流式稳态路径
 
 脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
-1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/elapsedMs`）
+1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/firstTxAttempts/firstTxRetry/firstTxRecovered/elapsedMs`）
 2. `finalStage` 总体占比（`first/retry/repair`）
 3. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`finalStage=first/retry/repair` 占比、`p95 elapsedMs`）
 4. `attemptDiagnostics.formatReason` 分布（overall + by mode，分别输出 `first/retry` 的 top reasons，含 `unknown_source` 兜底标记）
@@ -506,6 +515,10 @@ npm run check:chat-stability
    - `structured` 占比 `>= 60%`
    - `p95 elapsedMs <= 15000ms`（目标值）
 9. 自动日志判读建议（基于错误码与阶段）
+10. 首轮可用性重试统计（overall + by mode）：
+   - `firstTransportRetryApplied` 占比
+   - `firstTransportRetryRecovered` 占比
+   - `upstreamStatus=503` 占比
 
 注意：
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。
