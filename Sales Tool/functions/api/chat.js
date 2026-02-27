@@ -316,13 +316,13 @@ function getModeTokenProfile(mode, messageLength = 0) {
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
   let retry = RETRY_MAX_OUTPUT_TOKENS;
   if (safeMode === CHAT_MODES.BRIEFING) {
-    first = 1024;
+    first = 1280;
     retry = 1408;
   } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
-    first = 1280;
+    first = 1408;
     retry = 1792;
   } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
-    first = 1536;
+    first = 1664;
     retry = 2048;
   }
 
@@ -456,10 +456,17 @@ function buildPrompt(message, context, mode, options = {}) {
   const historyText = formatHistoryText(history);
   const modeCompactRule =
     safeMode === CHAT_MODES.BRIEFING
-      ? "简报模式请紧凑输出：highlights<=2, evidence<=2, risks<=2, actions<=2, nextQuestions<=2。"
+      ? "简报模式请紧凑输出：highlights<=2, evidence<=2, risks<=2, actions<=1, nextQuestions<=1。"
       : safeMode === CHAT_MODES.DIAGNOSIS
         ? "诊断模式请紧凑输出：highlights<=2, evidence<=3, risks<=2, actions<=1, nextQuestions<=1。"
         : "行动模式请紧凑输出：actions<=3, evidence<=3, risks<=1, highlights<=1, nextQuestions<=1。";
+  const briefingFirstRule =
+    safeMode === CHAT_MODES.BRIEFING && !strictJsonOnly
+      ? "首轮简报请按“汇报摘要”风格：summary 用一段话给出总体结论；highlights/evidence/risks 各 1-2 条；actions 严格 1 条短动作，不做行动拆解；nextQuestions 0-1 条。"
+      : "";
+  const firstRoundSharedRule = strictJsonOnly
+    ? ""
+    : "首轮禁止复述 analysis/context 原文或长清单；仅输出结论级证据，不展开逐条明细；每条只写一句短句。";
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -470,10 +477,13 @@ function buildPrompt(message, context, mode, options = {}) {
     strictJsonOnly
       ? "本次为纠错重试：你上次输出未通过结构化校验。请只返回合法 JSON。"
       : "本次为首轮输出，请优先保证结构化完整性和可读性。",
+    firstRoundSharedRule,
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
+    briefingFirstRule,
     modeCompactRule,
     "宁可减少条目数量，也必须一次输出完整 JSON，不要输出超长句子。",
+    "禁止长段解释，优先使用短句表达。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
     "禁止使用 Markdown 代码块；如果无法保证格式，仍优先输出可解析 JSON。",
     "优先参考最近对话上下文，但以当前传入数据口径为准。",
