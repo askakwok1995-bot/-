@@ -393,6 +393,76 @@ function sanitizeEvidenceRefs(value, maxItems = 2) {
     .slice(0, maxItems);
 }
 
+function sanitizeNaturalMini(rawNaturalMini) {
+  const naturalMini = rawNaturalMini && typeof rawNaturalMini === "object" ? rawNaturalMini : {};
+  const monthlyFluctuation = Array.isArray(naturalMini.monthlyFluctuation)
+    ? naturalMini.monthlyFluctuation
+        .map((item) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const ym = trimString(item.ym);
+          const amount = Number(item.amount);
+          const amountMom = Number(item.amountMom);
+          if (!ym || !Number.isFinite(amount)) {
+            return null;
+          }
+          return {
+            ym,
+            amount,
+            amountMom: Number.isFinite(amountMom) ? amountMom : null,
+          };
+        })
+        .filter((item) => item !== null)
+        .slice(-3)
+    : [];
+  const topProductContribution = Array.isArray(naturalMini.topProductContribution)
+    ? naturalMini.topProductContribution
+        .map((item, index) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const fallbackName =
+            trimString(item.productCode) ||
+            trimString(item.id) ||
+            `未知产品#${index + 1}`;
+          const productName = trimString(item.productName) || fallbackName;
+          const amount = Number(item.amount);
+          const amountShare = Number(item.amountShare);
+          const amountYoy = Number(item.amountYoy);
+          if (!productName || !Number.isFinite(amount)) {
+            return null;
+          }
+          return {
+            productName,
+            amount,
+            amountShare: Number.isFinite(amountShare) ? amountShare : null,
+            amountYoy: Number.isFinite(amountYoy) ? amountYoy : null,
+          };
+        })
+        .filter((item) => item !== null)
+        .slice(0, 2)
+    : [];
+  const coverage = {
+    hasMonthlyFluctuation:
+      typeof naturalMini?.coverage?.hasMonthlyFluctuation === "boolean"
+        ? naturalMini.coverage.hasMonthlyFluctuation
+        : monthlyFluctuation.length > 0,
+    hasProductContribution:
+      typeof naturalMini?.coverage?.hasProductContribution === "boolean"
+        ? naturalMini.coverage.hasProductContribution
+        : topProductContribution.length > 0,
+    monthCount: Number.isFinite(Number(naturalMini?.coverage?.monthCount))
+      ? Math.max(0, Math.floor(Number(naturalMini.coverage.monthCount)))
+      : monthlyFluctuation.length,
+  };
+  return {
+    monthlyFluctuation,
+    topProductContribution,
+    coverage,
+  };
+}
+
 function sanitizeScope(rawScope) {
   const scope = rawScope && typeof rawScope === "object" ? rawScope : {};
   const levelCandidate = trimString(scope.level).toLowerCase();
@@ -445,6 +515,7 @@ function sanitizeBusiness(rawBusiness) {
     trend: business.trend && typeof business.trend === "object" ? business.trend : {},
     evidenceTop: sanitizeEvidenceRefs(business.evidenceTop, 3),
     riskTop: sanitizeStringList(business.riskTop, 4),
+    naturalMini: sanitizeNaturalMini(business.naturalMini),
     outline: business.outline && typeof business.outline === "object" ? business.outline : {},
     legacyContext,
   };
@@ -829,6 +900,116 @@ function buildNaturalDirectLead(message, contextV1, posture) {
   return "先说结论：当前整体表现基本稳定，但仍有优化空间。";
 }
 
+function formatSignedPercentFromRatio(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  const percentValue = Math.abs(parsed * 100);
+  const sign = parsed > 0 ? "+" : parsed < 0 ? "-" : "";
+  return `${sign}${percentValue.toFixed(1)}%`;
+}
+
+function describeNaturalMiniEvidence(contextV1, detailDemand) {
+  const monthlyFluctuation = Array.isArray(contextV1?.business?.naturalMini?.monthlyFluctuation)
+    ? contextV1.business.naturalMini.monthlyFluctuation
+    : [];
+  const topProductContribution = Array.isArray(contextV1?.business?.naturalMini?.topProductContribution)
+    ? contextV1.business.naturalMini.topProductContribution
+    : [];
+  const evidenceParts = [];
+  if (monthlyFluctuation.length > 0) {
+    const latest = monthlyFluctuation[monthlyFluctuation.length - 1];
+    const previous = monthlyFluctuation.length >= 2 ? monthlyFluctuation[monthlyFluctuation.length - 2] : null;
+    const latestMomText = formatSignedPercentFromRatio(latest?.amountMom);
+    if (latest?.ym && latestMomText) {
+      evidenceParts.push(`${latest.ym} 环比 ${latestMomText}`);
+    }
+    if (detailDemand?.monthly === "strong" && previous?.ym) {
+      const previousMomText = formatSignedPercentFromRatio(previous?.amountMom);
+      if (previousMomText) {
+        evidenceParts.push(`${previous.ym} 环比 ${previousMomText}`);
+      }
+    }
+  }
+  if (topProductContribution.length > 0) {
+    const top1 = topProductContribution[0];
+    const top2 = topProductContribution.length > 1 ? topProductContribution[1] : null;
+    const top1Share = formatSignedPercentFromRatio(top1?.amountShare);
+    if (trimString(top1?.productName)) {
+      evidenceParts.push(top1Share ? `${top1.productName} 贡献占比 ${top1Share}` : `${top1.productName} 贡献居前`);
+    }
+    if (detailDemand?.product === "strong" && top2 && trimString(top2.productName)) {
+      const top2Share = formatSignedPercentFromRatio(top2?.amountShare);
+      evidenceParts.push(top2Share ? `${top2.productName} 占比 ${top2Share}` : `${top2.productName} 贡献次高`);
+    }
+  }
+  return evidenceParts.slice(0, 2);
+}
+
+function classifyNaturalDetailDemand(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return {
+      monthly: "none",
+      product: "none",
+    };
+  }
+  const monthlyStrong = /(环比|同比|各月|每月|月度波动|增长率|百分比|具体数值|近两月明细|最近两个月具体|最近三个月具体)/i.test(
+    safeMessage,
+  );
+  const productStrong = /(具体产品|产品明细|哪个产品|top产品|产品贡献|品种贡献|产品占比)/i.test(safeMessage);
+  const monthlyWeak = !monthlyStrong && /(稳不稳|趋势|波动)/i.test(safeMessage);
+  const productWeak = !productStrong && /(来源|驱动|主要靠什么|靠什么带动)/i.test(safeMessage);
+  return {
+    monthly: monthlyStrong ? "strong" : monthlyWeak ? "weak" : "none",
+    product: productStrong ? "strong" : productWeak ? "weak" : "none",
+  };
+}
+
+function shouldAddNaturalGapHint(contextV1, detailDemand) {
+  const coverage = contextV1?.business?.naturalMini?.coverage || {};
+  const monthlyMissing =
+    detailDemand?.monthly === "strong" &&
+    !(coverage.hasMonthlyFluctuation === true) &&
+    !(coverage.monthCount > 0);
+  const productMissing = detailDemand?.product === "strong" && !(coverage.hasProductContribution === true);
+  const hasData = Boolean(contextV1?.quality?.hasData);
+  if (!hasData) {
+    return {
+      shouldHint: true,
+      hint: "当前可用数据仍不完整，我先给你总体判断；补齐明细后我可以进一步给出更精确结论。",
+      ruleHit: "gap_hint_no_data",
+    };
+  }
+  if (monthlyMissing && productMissing) {
+    return {
+      shouldHint: true,
+      hint: "目前缺少月度波动和产品贡献明细，这会明显影响结论精度；补齐后我可以给你更确定的判断。",
+      ruleHit: "gap_hint_monthly_product_strong_missing",
+    };
+  }
+  if (monthlyMissing) {
+    return {
+      shouldHint: true,
+      hint: "目前缺少你关注的月度波动明细，这会影响趋势判断精度；补齐后我可以给出更明确结论。",
+      ruleHit: "gap_hint_monthly_strong_missing",
+    };
+  }
+  if (productMissing) {
+    return {
+      shouldHint: true,
+      hint: "目前缺少你关注的产品贡献明细，这会影响归因准确度；补齐后我可以给出更具体判断。",
+      ruleHit: "gap_hint_product_strong_missing",
+    };
+  }
+  return {
+    shouldHint: false,
+    hint: "",
+    ruleHit: "",
+  };
+}
+
 function replaceLeadingSentence(text, nextSentence) {
   const safeText = trimString(text);
   const safeNextSentence = trimString(nextSentence);
@@ -896,23 +1077,22 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
         : NATURAL_POSTURES.JUDGE;
   const baseRuleHits = dedupeStringList(toneProfile?.ruleHits, 10);
   const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, 2);
+  const detailDemand = classifyNaturalDetailDemand(message);
+  const gapHint = shouldAddNaturalGapHint(contextV1, detailDemand);
+  const naturalMiniEvidenceParts = describeNaturalMiniEvidence(contextV1, detailDemand);
   const trendSummary =
     trimString(contextV1?.business?.trend?.summary) || trimString(contextV1?.business?.overview?.trendOverview?.summary);
   const overviewSummary =
     trimString(contextV1?.business?.overview?.kpi?.summary) || trimString(contextV1?.business?.overview?.summary);
   const fallbackSummary = overviewSummary || trendSummary || buildNaturalDirectLead(message, contextV1, safePosture);
-  const evidenceText =
-    evidenceRefs.length > 0
-      ? `主要依据是${evidenceRefs.map((item) => `${item.label}${item.value}`).join("，")}。`
-      : "";
+  const fallbackEvidenceParts = evidenceRefs.map((item) => `${item.label}${item.value}`);
+  const evidenceParts = naturalMiniEvidenceParts.length > 0 ? naturalMiniEvidenceParts : fallbackEvidenceParts;
+  const evidenceText = evidenceParts.length > 0 ? `主要依据是${evidenceParts.join("，")}。` : "";
   const disclaimerList = [];
-  if (!contextV1?.quality?.hasData) {
-    disclaimerList.push("当前数据仍不足");
+  if (gapHint.shouldHint && gapHint.hint) {
+    disclaimerList.push(gapHint.hint);
   }
-  if (Array.isArray(contextV1?.quality?.missingFields) && contextV1.quality.missingFields.length > 0) {
-    disclaimerList.push("部分口径信息还不完整");
-  }
-  const disclaimerText = disclaimerList.length > 0 ? `${disclaimerList.join("，")}。` : "";
+  const disclaimerText = disclaimerList.length > 0 ? `${disclaimerList[0]}` : "";
   const questionHint = trimString(message) ? "" : "你可以先告诉我你关心的时间范围或指标。";
   const fallbackReply = [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
   const normalizedModel = normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile);
@@ -926,6 +1106,9 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
       "first_sentence_direct_answer",
       "conclusion_first",
       "evidence_natural_embed",
+      detailDemand.monthly !== "none" ? `detail_monthly_${detailDemand.monthly}` : "",
+      detailDemand.product !== "none" ? `detail_product_${detailDemand.product}` : "",
+      gapHint.ruleHit || "",
       ...normalizedModel.ruleHits,
       actionSuggested ? "light_action_suggested" : "",
     ],
@@ -1522,6 +1705,7 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
       trend: contextV1?.business?.trend || {},
       evidenceTop: contextV1?.business?.evidenceTop || [],
       riskTop: contextV1?.business?.riskTop || [],
+      naturalMini: contextV1?.business?.naturalMini || {},
     },
     quality: contextV1?.quality || {},
   };
@@ -1534,6 +1718,8 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "首句必须直接回答用户问题，禁止先讲流程或系统状态。",
     "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
     "证据要求：只嵌入1-2条关键数据点，写成自然句，不做字段播报。",
+    "naturalMini.monthlyFluctuation.amountMom 为比例小数语义（例如 0.08 = 环比 +8%）。",
+    "不要机械播报 naturalMini 字段名；优先用它支撑判断，不强制逐项朗读。",
     "缺失信息表达：用业务语言说明，不要出现 scope.period、missingFields 等内部术语。",
     "去模板要求：避免重复固定开场句；若与上一轮开场重复，主动换一种直答句式。",
     postureRequirement,

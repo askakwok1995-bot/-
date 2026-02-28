@@ -1083,6 +1083,10 @@ async function initializeApp() {
   const AI_CHAT_MODE_EXTRA_TOP_N = 2;
   const AI_CHAT_MIN_CONTEXT_TREND_ITEMS = 1;
   const AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS = 1;
+  const AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT = 2;
+  const AI_CHAT_NATURAL_MONTHLY_MAX_COUNT = 3;
+  const AI_CHAT_NATURAL_TOP_PRODUCT_COUNT = 2;
+  const AI_CHAT_NATURAL_MINI_MAX_CHARS = 800;
 
   function clampText(value, maxChars = 0) {
     const text = String(value || "").trim();
@@ -1220,6 +1224,87 @@ async function initializeApp() {
           : [],
       })),
     };
+  }
+
+  function pickNaturalMonthlyCount(message) {
+    const safeMessage = String(message || "").trim();
+    if (!safeMessage) {
+      return AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT;
+    }
+    if (/(最近三个月|近三个月|3个月|三个月|近3个月)/i.test(safeMessage)) {
+      return AI_CHAT_NATURAL_MONTHLY_MAX_COUNT;
+    }
+    return AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT;
+  }
+
+  function toFiniteNumberOrNull(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function buildNaturalMiniContext(analysisContext, message) {
+    const snapshot = analysisContext?.snapshot && typeof analysisContext.snapshot === "object" ? analysisContext.snapshot : {};
+    const monthRows = Array.isArray(snapshot.monthRows) ? snapshot.monthRows : [];
+    const productRows = Array.isArray(snapshot.productRows) ? snapshot.productRows : [];
+
+    const monthlyCount = pickNaturalMonthlyCount(message);
+    const monthlyFluctuationRaw = monthRows
+      .slice(-AI_CHAT_NATURAL_MONTHLY_MAX_COUNT)
+      .map((row) => ({
+        ym: String(row?.ym || "").trim(),
+        amount: toFiniteNumberOrNull(row?.amount),
+        amountMom: toFiniteNumberOrNull(row?.amountMom), // ratio decimal: 0.08 = +8%
+      }))
+      .filter((row) => row.ym && row.amount !== null)
+      .slice(-monthlyCount);
+
+    const topProductContributionRaw = productRows
+      .slice(0, AI_CHAT_NATURAL_TOP_PRODUCT_COUNT)
+      .map((row, index) => {
+        const fallbackName =
+          String(row?.productCode || "").trim() ||
+          String(row?.id || "").trim() ||
+          `未知产品#${index + 1}`;
+        return {
+          productName: String(row?.productName || "").trim() || fallbackName,
+          amount: toFiniteNumberOrNull(row?.amount),
+          amountShare: toFiniteNumberOrNull(row?.amountShare),
+          amountYoy: toFiniteNumberOrNull(row?.amountYoy),
+        };
+      })
+      .filter((row) => row.productName && row.amount !== null);
+
+    let monthlyFluctuation = monthlyFluctuationRaw;
+    let topProductContribution = topProductContributionRaw;
+
+    const buildMini = () => ({
+      monthlyFluctuation,
+      topProductContribution,
+      coverage: {
+        hasMonthlyFluctuation: monthlyFluctuation.length > 0,
+        hasProductContribution: topProductContribution.length > 0,
+        monthCount: monthlyFluctuation.length,
+      },
+    });
+
+    let naturalMini = buildMini();
+    try {
+      let naturalMiniChars = JSON.stringify(naturalMini).length;
+      if (naturalMiniChars > AI_CHAT_NATURAL_MINI_MAX_CHARS) {
+        monthlyFluctuation = monthlyFluctuation.slice(-2);
+        topProductContribution = topProductContribution.slice(0, 1);
+        naturalMini = buildMini();
+        naturalMiniChars = JSON.stringify(naturalMini).length;
+        if (naturalMiniChars > AI_CHAT_NATURAL_MINI_MAX_CHARS) {
+          monthlyFluctuation = monthlyFluctuation.slice(-1);
+          naturalMini = buildMini();
+        }
+      }
+    } catch (_error) {
+      naturalMini = buildMini();
+    }
+
+    return naturalMini;
   }
 
   function buildAiChatContextPayload(mode, message, rangeOverride) {
@@ -1381,6 +1466,7 @@ async function initializeApp() {
       .map((item) => String(item.summary || item.title || "").trim())
       .filter((item) => item)
       .slice(0, 3);
+    const naturalMini = buildNaturalMiniContext(analysisContext, message);
     const hasData = Boolean(analysisContext?.meta?.hasData);
     const missingFields = [];
     if (!hasData) {
@@ -1434,6 +1520,7 @@ async function initializeApp() {
         },
         evidenceTop,
         riskTop,
+        naturalMini,
         outline: legacyPayload.outline,
         legacyContext: legacyPayload,
       },

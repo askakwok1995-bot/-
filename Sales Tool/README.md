@@ -305,6 +305,21 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "business": {
       "overview": {},
       "trend": {},
+      "naturalMini": {
+        "monthlyFluctuation": [
+          { "ym": "2026-02", "amount": 1832000, "amountMom": 0.08 },
+          { "ym": "2026-03", "amount": 1916000, "amountMom": 0.05 }
+        ],
+        "topProductContribution": [
+          { "productName": "产品A", "amount": 1320000, "amountShare": 0.23, "amountYoy": 0.11 },
+          { "productName": "产品B", "amount": 980000, "amountShare": 0.17, "amountYoy": 0.06 }
+        ],
+        "coverage": {
+          "hasMonthlyFluctuation": true,
+          "hasProductContribution": true,
+          "monthCount": 2
+        }
+      },
       "evidenceTop": [],
       "riskTop": [],
       "outline": {},
@@ -440,6 +455,8 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 自然回答语气层（v1，仅作用于 `natural_answer`）：
 - 目标：更像专业业务助手，保持“首句直答 + 结论先行 + 数据依据”，避免模板腔。
+- 实现原则：先回答，再补证据；只有证据缺失会显著影响结论可信度时，才提示缺口。
+- `naturalMini` 用于支撑判断，不用于强制字段播报。
 - 规则：
   - 首句直答（不先讲系统状态）
   - 结论 -> 依据 -> 边界 ->（可选）下一步
@@ -489,6 +506,19 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `posture`: `judge | explain | advise`
   - `ruleHits`: 本次命中的语气规则标记
   - `actionSuggested`: 是否自然包含了下一步动作建议
+
+`naturalMini` 口径说明（仅 natural 路径消费）：
+- `monthlyFluctuation.amountMom` 为比例小数（例如 `0.08 = 环比 +8%`）。
+- `topProductContribution.productName` 为空时，按顺序兜底：`productCode` -> `id` -> `未知产品#<rank>`。
+- 轻量约束：默认最近 2 个月（最多 3 个月）+ Top2 产品，避免上下文增重。
+
+缺口提示门控（仅 natural 路径）：
+- 采用 `detailDemand` 强/弱信号分级：
+  - 月度强信号：`环比/同比/各月/每月/月度波动/增长率/百分比/具体数值/近两月明细`
+  - 产品强信号：`具体产品/产品明细/哪个产品/Top产品/产品贡献/品种贡献`
+  - 弱信号：`稳不稳/趋势/波动/来源/驱动`
+- 仅当“强信号 + 对应 coverage 缺失 + 会显著影响结论可信度”时才提示缺口。
+- 对总体判断类问题（如“整体如何/最近稳不稳/最大问题是什么”）默认不主动补“缺明细”句。
 
 失败响应（示例）：
 ```json
