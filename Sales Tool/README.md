@@ -307,17 +307,19 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
       "trend": {},
       "naturalMini": {
         "monthlyFluctuation": [
-          { "ym": "2026-02", "amount": 1832000, "amountMom": 0.08 },
-          { "ym": "2026-03", "amount": 1916000, "amountMom": 0.05 }
+          { "ym": "2026-02", "amount": 1832000, "amountMom": 0.08, "quantity": 12400, "quantityMom": 0.06 },
+          { "ym": "2026-03", "amount": 1916000, "amountMom": 0.05, "quantity": 12950, "quantityMom": 0.04 }
         ],
         "topProductContribution": [
-          { "productName": "产品A", "amount": 1320000, "amountShare": 0.23, "amountYoy": 0.11 },
-          { "productName": "产品B", "amount": 980000, "amountShare": 0.17, "amountYoy": 0.06 }
+          { "productName": "产品A", "amount": 1320000, "amountShare": 0.23, "amountYoy": 0.11, "quantity": 4100, "quantityShare": 0.21, "quantityYoy": 0.09 },
+          { "productName": "产品B", "amount": 980000, "amountShare": 0.17, "amountYoy": 0.06, "quantity": 3200, "quantityShare": 0.16, "quantityYoy": 0.05 }
         ],
         "coverage": {
           "hasMonthlyFluctuation": true,
           "hasProductContribution": true,
-          "monthCount": 2
+          "monthCount": 2,
+          "hasQuantityFluctuation": true,
+          "hasProductQuantity": true
         }
       },
       "evidenceTop": [],
@@ -509,15 +511,19 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 `naturalMini` 口径说明（仅 natural 路径消费）：
 - `monthlyFluctuation.amountMom` 为比例小数（例如 `0.08 = 环比 +8%`）。
+- `monthlyFluctuation.quantity` 为销量（盒），`quantityMom` 为比例小数（例如 `0.08 = 销量环比 +8%`）。
 - `topProductContribution.productName` 为空时，按顺序兜底：`productCode` -> `id` -> `未知产品#<rank>`。
+- `topProductContribution.quantity/quantityShare/quantityYoy` 为产品销量贡献口径（盒数与比例）。
 - 轻量约束：默认最近 2 个月（最多 3 个月）+ Top2 产品，避免上下文增重。
 
 缺口提示门控（仅 natural 路径）：
 - 采用 `detailDemand` 强/弱信号分级：
   - 月度强信号：`环比/同比/各月/每月/月度波动/增长率/百分比/具体数值/近两月明细`
   - 产品强信号：`具体产品/产品明细/哪个产品/Top产品/产品贡献/品种贡献`
+  - 量口径强信号：`销量/盒数/出货量/量环比/量同比/具体盒数/销量明细`
   - 弱信号：`稳不稳/趋势/波动/来源/驱动`
 - 仅当“强信号 + 对应 coverage 缺失 + 会显著影响结论可信度”时才提示缺口。
+- 对“量口径”问题，仅在用户明确问量明细且 `hasQuantityFluctuation/hasProductQuantity` 缺失时提示缺口。
 - 对总体判断类问题（如“整体如何/最近稳不稳/最大问题是什么”）默认不主动补“缺明细”句。
 
 失败响应（示例）：

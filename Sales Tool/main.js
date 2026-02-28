@@ -1254,6 +1254,8 @@ async function initializeApp() {
         ym: String(row?.ym || "").trim(),
         amount: toFiniteNumberOrNull(row?.amount),
         amountMom: toFiniteNumberOrNull(row?.amountMom), // ratio decimal: 0.08 = +8%
+        quantity: toFiniteNumberOrNull(row?.quantity),
+        quantityMom: toFiniteNumberOrNull(row?.quantityMom), // ratio decimal: 0.08 = +8%
       }))
       .filter((row) => row.ym && row.amount !== null)
       .slice(-monthlyCount);
@@ -1270,6 +1272,9 @@ async function initializeApp() {
           amount: toFiniteNumberOrNull(row?.amount),
           amountShare: toFiniteNumberOrNull(row?.amountShare),
           amountYoy: toFiniteNumberOrNull(row?.amountYoy),
+          quantity: toFiniteNumberOrNull(row?.quantity),
+          quantityShare: toFiniteNumberOrNull(row?.quantityShare),
+          quantityYoy: toFiniteNumberOrNull(row?.quantityYoy),
         };
       })
       .filter((row) => row.productName && row.amount !== null);
@@ -1284,6 +1289,8 @@ async function initializeApp() {
         hasMonthlyFluctuation: monthlyFluctuation.length > 0,
         hasProductContribution: topProductContribution.length > 0,
         monthCount: monthlyFluctuation.length,
+        hasQuantityFluctuation: monthlyFluctuation.some((item) => item.quantity !== null),
+        hasProductQuantity: topProductContribution.some((item) => item.quantity !== null),
       },
     });
 

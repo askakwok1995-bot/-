@@ -404,6 +404,8 @@ function sanitizeNaturalMini(rawNaturalMini) {
           const ym = trimString(item.ym);
           const amount = Number(item.amount);
           const amountMom = Number(item.amountMom);
+          const quantity = Number(item.quantity);
+          const quantityMom = Number(item.quantityMom);
           if (!ym || !Number.isFinite(amount)) {
             return null;
           }
@@ -411,6 +413,8 @@ function sanitizeNaturalMini(rawNaturalMini) {
             ym,
             amount,
             amountMom: Number.isFinite(amountMom) ? amountMom : null,
+            quantity: Number.isFinite(quantity) ? quantity : null,
+            quantityMom: Number.isFinite(quantityMom) ? quantityMom : null,
           };
         })
         .filter((item) => item !== null)
@@ -430,6 +434,9 @@ function sanitizeNaturalMini(rawNaturalMini) {
           const amount = Number(item.amount);
           const amountShare = Number(item.amountShare);
           const amountYoy = Number(item.amountYoy);
+          const quantity = Number(item.quantity);
+          const quantityShare = Number(item.quantityShare);
+          const quantityYoy = Number(item.quantityYoy);
           if (!productName || !Number.isFinite(amount)) {
             return null;
           }
@@ -438,6 +445,9 @@ function sanitizeNaturalMini(rawNaturalMini) {
             amount,
             amountShare: Number.isFinite(amountShare) ? amountShare : null,
             amountYoy: Number.isFinite(amountYoy) ? amountYoy : null,
+            quantity: Number.isFinite(quantity) ? quantity : null,
+            quantityShare: Number.isFinite(quantityShare) ? quantityShare : null,
+            quantityYoy: Number.isFinite(quantityYoy) ? quantityYoy : null,
           };
         })
         .filter((item) => item !== null)
@@ -455,6 +465,14 @@ function sanitizeNaturalMini(rawNaturalMini) {
     monthCount: Number.isFinite(Number(naturalMini?.coverage?.monthCount))
       ? Math.max(0, Math.floor(Number(naturalMini.coverage.monthCount)))
       : monthlyFluctuation.length,
+    hasQuantityFluctuation:
+      typeof naturalMini?.coverage?.hasQuantityFluctuation === "boolean"
+        ? naturalMini.coverage.hasQuantityFluctuation
+        : monthlyFluctuation.some((item) => item.quantity !== null),
+    hasProductQuantity:
+      typeof naturalMini?.coverage?.hasProductQuantity === "boolean"
+        ? naturalMini.coverage.hasProductQuantity
+        : topProductContribution.some((item) => item.quantity !== null),
   };
   return {
     monthlyFluctuation,
@@ -910,6 +928,20 @@ function formatSignedPercentFromRatio(value) {
   return `${sign}${percentValue.toFixed(1)}%`;
 }
 
+function formatQuantityBoxes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  if (Math.abs(parsed) >= 1000) {
+    return `${Math.round(parsed).toLocaleString("zh-CN")}盒`;
+  }
+  if (Number.isInteger(parsed)) {
+    return `${parsed}盒`;
+  }
+  return `${parsed.toFixed(1)}盒`;
+}
+
 function describeNaturalMiniEvidence(contextV1, detailDemand) {
   const monthlyFluctuation = Array.isArray(contextV1?.business?.naturalMini?.monthlyFluctuation)
     ? contextV1.business.naturalMini.monthlyFluctuation
@@ -917,31 +949,82 @@ function describeNaturalMiniEvidence(contextV1, detailDemand) {
   const topProductContribution = Array.isArray(contextV1?.business?.naturalMini?.topProductContribution)
     ? contextV1.business.naturalMini.topProductContribution
     : [];
+  const prefersQuantity = detailDemand?.quantity === "strong";
   const evidenceParts = [];
   if (monthlyFluctuation.length > 0) {
     const latest = monthlyFluctuation[monthlyFluctuation.length - 1];
     const previous = monthlyFluctuation.length >= 2 ? monthlyFluctuation[monthlyFluctuation.length - 2] : null;
-    const latestMomText = formatSignedPercentFromRatio(latest?.amountMom);
-    if (latest?.ym && latestMomText) {
-      evidenceParts.push(`${latest.ym} 环比 ${latestMomText}`);
-    }
-    if (detailDemand?.monthly === "strong" && previous?.ym) {
-      const previousMomText = formatSignedPercentFromRatio(previous?.amountMom);
-      if (previousMomText) {
-        evidenceParts.push(`${previous.ym} 环比 ${previousMomText}`);
+    if (prefersQuantity) {
+      const latestQtyText = formatQuantityBoxes(latest?.quantity);
+      const latestQtyMomText = formatSignedPercentFromRatio(latest?.quantityMom);
+      if (latest?.ym && (latestQtyMomText || latestQtyText)) {
+        evidenceParts.push(
+          latestQtyMomText
+            ? `${latest.ym} 销量环比 ${latestQtyMomText}`
+            : `${latest.ym} 销量约 ${latestQtyText}`,
+        );
+      }
+      if (detailDemand?.monthly === "strong" && previous?.ym) {
+        const previousQtyMomText = formatSignedPercentFromRatio(previous?.quantityMom);
+        if (previousQtyMomText) {
+          evidenceParts.push(`${previous.ym} 销量环比 ${previousQtyMomText}`);
+        }
+      }
+    } else {
+      const latestMomText = formatSignedPercentFromRatio(latest?.amountMom);
+      if (latest?.ym && latestMomText) {
+        evidenceParts.push(`${latest.ym} 金额环比 ${latestMomText}`);
+      }
+      if (detailDemand?.monthly === "strong" && previous?.ym) {
+        const previousMomText = formatSignedPercentFromRatio(previous?.amountMom);
+        if (previousMomText) {
+          evidenceParts.push(`${previous.ym} 金额环比 ${previousMomText}`);
+        }
+      }
+      if (evidenceParts.length < 2) {
+        const latestQtyMomText = formatSignedPercentFromRatio(latest?.quantityMom);
+        if (latest?.ym && latestQtyMomText) {
+          evidenceParts.push(`${latest.ym} 销量环比 ${latestQtyMomText}`);
+        }
       }
     }
   }
   if (topProductContribution.length > 0) {
     const top1 = topProductContribution[0];
     const top2 = topProductContribution.length > 1 ? topProductContribution[1] : null;
-    const top1Share = formatSignedPercentFromRatio(top1?.amountShare);
-    if (trimString(top1?.productName)) {
-      evidenceParts.push(top1Share ? `${top1.productName} 贡献占比 ${top1Share}` : `${top1.productName} 贡献居前`);
-    }
-    if (detailDemand?.product === "strong" && top2 && trimString(top2.productName)) {
-      const top2Share = formatSignedPercentFromRatio(top2?.amountShare);
-      evidenceParts.push(top2Share ? `${top2.productName} 占比 ${top2Share}` : `${top2.productName} 贡献次高`);
+    if (prefersQuantity) {
+      const top1Share = formatSignedPercentFromRatio(top1?.quantityShare);
+      const top1Quantity = formatQuantityBoxes(top1?.quantity);
+      if (trimString(top1?.productName)) {
+        if (top1Share) {
+          evidenceParts.push(`${top1.productName} 盒数贡献占比 ${top1Share}`);
+        } else if (top1Quantity) {
+          evidenceParts.push(`${top1.productName} 销量约 ${top1Quantity}`);
+        }
+      }
+      if (detailDemand?.product === "strong" && top2 && trimString(top2.productName)) {
+        const top2Share = formatSignedPercentFromRatio(top2?.quantityShare);
+        const top2Quantity = formatQuantityBoxes(top2?.quantity);
+        if (top2Share) {
+          evidenceParts.push(`${top2.productName} 盒数占比 ${top2Share}`);
+        } else if (top2Quantity) {
+          evidenceParts.push(`${top2.productName} 销量约 ${top2Quantity}`);
+        }
+      }
+    } else {
+      const top1Share = formatSignedPercentFromRatio(top1?.amountShare);
+      if (trimString(top1?.productName)) {
+        evidenceParts.push(top1Share ? `${top1.productName} 贡献占比 ${top1Share}` : `${top1.productName} 贡献居前`);
+      }
+      if (detailDemand?.product === "strong" && top2 && trimString(top2.productName)) {
+        const top2Share = formatSignedPercentFromRatio(top2?.amountShare);
+        evidenceParts.push(top2Share ? `${top2.productName} 占比 ${top2Share}` : `${top2.productName} 贡献次高`);
+      } else if (evidenceParts.length < 2 && trimString(top1?.productName)) {
+        const top1QuantityShare = formatSignedPercentFromRatio(top1?.quantityShare);
+        if (top1QuantityShare) {
+          evidenceParts.push(`${top1.productName} 盒数占比 ${top1QuantityShare}`);
+        }
+      }
     }
   }
   return evidenceParts.slice(0, 2);
@@ -953,22 +1036,34 @@ function classifyNaturalDetailDemand(message) {
     return {
       monthly: "none",
       product: "none",
+      quantity: "none",
     };
   }
   const monthlyStrong = /(环比|同比|各月|每月|月度波动|增长率|百分比|具体数值|近两月明细|最近两个月具体|最近三个月具体)/i.test(
     safeMessage,
   );
   const productStrong = /(具体产品|产品明细|哪个产品|top产品|产品贡献|品种贡献|产品占比)/i.test(safeMessage);
-  const monthlyWeak = !monthlyStrong && /(稳不稳|趋势|波动)/i.test(safeMessage);
+  const quantityStrong = /(销量|盒数|出货量|量环比|量同比|具体盒数|销量明细|盒数明细)/i.test(safeMessage);
+  const monthlyWeak = !monthlyStrong && /(稳不稳|趋势|波动|回升|下滑|增长|下降)/i.test(safeMessage);
   const productWeak = !productStrong && /(来源|驱动|主要靠什么|靠什么带动)/i.test(safeMessage);
+  const quantityWeak = !quantityStrong && /(销量|盒数|出货量)/i.test(safeMessage);
   return {
     monthly: monthlyStrong ? "strong" : monthlyWeak ? "weak" : "none",
     product: productStrong ? "strong" : productWeak ? "weak" : "none",
+    quantity: quantityStrong ? "strong" : quantityWeak ? "weak" : "none",
   };
 }
 
 function shouldAddNaturalGapHint(contextV1, detailDemand) {
   const coverage = contextV1?.business?.naturalMini?.coverage || {};
+  const hasQuantityFluctuation =
+    coverage.hasQuantityFluctuation === true ||
+    (Array.isArray(contextV1?.business?.naturalMini?.monthlyFluctuation) &&
+      contextV1.business.naturalMini.monthlyFluctuation.some((item) => Number.isFinite(Number(item?.quantity))));
+  const hasProductQuantity =
+    coverage.hasProductQuantity === true ||
+    (Array.isArray(contextV1?.business?.naturalMini?.topProductContribution) &&
+      contextV1.business.naturalMini.topProductContribution.some((item) => Number.isFinite(Number(item?.quantity))));
   const monthlyMissing =
     detailDemand?.monthly === "strong" &&
     !(coverage.hasMonthlyFluctuation === true) &&
@@ -981,6 +1076,29 @@ function shouldAddNaturalGapHint(contextV1, detailDemand) {
       hint: "当前可用数据仍不完整，我先给你总体判断；补齐明细后我可以进一步给出更精确结论。",
       ruleHit: "gap_hint_no_data",
     };
+  }
+  if (detailDemand?.quantity === "strong") {
+    if (detailDemand?.product === "strong" && !hasProductQuantity) {
+      return {
+        shouldHint: true,
+        hint: "目前缺少你关注的产品销量明细，这会影响量口径归因准确度；补齐后我可以给出更具体判断。",
+        ruleHit: "gap_hint_quantity_product_strong_missing",
+      };
+    }
+    if (detailDemand?.monthly !== "none" && !hasQuantityFluctuation) {
+      return {
+        shouldHint: true,
+        hint: "目前缺少你关注的月度销量波动明细，这会影响量口径趋势判断；补齐后我可以给出更明确结论。",
+        ruleHit: "gap_hint_quantity_monthly_strong_missing",
+      };
+    }
+    if (!hasQuantityFluctuation && !hasProductQuantity) {
+      return {
+        shouldHint: true,
+        hint: "目前缺少销量（盒数）明细，这会影响量口径判断精度；补齐后我可以给出更确定结论。",
+        ruleHit: "gap_hint_quantity_strong_missing",
+      };
+    }
   }
   if (monthlyMissing && productMissing) {
     return {
@@ -1108,6 +1226,7 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
       "evidence_natural_embed",
       detailDemand.monthly !== "none" ? `detail_monthly_${detailDemand.monthly}` : "",
       detailDemand.product !== "none" ? `detail_product_${detailDemand.product}` : "",
+      detailDemand.quantity !== "none" ? `detail_quantity_${detailDemand.quantity}` : "",
       gapHint.ruleHit || "",
       ...normalizedModel.ruleHits,
       actionSuggested ? "light_action_suggested" : "",
@@ -1719,6 +1838,7 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
     "证据要求：只嵌入1-2条关键数据点，写成自然句，不做字段播报。",
     "naturalMini.monthlyFluctuation.amountMom 为比例小数语义（例如 0.08 = 环比 +8%）。",
+    "naturalMini.monthlyFluctuation.quantityMom 同样是比例小数语义（例如 0.08 = 销量环比 +8%）。",
     "不要机械播报 naturalMini 字段名；优先用它支撑判断，不强制逐项朗读。",
     "缺失信息表达：用业务语言说明，不要出现 scope.period、missingFields 等内部术语。",
     "去模板要求：避免重复固定开场句；若与上一轮开场重复，主动换一种直答句式。",
