@@ -611,11 +611,33 @@ CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
 npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json
 ```
 
+#### 输入层加量实验（baseline / plus / rich）
+
+```bash
+# 对照组（baseline）
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --inputProfile baseline
+
+# 中档增强（plus）
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --inputProfile plus
+
+# 矩阵对比（baseline,plus,rich）并导出 JSON
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --matrix baseline,plus,rich --outputJson scripts/fixtures/chat-input-profile-matrix.result.json
+```
+
 可选参数：
 - `--delayMs 4000`：请求间隔（默认 4000ms）
 - `--stream false`：默认走非流式稳态路径
 - `--contextMode short|real`：上下文模式（默认 `short`）
 - `--contextFile <path>`：`contextMode=real` 时必填（也可用 `CHAT_CONTEXT_FILE`）
+- `--inputProfile baseline|plus|rich`：输入层档位（默认 `baseline`）
+- `--matrix baseline,plus,rich`：按档位矩阵依次执行 10 次压测并输出对比表
+- `--outputJson <path>`：导出机器可读对比结果（含每档明细与汇总）
 
 脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
 1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/firstTxAttempts/firstTxRetry/firstTxRecovered/elapsedMs`）
@@ -643,6 +665,10 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 13. 链路占比统计（overall + by mode）：
    - `shortCircuitRate`（命中 `meta.shortCircuitReason=empty_context` 占比）
    - `realContextRate`（未命中 short-circuit 占比）
+14. 矩阵模式附加输出（`--matrix`）：
+   - 输入档位对比表：失败率、超时率、`structured`、`finalStage=first`、`first output_truncated`、`p50/p95`
+   - `contextChars p50/p95`（若响应 meta 提供）
+   - 按档位的 `text_fallback by mode` 对比
 
 注意：
 - `short` 全绿仅代表短路兜底健康，不代表 Gemini 模型链路质量。
@@ -650,3 +676,10 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。
 - 当 `p95` 落在 `15000~18000ms` 区间时，脚本会输出详细耗时分布，默认进入“温和优化”而非激进降质。
 - 若命令返回 exit code `2`，代表压测完成但至少一个阈值未达标。
+- 三档输入层定义：
+  - `baseline`：当前线上口径（对照组）
+  - `plus`：中档增强（推荐候选）
+  - `rich`：高档增强（压力测试，不建议直接作为默认）
+- 默认上线决策建议：
+  - `plus` 仅在稳定性不回退且质量有实质提升时替代 `baseline`
+  - `rich` 通常只做压力档保留，不作为默认配置

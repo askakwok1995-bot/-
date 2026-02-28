@@ -107,5 +107,215 @@
         }
       ]
     }
+  },
+  "profiles": {
+    "baseline": {},
+    "plus": {
+      "base": {
+        "analysis": {
+          "notes": [
+            "plus 档：补充最近 4 个月趋势与更多证据样本。",
+            "用于验证输入层中档增强对质量与时延的影响。"
+          ]
+        }
+      },
+      "byMode": {
+        "briefing": {
+          "trend": {
+            "items": [
+              {
+                "label": "2 月环比",
+                "value": "+6.2%",
+                "insight": "恢复明显"
+              },
+              {
+                "label": "3 月环比",
+                "value": "+2.1%",
+                "insight": "增速趋稳"
+              }
+            ]
+          },
+          "keyEvidence": [
+            {
+              "label": "区间销售额",
+              "value": "581.6 万",
+              "insight": "同比微增，达成率未达标"
+            },
+            {
+              "label": "区间销售盒数",
+              "value": "12.43 万盒",
+              "insight": "量增快于额增"
+            }
+          ]
+        },
+        "diagnosis": {
+          "product": {
+            "items": [
+              {
+                "name": "产品 B",
+                "amountShare": "34%",
+                "achievementRate": "76%"
+              },
+              {
+                "name": "产品 D",
+                "amountShare": "18%",
+                "achievementRate": "89%"
+              }
+            ]
+          }
+        },
+        "action-plan": {
+          "hospital": {
+            "items": [
+              {
+                "name": "医院 D",
+                "amountShare": "18%",
+                "achievementRate": "72%"
+              },
+              {
+                "name": "医院 F",
+                "amountShare": "15%",
+                "achievementRate": "79%"
+              },
+              {
+                "name": "医院 K",
+                "amountShare": "11%",
+                "achievementRate": "81%"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "rich": {
+      "base": {
+        "analysis": {
+          "notes": [
+            "rich 档：高密度输入，用于压力测试与收益上限评估。",
+            "不建议直接作为默认生产配置。"
+          ]
+        }
+      },
+      "byMode": {
+        "briefing": {
+          "trend": {
+            "items": [
+              {
+                "label": "1 月环比",
+                "value": "-1.8%",
+                "insight": "节后恢复偏慢"
+              },
+              {
+                "label": "2 月环比",
+                "value": "+6.2%",
+                "insight": "恢复明显"
+              },
+              {
+                "label": "3 月环比",
+                "value": "+2.1%",
+                "insight": "增速趋稳"
+              }
+            ]
+          },
+          "keyEvidence": [
+            {
+              "label": "区间销售额",
+              "value": "581.6 万",
+              "insight": "同比微增，达成率未达标"
+            },
+            {
+              "label": "区间销售盒数",
+              "value": "12.43 万盒",
+              "insight": "量增快于额增"
+            },
+            {
+              "label": "重点产品贡献",
+              "value": "Top3 贡献 63%",
+              "insight": "头部集中度高"
+            }
+          ]
+        },
+        "diagnosis": {
+          "trend": {
+            "items": [
+              {
+                "label": "重点医院 A",
+                "value": "-8.4%",
+                "insight": "采购节奏后移"
+              },
+              {
+                "label": "重点医院 B",
+                "value": "+5.1%",
+                "insight": "学术活动带动"
+              },
+              {
+                "label": "重点医院 C",
+                "value": "-3.7%",
+                "insight": "竞品替代加剧"
+              }
+            ]
+          },
+          "product": {
+            "items": [
+              {
+                "name": "产品 B",
+                "amountShare": "34%",
+                "achievementRate": "76%"
+              },
+              {
+                "name": "产品 D",
+                "amountShare": "18%",
+                "achievementRate": "89%"
+              },
+              {
+                "name": "产品 F",
+                "amountShare": "11%",
+                "achievementRate": "71%"
+              }
+            ]
+          }
+        },
+        "action-plan": {
+          "hospital": {
+            "items": [
+              {
+                "name": "医院 D",
+                "amountShare": "18%",
+                "achievementRate": "72%"
+              },
+              {
+                "name": "医院 F",
+                "amountShare": "15%",
+                "achievementRate": "79%"
+              },
+              {
+                "name": "医院 K",
+                "amountShare": "11%",
+                "achievementRate": "81%"
+              },
+              {
+                "name": "医院 M",
+                "amountShare": "9%",
+                "achievementRate": "74%"
+              }
+            ]
+          },
+          "actionSeed": [
+            {
+              "title": "重点客户推进周计划",
+              "owner": "区域销售经理",
+              "timeline": "下周五前",
+              "metric": "关键客户拜访完成率 >= 90%"
+            },
+            {
+              "title": "低达成产品专项辅导",
+              "owner": "产品经理",
+              "timeline": "两周内",
+              "metric": "产品 F 达成率提升到 80%"
+            }
+          ]
+        }
+      }
+    }
   }
 }

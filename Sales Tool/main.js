@@ -1083,10 +1083,40 @@ async function initializeApp() {
   const AI_CHAT_MODE_EXTRA_TOP_N = 2;
   const AI_CHAT_MIN_CONTEXT_TREND_ITEMS = 1;
   const AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS = 1;
-  const AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT = 2;
-  const AI_CHAT_NATURAL_MONTHLY_MAX_COUNT = 3;
-  const AI_CHAT_NATURAL_TOP_PRODUCT_COUNT = 2;
-  const AI_CHAT_NATURAL_MINI_MAX_CHARS = 800;
+  const AI_CHAT_INPUT_PROFILES = Object.freeze({
+    BASELINE: "baseline",
+    PLUS: "plus",
+    RICH: "rich",
+  });
+  const AI_CHAT_INPUT_PROFILE_CONFIGS = Object.freeze({
+    [AI_CHAT_INPUT_PROFILES.BASELINE]: Object.freeze({
+      monthlyDefaultCount: 2,
+      monthlyMaxCount: 3,
+      topProductCount: 2,
+      evidenceTopMaxCount: 3,
+      naturalMiniMaxChars: 800,
+      includeOtherProductsSummary: false,
+      includeProductBandSummary: false,
+    }),
+    [AI_CHAT_INPUT_PROFILES.PLUS]: Object.freeze({
+      monthlyDefaultCount: 3,
+      monthlyMaxCount: 4,
+      topProductCount: 4,
+      evidenceTopMaxCount: 5,
+      naturalMiniMaxChars: 1200,
+      includeOtherProductsSummary: true,
+      includeProductBandSummary: false,
+    }),
+    [AI_CHAT_INPUT_PROFILES.RICH]: Object.freeze({
+      monthlyDefaultCount: 4,
+      monthlyMaxCount: 6,
+      topProductCount: 8,
+      evidenceTopMaxCount: 8,
+      naturalMiniMaxChars: 1600,
+      includeOtherProductsSummary: true,
+      includeProductBandSummary: true,
+    }),
+  });
 
   function clampText(value, maxChars = 0) {
     const text = String(value || "").trim();
@@ -1226,15 +1256,45 @@ async function initializeApp() {
     };
   }
 
-  function pickNaturalMonthlyCount(message) {
+  function normalizeChatInputProfile(profile) {
+    const candidate = String(profile || "").trim().toLowerCase();
+    if (
+      candidate === AI_CHAT_INPUT_PROFILES.BASELINE ||
+      candidate === AI_CHAT_INPUT_PROFILES.PLUS ||
+      candidate === AI_CHAT_INPUT_PROFILES.RICH
+    ) {
+      return candidate;
+    }
+    return AI_CHAT_INPUT_PROFILES.BASELINE;
+  }
+
+  function getChatInputProfileConfig(profile) {
+    const safeProfile = normalizeChatInputProfile(profile);
+    return AI_CHAT_INPUT_PROFILE_CONFIGS[safeProfile] || AI_CHAT_INPUT_PROFILE_CONFIGS[AI_CHAT_INPUT_PROFILES.BASELINE];
+  }
+
+  function pickNaturalMonthlyCount(message, profileConfig) {
     const safeMessage = String(message || "").trim();
+    const defaultCountRaw = Number(profileConfig?.monthlyDefaultCount);
+    const maxCountRaw = Number(profileConfig?.monthlyMaxCount);
+    const defaultCount = Number.isFinite(defaultCountRaw) && defaultCountRaw > 0 ? Math.floor(defaultCountRaw) : 2;
+    const maxCount = Number.isFinite(maxCountRaw) && maxCountRaw > 0 ? Math.floor(maxCountRaw) : 3;
     if (!safeMessage) {
-      return AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT;
+      return defaultCount;
+    }
+    if (/(最近六个月|近六个月|6个月|六个月|近6个月)/i.test(safeMessage)) {
+      return Math.min(6, maxCount);
+    }
+    if (/(最近五个月|近五个月|5个月|五个月|近5个月)/i.test(safeMessage)) {
+      return Math.min(5, maxCount);
+    }
+    if (/(最近四个月|近四个月|4个月|四个月|近4个月)/i.test(safeMessage)) {
+      return Math.min(4, maxCount);
     }
     if (/(最近三个月|近三个月|3个月|三个月|近3个月)/i.test(safeMessage)) {
-      return AI_CHAT_NATURAL_MONTHLY_MAX_COUNT;
+      return Math.min(3, maxCount);
     }
-    return AI_CHAT_NATURAL_MONTHLY_DEFAULT_COUNT;
+    return defaultCount;
   }
 
   function toFiniteNumberOrNull(value) {
@@ -1242,14 +1302,17 @@ async function initializeApp() {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function buildNaturalMiniContext(analysisContext, message) {
+  function buildNaturalMiniContext(analysisContext, message, inputProfile) {
+    const profileConfig = getChatInputProfileConfig(inputProfile);
     const snapshot = analysisContext?.snapshot && typeof analysisContext.snapshot === "object" ? analysisContext.snapshot : {};
     const monthRows = Array.isArray(snapshot.monthRows) ? snapshot.monthRows : [];
     const productRows = Array.isArray(snapshot.productRows) ? snapshot.productRows : [];
 
-    const monthlyCount = pickNaturalMonthlyCount(message);
+    const monthlyCount = pickNaturalMonthlyCount(message, profileConfig);
+    const monthlyMaxCount = Number(profileConfig.monthlyMaxCount);
+    const topProductCount = Number(profileConfig.topProductCount);
     const monthlyFluctuationRaw = monthRows
-      .slice(-AI_CHAT_NATURAL_MONTHLY_MAX_COUNT)
+      .slice(-(Number.isFinite(monthlyMaxCount) && monthlyMaxCount > 0 ? Math.floor(monthlyMaxCount) : 3))
       .map((row) => ({
         ym: String(row?.ym || "").trim(),
         amount: toFiniteNumberOrNull(row?.amount),
@@ -1261,7 +1324,7 @@ async function initializeApp() {
       .slice(-monthlyCount);
 
     const topProductContributionRaw = productRows
-      .slice(0, AI_CHAT_NATURAL_TOP_PRODUCT_COUNT)
+      .slice(0, Number.isFinite(topProductCount) && topProductCount > 0 ? Math.floor(topProductCount) : 2)
       .map((row, index) => {
         const fallbackName =
           String(row?.productCode || "").trim() ||
@@ -1279,12 +1342,64 @@ async function initializeApp() {
       })
       .filter((row) => row.productName && row.amount !== null);
 
+    const totalProductAmount = productRows.reduce((sum, row) => {
+      const amount = toFiniteNumberOrNull(row?.amount);
+      return amount === null ? sum : sum + amount;
+    }, 0);
+    const totalProductQuantity = productRows.reduce((sum, row) => {
+      const quantity = toFiniteNumberOrNull(row?.quantity);
+      return quantity === null ? sum : sum + quantity;
+    }, 0);
     let monthlyFluctuation = monthlyFluctuationRaw;
     let topProductContribution = topProductContributionRaw;
+    let otherProductsSummary = null;
+    let productBandSummary = null;
+
+    if (profileConfig.includeOtherProductsSummary) {
+      const topAmount = topProductContribution.reduce((sum, row) => sum + (toFiniteNumberOrNull(row.amount) || 0), 0);
+      const topQuantity = topProductContribution.reduce((sum, row) => sum + (toFiniteNumberOrNull(row.quantity) || 0), 0);
+      const otherAmount = Math.max(0, totalProductAmount - topAmount);
+      const otherQuantity = Math.max(0, totalProductQuantity - topQuantity);
+      const otherAmountShare = totalProductAmount > 0 ? Number((otherAmount / totalProductAmount).toFixed(4)) : null;
+      const otherQuantityShare =
+        totalProductQuantity > 0 ? Number((otherQuantity / totalProductQuantity).toFixed(4)) : null;
+      otherProductsSummary = {
+        productCount: Math.max(0, productRows.length - topProductContribution.length),
+        otherAmountShare,
+        otherQuantityShare,
+      };
+    }
+
+    if (profileConfig.includeProductBandSummary) {
+      const headRows = productRows.slice(0, 3);
+      const middleRows = productRows.slice(3, 8);
+      const tailRows = productRows.slice(8);
+      const sumAmount = (rows) =>
+        rows.reduce((sum, row) => sum + (toFiniteNumberOrNull(row?.amount) || 0), 0);
+      const sumQuantity = (rows) =>
+        rows.reduce((sum, row) => sum + (toFiniteNumberOrNull(row?.quantity) || 0), 0);
+      const toShare = (part, total) => (total > 0 ? Number((part / total).toFixed(4)) : null);
+      productBandSummary = {
+        head: {
+          amountShare: toShare(sumAmount(headRows), totalProductAmount),
+          quantityShare: toShare(sumQuantity(headRows), totalProductQuantity),
+        },
+        middle: {
+          amountShare: toShare(sumAmount(middleRows), totalProductAmount),
+          quantityShare: toShare(sumQuantity(middleRows), totalProductQuantity),
+        },
+        tail: {
+          amountShare: toShare(sumAmount(tailRows), totalProductAmount),
+          quantityShare: toShare(sumQuantity(tailRows), totalProductQuantity),
+        },
+      };
+    }
 
     const buildMini = () => ({
       monthlyFluctuation,
       topProductContribution,
+      otherProductsSummary,
+      productBandSummary,
       coverage: {
         hasMonthlyFluctuation: monthlyFluctuation.length > 0,
         hasProductContribution: topProductContribution.length > 0,
@@ -1296,14 +1411,29 @@ async function initializeApp() {
 
     let naturalMini = buildMini();
     try {
+      const naturalMiniMaxCharsRaw = Number(profileConfig.naturalMiniMaxChars);
+      const naturalMiniMaxChars =
+        Number.isFinite(naturalMiniMaxCharsRaw) && naturalMiniMaxCharsRaw > 0
+          ? Math.floor(naturalMiniMaxCharsRaw)
+          : 800;
       let naturalMiniChars = JSON.stringify(naturalMini).length;
-      if (naturalMiniChars > AI_CHAT_NATURAL_MINI_MAX_CHARS) {
+      if (naturalMiniChars > naturalMiniMaxChars) {
         monthlyFluctuation = monthlyFluctuation.slice(-2);
         topProductContribution = topProductContribution.slice(0, 1);
+        otherProductsSummary = otherProductsSummary
+          ? {
+              productCount: otherProductsSummary.productCount,
+              otherAmountShare: otherProductsSummary.otherAmountShare,
+              otherQuantityShare: otherProductsSummary.otherQuantityShare,
+            }
+          : null;
+        productBandSummary = null;
         naturalMini = buildMini();
         naturalMiniChars = JSON.stringify(naturalMini).length;
-        if (naturalMiniChars > AI_CHAT_NATURAL_MINI_MAX_CHARS) {
+        if (naturalMiniChars > naturalMiniMaxChars) {
           monthlyFluctuation = monthlyFluctuation.slice(-1);
+          topProductContribution = topProductContribution.slice(0, 1);
+          otherProductsSummary = null;
           naturalMini = buildMini();
         }
       }
@@ -1314,9 +1444,11 @@ async function initializeApp() {
     return naturalMini;
   }
 
-  function buildAiChatContextPayload(mode, message, rangeOverride) {
+  function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_INPUT_PROFILES.BASELINE) {
     const requestMode = sanitizeChatRequestMode(mode);
     const safeMode = requestMode === CHAT_MODES.AUTO ? CHAT_MODES.BRIEFING : sanitizeChatMode(requestMode);
+    const safeInputProfile = normalizeChatInputProfile(inputProfile);
+    const profileConfig = getChatInputProfileConfig(safeInputProfile);
     const analysisContext = buildAnalyticsContext(rangeOverride);
     const kpi = getKpiOverview(analysisContext);
     const trend = getTrendInsights(analysisContext);
@@ -1444,6 +1576,11 @@ async function initializeApp() {
     }
 
     const evidenceTop = [];
+    const evidenceTopMaxCountRaw = Number(profileConfig.evidenceTopMaxCount);
+    const evidenceTopMaxCount =
+      Number.isFinite(evidenceTopMaxCountRaw) && evidenceTopMaxCountRaw > 0
+        ? Math.floor(evidenceTopMaxCountRaw)
+        : 3;
     if (keyEvidence && keyEvidence.label && keyEvidence.value) {
       evidenceTop.push({
         label: keyEvidence.label,
@@ -1467,13 +1604,13 @@ async function initializeApp() {
         value: String(firstEvidence.value || "").trim(),
         source: String(item.id || item.title || "trend").trim(),
       });
-      if (evidenceTop.length >= 3) break;
+      if (evidenceTop.length >= evidenceTopMaxCount) break;
     }
     const riskTop = compactRiskItems
       .map((item) => String(item.summary || item.title || "").trim())
       .filter((item) => item)
       .slice(0, 3);
-    const naturalMini = buildNaturalMiniContext(analysisContext, message);
+    const naturalMini = buildNaturalMiniContext(analysisContext, message, safeInputProfile);
     const hasData = Boolean(analysisContext?.meta?.hasData);
     const missingFields = [];
     if (!hasData) {
@@ -1536,6 +1673,7 @@ async function initializeApp() {
         confidence: hasData ? "high" : "low",
         missingFields,
         source: "reportRecords",
+        inputProfile: safeInputProfile,
       },
     };
   }
@@ -2033,6 +2171,10 @@ async function initializeApp() {
     const onDone = options && typeof options.onDone === "function" ? options.onDone : null;
     const onError = options && typeof options.onError === "function" ? options.onError : null;
     const history = sanitizeChatHistory(options && typeof options === "object" ? options.history : []);
+    const inputProfile =
+      options && typeof options === "object" && "inputProfile" in options
+        ? normalizeChatInputProfile(options.inputProfile)
+        : normalizeChatInputProfile(window.__SALES_TOOL_AI_INPUT_PROFILE__);
 
     const accessToken = await getChatAuthToken();
     if (!accessToken) {
@@ -2041,7 +2183,7 @@ async function initializeApp() {
 
     const requestBody = {
       message: safeMessage,
-      context: buildAiChatContextPayload(safeMode, safeMessage),
+      context: buildAiChatContextPayload(safeMode, safeMessage, null, inputProfile),
       mode: safeMode,
       stream: streamEnabled,
       history,

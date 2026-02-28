@@ -15,6 +15,10 @@ const UNKNOWN_SOURCE_SUFFIX = "(unknown_source)";
 const CONTEXT_MODE_SHORT = "short";
 const CONTEXT_MODE_REAL = "real";
 const SHORT_CIRCUIT_REASON_EMPTY_CONTEXT = "empty_context";
+const INPUT_PROFILE_BASELINE = "baseline";
+const INPUT_PROFILE_PLUS = "plus";
+const INPUT_PROFILE_RICH = "rich";
+const INPUT_PROFILES = Object.freeze([INPUT_PROFILE_BASELINE, INPUT_PROFILE_PLUS, INPUT_PROFILE_RICH]);
 
 const BASELINE_METRICS = Object.freeze({
   p50ElapsedMs: 30815,
@@ -84,11 +88,15 @@ function printHelp() {
       "  --stream     true/false，默认 false",
       "  --contextMode short|real，默认 short",
       "  --contextFile real 模式下的上下文 JSON 文件路径（也可用 CHAT_CONTEXT_FILE）",
+      "  --inputProfile baseline|plus|rich，默认 baseline",
+      "  --matrix     逗号分隔的输入档位矩阵，例如 baseline,plus,rich",
+      "  --outputJson 输出结果 JSON 文件路径（可选）",
       "  --help       显示帮助",
       "",
       "示例:",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json",
+      "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --matrix baseline,plus,rich --outputJson scripts/fixtures/chat-input-profile-matrix.result.json",
     ].join("\n"),
   );
 }
@@ -134,6 +142,26 @@ function normalizeContextMode(value, fallback = CONTEXT_MODE_SHORT) {
   return fallback;
 }
 
+function normalizeInputProfile(value, fallback = INPUT_PROFILE_BASELINE) {
+  const normalized = trim(value).toLowerCase();
+  if (INPUT_PROFILES.includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function parseMatrixProfiles(value) {
+  const safe = trim(value);
+  if (!safe) {
+    return [];
+  }
+  const profiles = safe
+    .split(",")
+    .map((item) => normalizeInputProfile(item, ""))
+    .filter((item) => INPUT_PROFILES.includes(item));
+  return Array.from(new Set(profiles));
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -147,6 +175,33 @@ function cloneObject(value) {
   } catch (_error) {
     return { ...value };
   }
+}
+
+function deepMerge(target, source) {
+  const output = isPlainObject(target) ? cloneObject(target) : {};
+  if (!isPlainObject(source)) {
+    return output;
+  }
+  for (const [key, value] of Object.entries(source)) {
+    if (isPlainObject(value) && isPlainObject(output[key])) {
+      output[key] = deepMerge(output[key], value);
+      continue;
+    }
+    if (isPlainObject(value)) {
+      output[key] = cloneObject(value);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      try {
+        output[key] = JSON.parse(JSON.stringify(value));
+      } catch (_error) {
+        output[key] = value.slice();
+      }
+      continue;
+    }
+    output[key] = value;
+  }
+  return output;
 }
 
 function loadContextFile(contextFileArg) {
@@ -179,17 +234,7 @@ function loadContextFile(contextFileArg) {
   };
 }
 
-function buildRequestContext(contextMode, testCase, options = {}) {
-  if (contextMode !== CONTEXT_MODE_REAL) {
-    return {};
-  }
-
-  const mode = trim(testCase?.mode);
-  const contextData = options?.contextData;
-  if (!isPlainObject(contextData)) {
-    throw new Error("contextMode=real 需要有效的 contextData 对象。");
-  }
-
+function resolveContextBlockByMode(contextData, mode) {
   const basePart = {};
   if (isPlainObject(contextData.base)) Object.assign(basePart, cloneObject(contextData.base));
   if (isPlainObject(contextData.common)) Object.assign(basePart, cloneObject(contextData.common));
@@ -205,12 +250,37 @@ function buildRequestContext(contextMode, testCase, options = {}) {
   }
 
   if (Object.keys(basePart).length > 0 || Object.keys(modePart).length > 0) {
-    return { ...basePart, ...modePart };
+    return deepMerge(basePart, modePart);
   }
   if (isPlainObject(contextData.context)) {
     return cloneObject(contextData.context);
   }
   return cloneObject(contextData);
+}
+
+function buildRequestContext(contextMode, testCase, options = {}) {
+  if (contextMode !== CONTEXT_MODE_REAL) {
+    return {};
+  }
+
+  const mode = trim(testCase?.mode);
+  const contextData = options?.contextData;
+  const inputProfile = normalizeInputProfile(options?.inputProfile, INPUT_PROFILE_BASELINE);
+  if (!isPlainObject(contextData)) {
+    throw new Error("contextMode=real 需要有效的 contextData 对象。");
+  }
+
+  let context = resolveContextBlockByMode(contextData, mode);
+  if (isPlainObject(contextData.profiles) && isPlainObject(contextData.profiles[inputProfile])) {
+    const profileContext = resolveContextBlockByMode(contextData.profiles[inputProfile], mode);
+    context = deepMerge(context, profileContext);
+  }
+
+  if (!isPlainObject(context.quality)) {
+    context.quality = {};
+  }
+  context.quality.inputProfile = inputProfile;
+  return context;
 }
 
 function sleep(ms) {
@@ -323,6 +393,8 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
   const totalDurationRaw = Number(meta?.totalDurationMs);
   const totalDurationMs =
     Number.isFinite(totalDurationRaw) && totalDurationRaw >= 0 ? Math.floor(totalDurationRaw) : toInt(durationMs, 0);
+  const contextCharsRaw = Number(meta?.contextChars);
+  const contextChars = Number.isFinite(contextCharsRaw) && contextCharsRaw >= 0 ? Math.floor(contextCharsRaw) : null;
   const elapsedMs = toInt(durationMs, 0);
   const firstTransportAttemptsRaw = Number(meta?.firstTransportAttempts ?? error?.firstTransportAttempts);
   const firstTransportAttempts =
@@ -373,6 +445,7 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     waitFeeling: classifyWaitFeeling(durationMs),
     elapsedMs,
     totalDurationMs,
+    contextChars: contextChars === null ? "-" : String(contextChars),
     finalStage: finalStage || "-",
     metaFormatReason,
     attemptDiagnostics,
@@ -576,11 +649,11 @@ function getStageReasonCount(stageStats, reason) {
 }
 
 function printFirstHitQualityStats(reasonStats, totalRows = 0) {
+  const stats = buildFirstHitQualityStats(reasonStats, totalRows);
   const safeTotalRows =
     Number.isFinite(Number(totalRows)) && Number(totalRows) > 0 ? Math.floor(Number(totalRows)) : 1;
-  const overallFirstStats = reasonStats?.overall?.first || { entries: [] };
-  const overallStructuredOkCount = getStageReasonCount(overallFirstStats, "structured_ok");
-  const overallOutputTruncatedCount = getStageReasonCount(overallFirstStats, "output_truncated");
+  const overallStructuredOkCount = Math.round(stats.overall.firstStructuredOkRate * safeTotalRows);
+  const overallOutputTruncatedCount = Math.round(stats.overall.firstOutputTruncatedRate * safeTotalRows);
   console.log("\n=== 首轮命中质量（overall）===");
   console.log("| first structured_ok 占比 | first output_truncated 占比 |");
   console.log("|--------------------------|-----------------------------|");
@@ -588,18 +661,30 @@ function printFirstHitQualityStats(reasonStats, totalRows = 0) {
     `| ${toPercent(overallStructuredOkCount / safeTotalRows)} | ${toPercent(overallOutputTruncatedCount / safeTotalRows)} |`,
   );
 
-  const byMode = Array.isArray(reasonStats?.byMode) ? reasonStats.byMode : [];
   console.log("\n=== 首轮命中质量（by mode）===");
   console.log("| mode | 样本数 | first structured_ok 占比 | first output_truncated 占比 |");
   console.log("|------|--------|--------------------------|-----------------------------|");
+  for (const item of stats.byMode) {
+    console.log(
+      `| ${item.mode} | ${item.total} | ${toPercent(item.firstStructuredOkRate)} | ${toPercent(item.firstOutputTruncatedRate)} |`,
+    );
+  }
+
+  return stats;
+}
+
+function buildFirstHitQualityStats(reasonStats, totalRows = 0) {
+  const safeTotalRows =
+    Number.isFinite(Number(totalRows)) && Number(totalRows) > 0 ? Math.floor(Number(totalRows)) : 1;
+  const overallFirstStats = reasonStats?.overall?.first || { entries: [] };
+  const overallStructuredOkCount = getStageReasonCount(overallFirstStats, "structured_ok");
+  const overallOutputTruncatedCount = getStageReasonCount(overallFirstStats, "output_truncated");
+  const byMode = Array.isArray(reasonStats?.byMode) ? reasonStats.byMode : [];
   const modeRows = byMode.map((item) => {
     const total = Number.isFinite(Number(item?.total)) && Number(item.total) > 0 ? Math.floor(Number(item.total)) : 1;
     const firstStats = item?.first || { entries: [] };
     const structuredOkCount = getStageReasonCount(firstStats, "structured_ok");
     const outputTruncatedCount = getStageReasonCount(firstStats, "output_truncated");
-    console.log(
-      `| ${item.mode} | ${total} | ${toPercent(structuredOkCount / total)} | ${toPercent(outputTruncatedCount / total)} |`,
-    );
     return {
       mode: item.mode,
       total,
@@ -701,6 +786,17 @@ function calcPercentile(values, percentile) {
   const rank = Math.ceil((safePercentile / 100) * sorted.length) - 1;
   const index = Math.max(0, Math.min(sorted.length - 1, rank));
   return Math.floor(sorted[index]);
+}
+
+function buildContextCharStats(results) {
+  const values = (Array.isArray(results) ? results : [])
+    .map((row) => Number(row?.contextChars))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return {
+    count: values.length,
+    p50: calcPercentile(values, 50),
+    p95: calcPercentile(values, 95),
+  };
 }
 
 function buildModeStats(results) {
@@ -1056,44 +1152,75 @@ function printElapsedDistribution(results) {
   console.log(`- elapsedMs 升序: ${values.join(", ")}`);
 }
 
-async function run() {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help === "true") {
-    printHelp();
+function buildScenarioBundle(inputProfile, results) {
+  const summary = evaluateThresholds(results);
+  const modeStats = buildModeStats(results);
+  const reasonStats = buildAttemptReasonStats(results);
+  const firstHitQualityStats = buildFirstHitQualityStats(reasonStats, results.length);
+  const firstTransportStats = buildFirstTransportStats(results);
+  const chainPathStats = buildChainPathStats(results);
+  const contextCharStats = buildContextCharStats(results);
+  return {
+    inputProfile,
+    results,
+    summary,
+    modeStats,
+    reasonStats,
+    firstHitQualityStats,
+    firstTransportStats,
+    chainPathStats,
+    contextCharStats,
+  };
+}
+
+function printMatrixSummary(matrixBundles) {
+  const bundles = Array.isArray(matrixBundles) ? matrixBundles : [];
+  if (bundles.length === 0) {
     return;
   }
-
-  const endpoint = trim(args.endpoint || process.env.CHAT_API_ENDPOINT);
-  const token = trim(args.token || process.env.CHAT_AUTH_TOKEN || process.env.SUPABASE_ACCESS_TOKEN);
-  const delayMs = toInt(args.delayMs, DEFAULT_DELAY_MS);
-  const stream = toBool(args.stream, false);
-  const contextMode = normalizeContextMode(args.contextMode || process.env.CHAT_CONTEXT_MODE, CONTEXT_MODE_SHORT);
-  const contextFileArg = trim(args.contextFile || process.env.CHAT_CONTEXT_FILE);
-
-  if (!endpoint || !token) {
-    printHelp();
-    throw new Error("缺少 endpoint 或 token。请使用 --endpoint/--token 或环境变量 CHAT_API_ENDPOINT/CHAT_AUTH_TOKEN。");
+  console.log("\n=== 输入档位对比（overall）===");
+  console.log(
+    "| inputProfile | 失败率 | 超时率 | structured | finalStage=first | first output_truncated | p50 | p95 | contextChars p50 | contextChars p95 |",
+  );
+  console.log(
+    "|--------------|--------|--------|------------|------------------|------------------------|-----|-----|-----------------|-----------------|",
+  );
+  for (const bundle of bundles) {
+    const metrics = bundle.summary.metrics;
+    const contextStats = bundle.contextCharStats;
+    console.log(
+      `| ${bundle.inputProfile} | ${toPercent(metrics.failureRate)} | ${toPercent(metrics.timeoutRate)} | ${toPercent(metrics.structuredRate)} | ${toPercent(metrics.finalStageFirstRate)} | ${toPercent(bundle.firstHitQualityStats.overall.firstOutputTruncatedRate)} | ${metrics.p50ElapsedMs}ms | ${metrics.p95ElapsedMs}ms | ${contextStats.p50 || 0} | ${contextStats.p95 || 0} |`,
+    );
   }
 
-  let contextOptions = {
-    contextMode,
-    contextFilePath: "",
-    contextData: null,
-  };
-  if (contextMode === CONTEXT_MODE_REAL) {
-    const loadedContext = loadContextFile(contextFileArg);
-    contextOptions = {
-      contextMode,
-      contextFilePath: loadedContext.resolvedPath,
-      contextData: loadedContext.contextData,
-    };
+  console.log("\n=== 输入档位对比（by mode text_fallback）===");
+  console.log("| inputProfile | briefing | diagnosis | action-plan |");
+  console.log("|--------------|----------|-----------|-------------|");
+  for (const bundle of bundles) {
+    const statMap = Object.fromEntries(bundle.modeStats.map((item) => [item.mode, item]));
+    const briefing = statMap.briefing ? toPercent(statMap.briefing.textFallbackRate) : "-";
+    const diagnosis = statMap.diagnosis ? toPercent(statMap.diagnosis.textFallbackRate) : "-";
+    const actionPlan = statMap["action-plan"] ? toPercent(statMap["action-plan"].textFallbackRate) : "-";
+    console.log(`| ${bundle.inputProfile} | ${briefing} | ${diagnosis} | ${actionPlan} |`);
   }
+}
 
+async function executeScenario(options) {
+  const endpoint = options.endpoint;
+  const token = options.token;
+  const delayMs = options.delayMs;
+  const stream = options.stream;
+  const contextMode = options.contextMode;
+  const contextOptions = options.contextOptions;
+  const inputProfile = normalizeInputProfile(options.inputProfile, INPUT_PROFILE_BASELINE);
+  const logPrefix = options.logPrefix ? `[${options.logPrefix}] ` : "";
   const results = [];
   let history = [];
-  console.log(`开始执行 10 次稳态验证，endpoint: ${endpoint}`);
   console.log(
-    `配置: stream=${stream}, delayMs=${delayMs}, contextMode=${contextMode}${contextMode === CONTEXT_MODE_REAL ? `, contextFile=${contextOptions.contextFilePath}` : ""}`,
+    `${logPrefix}开始执行 10 次稳态验证，endpoint: ${endpoint}`,
+  );
+  console.log(
+    `${logPrefix}配置: stream=${stream}, delayMs=${delayMs}, contextMode=${contextMode}${contextMode === CONTEXT_MODE_REAL ? `, contextFile=${contextOptions.contextFilePath}` : ""}, inputProfile=${inputProfile}`,
   );
 
   for (let index = 0; index < TEST_CASES.length; index += 1) {
@@ -1102,7 +1229,10 @@ async function run() {
       message: testCase.message,
       mode: testCase.mode,
       stream,
-      context: buildRequestContext(contextMode, testCase, contextOptions),
+      context: buildRequestContext(contextMode, testCase, {
+        ...contextOptions,
+        inputProfile,
+      }),
       history: sanitizeHistory(history),
     };
 
@@ -1144,89 +1274,184 @@ async function run() {
         isShortCircuit: false,
         elapsedMs: toInt(Date.now() - startedAt, 0),
         totalDurationMs: toInt(Date.now() - startedAt, 0),
+        contextChars: "-",
         requestId: "-",
         waitFeeling: classifyWaitFeeling(Date.now() - startedAt),
         isFailure: true,
       };
       results.push(pseudoResult);
-      console.error(`[${index + 1}/10] 请求失败: ${error instanceof Error ? error.message : "unknown error"}`);
+      console.error(`${logPrefix}[${index + 1}/10] 请求失败: ${error instanceof Error ? error.message : "unknown error"}`);
       await sleep(delayMs);
       continue;
     }
 
     const row = normalizeResult(index, testCase, response, payload, Date.now() - startedAt);
     results.push(row);
-
     history.push({ role: "user", content: testCase.message });
     const assistantText = trim(payload?.reply) || trim(payload?.structured?.summary);
     if (!row.isFailure && assistantText) {
       history.push({ role: "assistant", content: assistantText });
     }
     history = sanitizeHistory(history);
-
     console.log(
-      `[${index + 1}/10] mode=${row.mode}, http=${row.http}, code=${row.errorCode}, format=${row.format}, elapsed=${row.elapsedMs}ms, requestId=${row.requestId}`,
+      `${logPrefix}[${index + 1}/10] mode=${row.mode}, http=${row.http}, code=${row.errorCode}, format=${row.format}, elapsed=${row.elapsedMs}ms, requestId=${row.requestId}`,
     );
     if (index < TEST_CASES.length - 1) {
       await sleep(delayMs);
     }
   }
 
-  console.log("\n=== 明细记录表 ===");
-  printTable(results);
-  console.log("\n=== 按 mode 统计 ===");
-  const modeStats = printModeStats(results);
-  const reasonStats = printAttemptReasonStats(results);
-  const firstHitQualityStats = printFirstHitQualityStats(reasonStats, results.length);
-  const schemaInvalidIssueStats = printSchemaInvalidIssueStats(results);
-  const firstTransportStats = printFirstTransportStats(results);
-  const chainPathStats = printChainPathStats(results);
+  return results;
+}
 
-  const summary = evaluateThresholds(results);
-  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
-  console.log("\n=== FinalStage 总体占比 ===");
-  printFinalStageSummary(summary);
-  console.log("\n=== 判定结果 ===");
-  for (const check of summary.checks) {
-    console.log(`- [${check.pass ? "PASS" : "FAIL"}] ${check.label} -> ${check.value}`);
+async function run() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help === "true") {
+    printHelp();
+    return;
   }
 
-  console.log("\n=== 核心计数 ===");
-  console.log(`- 总请求: ${summary.counts.total}`);
-  console.log(`- 失败数: ${summary.counts.failureCount}`);
-  console.log(`- 超时数: ${summary.counts.timeoutCount}`);
-  console.log(`- attemptCount=3 数: ${summary.counts.attempt3Count}`);
-  console.log(`- structured 数: ${summary.counts.structuredCount}`);
-  console.log(`- finalStage=first 数: ${summary.counts.finalStageFirstCount}`);
-  console.log(`- finalStage=retry 数: ${summary.counts.finalStageRetryCount}`);
-  console.log(`- finalStage=repair 数: ${summary.counts.finalStageRepairCount}`);
-  console.log(`- p50 elapsedMs: ${summary.metrics.p50ElapsedMs}ms`);
-  console.log(`- p95 elapsedMs: ${summary.metrics.p95ElapsedMs}ms`);
-  console.log("\n=== 与 baseline 对比 ===");
-  printBaselineComparison(results, summary);
-  if (summary.metrics.p95ElapsedMs > 15000 && summary.metrics.p95ElapsedMs <= 18000) {
-    console.log("\n=== 耗时分布观察（15000~18000ms 区间）===");
-    printElapsedDistribution(results);
+  const endpoint = trim(args.endpoint || process.env.CHAT_API_ENDPOINT);
+  const token = trim(args.token || process.env.CHAT_AUTH_TOKEN || process.env.SUPABASE_ACCESS_TOKEN);
+  const delayMs = toInt(args.delayMs, DEFAULT_DELAY_MS);
+  const stream = toBool(args.stream, false);
+  const contextMode = normalizeContextMode(args.contextMode || process.env.CHAT_CONTEXT_MODE, CONTEXT_MODE_SHORT);
+  const contextFileArg = trim(args.contextFile || process.env.CHAT_CONTEXT_FILE);
+  const inputProfile = normalizeInputProfile(
+    args.inputProfile || process.env.CHAT_INPUT_PROFILE,
+    INPUT_PROFILE_BASELINE,
+  );
+  const matrixProfiles = parseMatrixProfiles(args.matrix || process.env.CHAT_INPUT_MATRIX);
+  const outputJsonPathArg = trim(args.outputJson || process.env.CHAT_OUTPUT_JSON);
+
+  if (!endpoint || !token) {
+    printHelp();
+    throw new Error("缺少 endpoint 或 token。请使用 --endpoint/--token 或环境变量 CHAT_API_ENDPOINT/CHAT_AUTH_TOKEN。");
   }
 
-  console.log("\n=== 日志判读建议 ===");
-  for (const note of buildDiagnosis(results, summary)) {
-    console.log(`- ${note}`);
+  let contextOptions = {
+    contextMode,
+    contextFilePath: "",
+    contextData: null,
+  };
+  if (contextMode === CONTEXT_MODE_REAL) {
+    const loadedContext = loadContextFile(contextFileArg);
+    contextOptions = {
+      contextMode,
+      contextFilePath: loadedContext.resolvedPath,
+      contextData: loadedContext.contextData,
+    };
   }
-  const topSchemaFirstIssue =
-    schemaInvalidIssueStats?.overall?.first?.entries && schemaInvalidIssueStats.overall.first.entries.length > 0
-      ? `${schemaInvalidIssueStats.overall.first.entries[0].issue} (${schemaInvalidIssueStats.overall.first.entries[0].count})`
-      : "-";
-  const topSchemaRetryIssue =
-    schemaInvalidIssueStats?.overall?.retry?.entries && schemaInvalidIssueStats.overall.retry.entries.length > 0
-      ? `${schemaInvalidIssueStats.overall.retry.entries[0].issue} (${schemaInvalidIssueStats.overall.retry.entries[0].count})`
-      : "-";
-  console.log(`- schema_invalid first top issue: ${topSchemaFirstIssue}`);
-  console.log(`- schema_invalid retry top issue: ${topSchemaRetryIssue}`);
 
-  const allPass = summary.checks.every((item) => item.pass);
-  if (!allPass) {
-    process.exitCode = 2;
+  const scenarioProfiles = matrixProfiles.length > 0 ? matrixProfiles : [inputProfile];
+  const matrixBundles = [];
+  let finalExitCode = 0;
+
+  for (let index = 0; index < scenarioProfiles.length; index += 1) {
+    const profile = scenarioProfiles[index];
+    const results = await executeScenario({
+      endpoint,
+      token,
+      delayMs,
+      stream,
+      contextMode,
+      contextOptions,
+      inputProfile: profile,
+      logPrefix: scenarioProfiles.length > 1 ? `profile:${profile}` : "",
+    });
+    const bundle = buildScenarioBundle(profile, results);
+    matrixBundles.push(bundle);
+
+    console.log("\n=== 明细记录表 ===");
+    printTable(results);
+    console.log("\n=== 按 mode 统计 ===");
+    const printedModeStats = printModeStats(results);
+    const reasonStats = printAttemptReasonStats(results);
+    const firstHitQualityStats = printFirstHitQualityStats(reasonStats, results.length);
+    const schemaInvalidIssueStats = printSchemaInvalidIssueStats(results);
+    const firstTransportStats = printFirstTransportStats(results);
+    const chainPathStats = printChainPathStats(results);
+
+    printFocusMetrics(bundle.summary, printedModeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
+    console.log("\n=== FinalStage 总体占比 ===");
+    printFinalStageSummary(bundle.summary);
+    console.log("\n=== 判定结果 ===");
+    for (const check of bundle.summary.checks) {
+      console.log(`- [${check.pass ? "PASS" : "FAIL"}] ${check.label} -> ${check.value}`);
+    }
+
+    console.log("\n=== 核心计数 ===");
+    console.log(`- 总请求: ${bundle.summary.counts.total}`);
+    console.log(`- 失败数: ${bundle.summary.counts.failureCount}`);
+    console.log(`- 超时数: ${bundle.summary.counts.timeoutCount}`);
+    console.log(`- attemptCount=3 数: ${bundle.summary.counts.attempt3Count}`);
+    console.log(`- structured 数: ${bundle.summary.counts.structuredCount}`);
+    console.log(`- finalStage=first 数: ${bundle.summary.counts.finalStageFirstCount}`);
+    console.log(`- finalStage=retry 数: ${bundle.summary.counts.finalStageRetryCount}`);
+    console.log(`- finalStage=repair 数: ${bundle.summary.counts.finalStageRepairCount}`);
+    console.log(`- p50 elapsedMs: ${bundle.summary.metrics.p50ElapsedMs}ms`);
+    console.log(`- p95 elapsedMs: ${bundle.summary.metrics.p95ElapsedMs}ms`);
+    console.log("\n=== 与 baseline 对比 ===");
+    printBaselineComparison(results, bundle.summary);
+    if (bundle.summary.metrics.p95ElapsedMs > 15000 && bundle.summary.metrics.p95ElapsedMs <= 18000) {
+      console.log("\n=== 耗时分布观察（15000~18000ms 区间）===");
+      printElapsedDistribution(results);
+    }
+
+    console.log("\n=== 日志判读建议 ===");
+    for (const note of buildDiagnosis(results, bundle.summary)) {
+      console.log(`- ${note}`);
+    }
+    const topSchemaFirstIssue =
+      schemaInvalidIssueStats?.overall?.first?.entries && schemaInvalidIssueStats.overall.first.entries.length > 0
+        ? `${schemaInvalidIssueStats.overall.first.entries[0].issue} (${schemaInvalidIssueStats.overall.first.entries[0].count})`
+        : "-";
+    const topSchemaRetryIssue =
+      schemaInvalidIssueStats?.overall?.retry?.entries && schemaInvalidIssueStats.overall.retry.entries.length > 0
+        ? `${schemaInvalidIssueStats.overall.retry.entries[0].issue} (${schemaInvalidIssueStats.overall.retry.entries[0].count})`
+        : "-";
+    console.log(`- schema_invalid first top issue: ${topSchemaFirstIssue}`);
+    console.log(`- schema_invalid retry top issue: ${topSchemaRetryIssue}`);
+
+    const allPass = bundle.summary.checks.every((item) => item.pass);
+    if (!allPass) {
+      finalExitCode = 2;
+    }
+
+    if (scenarioProfiles.length > 1 && index < scenarioProfiles.length - 1) {
+      console.log("\n------------------------------------------------------------\n");
+    }
+  }
+
+  if (scenarioProfiles.length > 1) {
+    printMatrixSummary(matrixBundles);
+  }
+
+  if (outputJsonPathArg) {
+    const outputPath = path.resolve(process.cwd(), outputJsonPathArg);
+    const outputPayload = {
+      generatedAt: new Date().toISOString(),
+      endpoint,
+      stream,
+      delayMs,
+      contextMode,
+      contextFile: contextOptions.contextFilePath || "",
+      profiles: matrixBundles.map((bundle) => ({
+        inputProfile: bundle.inputProfile,
+        metrics: bundle.summary.metrics,
+        checks: bundle.summary.checks,
+        modeStats: bundle.modeStats,
+        firstHitQuality: bundle.firstHitQualityStats,
+        contextCharStats: bundle.contextCharStats,
+        results: bundle.results,
+      })),
+    };
+    fs.writeFileSync(outputPath, JSON.stringify(outputPayload, null, 2), "utf8");
+    console.log(`\n已导出结果: ${outputPath}`);
+  }
+
+  if (finalExitCode !== 0) {
+    process.exitCode = finalExitCode;
   }
 }
 
