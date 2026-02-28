@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const DEFAULT_DELAY_MS = 4000;
 const DEFAULT_THRESHOLD = Object.freeze({
   maxFailureRate: 0.2,
@@ -9,6 +12,9 @@ const DEFAULT_THRESHOLD = Object.freeze({
   maxP95Ms: 15000,
 });
 const UNKNOWN_SOURCE_SUFFIX = "(unknown_source)";
+const CONTEXT_MODE_SHORT = "short";
+const CONTEXT_MODE_REAL = "real";
+const SHORT_CIRCUIT_REASON_EMPTY_CONTEXT = "empty_context";
 
 const BASELINE_METRICS = Object.freeze({
   p50ElapsedMs: 30815,
@@ -76,10 +82,13 @@ function printHelp() {
       "  --token      Supabase access token（也可用 CHAT_AUTH_TOKEN）",
       "  --delayMs    每次请求间隔毫秒，默认 4000",
       "  --stream     true/false，默认 false",
+      "  --contextMode short|real，默认 short",
+      "  --contextFile real 模式下的上下文 JSON 文件路径（也可用 CHAT_CONTEXT_FILE）",
       "  --help       显示帮助",
       "",
       "示例:",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability",
+      "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json",
     ].join("\n"),
   );
 }
@@ -116,6 +125,92 @@ function toBool(value, fallback = false) {
   if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
   if (normalized === "false" || normalized === "0" || normalized === "no") return false;
   return fallback;
+}
+
+function normalizeContextMode(value, fallback = CONTEXT_MODE_SHORT) {
+  const normalized = trim(value).toLowerCase();
+  if (normalized === CONTEXT_MODE_REAL) return CONTEXT_MODE_REAL;
+  if (normalized === CONTEXT_MODE_SHORT) return CONTEXT_MODE_SHORT;
+  return fallback;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneObject(value) {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return { ...value };
+  }
+}
+
+function loadContextFile(contextFileArg) {
+  const safeArg = trim(contextFileArg);
+  if (!safeArg) {
+    throw new Error("contextMode=real 时必须提供 --contextFile 或 CHAT_CONTEXT_FILE。");
+  }
+  const resolvedPath = path.resolve(process.cwd(), safeArg);
+  let rawText = "";
+  try {
+    rawText = fs.readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    throw new Error(`无法读取 contextFile: ${resolvedPath} (${error instanceof Error ? error.message : "unknown error"})`);
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (error) {
+    throw new Error(`contextFile 不是合法 JSON: ${resolvedPath} (${error instanceof Error ? error.message : "unknown error"})`);
+  }
+
+  if (!isPlainObject(parsed)) {
+    throw new Error(`contextFile 顶层必须是 JSON 对象: ${resolvedPath}`);
+  }
+
+  return {
+    resolvedPath,
+    contextData: parsed,
+  };
+}
+
+function buildRequestContext(contextMode, testCase, options = {}) {
+  if (contextMode !== CONTEXT_MODE_REAL) {
+    return {};
+  }
+
+  const mode = trim(testCase?.mode);
+  const contextData = options?.contextData;
+  if (!isPlainObject(contextData)) {
+    throw new Error("contextMode=real 需要有效的 contextData 对象。");
+  }
+
+  const basePart = {};
+  if (isPlainObject(contextData.base)) Object.assign(basePart, cloneObject(contextData.base));
+  if (isPlainObject(contextData.common)) Object.assign(basePart, cloneObject(contextData.common));
+  if (isPlainObject(contextData.shared)) Object.assign(basePart, cloneObject(contextData.shared));
+
+  let modePart = {};
+  if (isPlainObject(contextData.byMode) && isPlainObject(contextData.byMode[mode])) {
+    modePart = cloneObject(contextData.byMode[mode]);
+  } else if (isPlainObject(contextData[mode])) {
+    modePart = cloneObject(contextData[mode]);
+  } else if (isPlainObject(contextData.default)) {
+    modePart = cloneObject(contextData.default);
+  }
+
+  if (Object.keys(basePart).length > 0 || Object.keys(modePart).length > 0) {
+    return { ...basePart, ...modePart };
+  }
+  if (isPlainObject(contextData.context)) {
+    return cloneObject(contextData.context);
+  }
+  return cloneObject(contextData);
 }
 
 function sleep(ms) {
@@ -254,6 +349,8 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     mergedStatuses.push(503);
   }
   const hasUpstream503 = mergedStatuses.includes(503);
+  const shortCircuitReason = trim(meta?.shortCircuitReason);
+  const isShortCircuit = shortCircuitReason === SHORT_CIRCUIT_REASON_EMPTY_CONTEXT;
 
   return {
     row: index + 1,
@@ -294,6 +391,8 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
           : "false",
     firstTransportStatuses: mergedStatuses,
     hasUpstream503,
+    shortCircuitReason: shortCircuitReason || "-",
+    isShortCircuit,
     isFailure: response.status >= 400 || Boolean(code),
   };
 }
@@ -556,7 +655,7 @@ function pickTopReason(stageStats) {
   return `${first.reason} (${first.count})`;
 }
 
-function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats) {
+function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats) {
   console.log("\n=== 重点指标 ===");
   console.log(`- structured 占比: ${toPercent(summary.metrics.structuredRate)}`);
   console.log(`- finalStage=first 占比: ${toPercent(summary.metrics.finalStageFirstRate)}`);
@@ -572,6 +671,10 @@ function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats,
   if (firstHitQualityStats && typeof firstHitQualityStats === "object") {
     console.log(`- first structured_ok 占比: ${toPercent(firstHitQualityStats.overall.firstStructuredOkRate)}`);
     console.log(`- first output_truncated 占比: ${toPercent(firstHitQualityStats.overall.firstOutputTruncatedRate)}`);
+  }
+  if (chainPathStats && typeof chainPathStats === "object") {
+    console.log(`- shortCircuitRate: ${toPercent(chainPathStats.overall.shortCircuitRate)}`);
+    console.log(`- realContextRate: ${toPercent(chainPathStats.overall.realContextRate)}`);
   }
   console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
   console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
@@ -662,6 +765,52 @@ function buildFirstTransportStats(results) {
     },
     byMode: modeStats,
   };
+}
+
+function buildChainPathStats(results) {
+  const total = results.length || 1;
+  const shortCircuitCount = results.filter((row) => Boolean(row.isShortCircuit)).length;
+  const grouped = new Map();
+  for (const row of results) {
+    const mode = row.mode || "unknown";
+    if (!grouped.has(mode)) {
+      grouped.set(mode, []);
+    }
+    grouped.get(mode).push(row);
+  }
+  return {
+    overall: {
+      total,
+      shortCircuitCount,
+      shortCircuitRate: shortCircuitCount / total,
+      realContextRate: (total - shortCircuitCount) / total,
+    },
+    byMode: Array.from(grouped.entries()).map(([mode, rows]) => {
+      const modeTotal = rows.length || 1;
+      const modeShortCircuitCount = rows.filter((row) => Boolean(row.isShortCircuit)).length;
+      return {
+        mode,
+        total: modeTotal,
+        shortCircuitRate: modeShortCircuitCount / modeTotal,
+        realContextRate: (modeTotal - modeShortCircuitCount) / modeTotal,
+      };
+    }),
+  };
+}
+
+function printChainPathStats(results) {
+  const stats = buildChainPathStats(results);
+  console.log("\n=== 链路占比（overall）===");
+  console.log("| shortCircuitRate | realContextRate |");
+  console.log("|------------------|-----------------|");
+  console.log(`| ${toPercent(stats.overall.shortCircuitRate)} | ${toPercent(stats.overall.realContextRate)} |`);
+  console.log("\n=== 链路占比（by mode）===");
+  console.log("| mode | 样本数 | shortCircuitRate | realContextRate |");
+  console.log("|------|--------|------------------|-----------------|");
+  for (const item of stats.byMode) {
+    console.log(`| ${item.mode} | ${item.total} | ${toPercent(item.shortCircuitRate)} | ${toPercent(item.realContextRate)} |`);
+  }
+  return stats;
 }
 
 function evaluateThresholds(results) {
@@ -918,16 +1067,34 @@ async function run() {
   const token = trim(args.token || process.env.CHAT_AUTH_TOKEN || process.env.SUPABASE_ACCESS_TOKEN);
   const delayMs = toInt(args.delayMs, DEFAULT_DELAY_MS);
   const stream = toBool(args.stream, false);
+  const contextMode = normalizeContextMode(args.contextMode || process.env.CHAT_CONTEXT_MODE, CONTEXT_MODE_SHORT);
+  const contextFileArg = trim(args.contextFile || process.env.CHAT_CONTEXT_FILE);
 
   if (!endpoint || !token) {
     printHelp();
     throw new Error("缺少 endpoint 或 token。请使用 --endpoint/--token 或环境变量 CHAT_API_ENDPOINT/CHAT_AUTH_TOKEN。");
   }
 
+  let contextOptions = {
+    contextMode,
+    contextFilePath: "",
+    contextData: null,
+  };
+  if (contextMode === CONTEXT_MODE_REAL) {
+    const loadedContext = loadContextFile(contextFileArg);
+    contextOptions = {
+      contextMode,
+      contextFilePath: loadedContext.resolvedPath,
+      contextData: loadedContext.contextData,
+    };
+  }
+
   const results = [];
   let history = [];
   console.log(`开始执行 10 次稳态验证，endpoint: ${endpoint}`);
-  console.log(`配置: stream=${stream}, delayMs=${delayMs}`);
+  console.log(
+    `配置: stream=${stream}, delayMs=${delayMs}, contextMode=${contextMode}${contextMode === CONTEXT_MODE_REAL ? `, contextFile=${contextOptions.contextFilePath}` : ""}`,
+  );
 
   for (let index = 0; index < TEST_CASES.length; index += 1) {
     const testCase = TEST_CASES[index];
@@ -935,7 +1102,7 @@ async function run() {
       message: testCase.message,
       mode: testCase.mode,
       stream,
-      context: {},
+      context: buildRequestContext(contextMode, testCase, contextOptions),
       history: sanitizeHistory(history),
     };
 
@@ -973,6 +1140,8 @@ async function run() {
         firstTransportRetryRecovered: "-",
         firstTransportStatuses: [],
         hasUpstream503: false,
+        shortCircuitReason: "-",
+        isShortCircuit: false,
         elapsedMs: toInt(Date.now() - startedAt, 0),
         totalDurationMs: toInt(Date.now() - startedAt, 0),
         requestId: "-",
@@ -1011,9 +1180,10 @@ async function run() {
   const firstHitQualityStats = printFirstHitQualityStats(reasonStats, results.length);
   const schemaInvalidIssueStats = printSchemaInvalidIssueStats(results);
   const firstTransportStats = printFirstTransportStats(results);
+  const chainPathStats = printChainPathStats(results);
 
   const summary = evaluateThresholds(results);
-  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats);
+  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
   console.log("\n=== FinalStage 总体占比 ===");
   printFinalStageSummary(summary);
   console.log("\n=== 判定结果 ===");

@@ -494,7 +494,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 3. 前端只使用 anon key，禁止 `service_role` 出现在客户端或仓库。
 
 ### 12.6 稳态压测（10 次连续提问）
-为快速验证“止血改动”是否生效，提供脚本化压测命令：
+为避免“空上下文短路全绿”掩盖真实模型链路问题，压测拆为双轨：
+- A 轨（`short`）：`context={}`，验证短路兜底与接口可用性。
+- B 轨（`real`）：加载真实分析上下文样本，验证 Gemini 真实质量与时延。
+
+#### A 轨：short（默认）
 
 ```bash
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
@@ -502,9 +506,19 @@ CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
 npm run check:chat-stability
 ```
 
+#### B 轨：real（推荐每次发布后跑）
+
+```bash
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json
+```
+
 可选参数：
 - `--delayMs 4000`：请求间隔（默认 4000ms）
 - `--stream false`：默认走非流式稳态路径
+- `--contextMode short|real`：上下文模式（默认 `short`）
+- `--contextFile <path>`：`contextMode=real` 时必填（也可用 `CHAT_CONTEXT_FILE`）
 
 脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
 1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/firstTxAttempts/firstTxRetry/firstTxRecovered/elapsedMs`）
@@ -529,8 +543,13 @@ npm run check:chat-stability
 12. 首轮命中质量统计（overall + by mode）：
    - `first structured_ok` 占比
    - `first output_truncated` 占比
+13. 链路占比统计（overall + by mode）：
+   - `shortCircuitRate`（命中 `meta.shortCircuitReason=empty_context` 占比）
+   - `realContextRate`（未命中 short-circuit 占比）
 
 注意：
+- `short` 全绿仅代表短路兜底健康，不代表 Gemini 模型链路质量。
+- 验证真实模型能力时必须使用 `real` 模式，否则 `structured/p95/finalStage` 结论会偏乐观。
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。
 - 当 `p95` 落在 `15000~18000ms` 区间时，脚本会输出详细耗时分布，默认进入“温和优化”而非激进降质。
 - 若命令返回 exit code `2`，代表压测完成但至少一个阈值未达标。
