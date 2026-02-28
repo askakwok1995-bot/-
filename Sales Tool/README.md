@@ -438,6 +438,20 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `responseAction = structured_answer`：继续走 `briefing/diagnosis/action-plan` 结构化链路。
 - `responseAction = clarify`：先追问关键缺失信息（第一版仅高置信触发：无数据、明确需要 period 但缺失）。
 
+自然回答语气层（v1，仅作用于 `natural_answer`）：
+- 目标：更像专业业务助手，保持“首句直答 + 结论先行 + 数据依据”，避免模板腔。
+- 规则：
+  - 首句直答（不先讲系统状态）
+  - 结论 -> 依据 -> 边界 ->（可选）下一步
+  - 证据自然嵌入（1~2 条关键数据，不做字段播报）
+  - 缺失信息降技术感表达（不暴露 `scope.period/missingFields`）
+  - 去模板复读（避免重复上一轮开场）
+- 三姿态分流（规则优先）：
+  - `judge`：判断型（1~3 句）
+  - `explain`：解释型（2~4 句）
+  - `advise`：建议型（3~5 句，轻动作仅在适合推进时出现）
+- 结构化正式产物链路不受语气层影响。
+
 流式响应（`stream=true`）：
 - 响应头：`content-type: application/x-ndjson`
 - 逐行事件（每行一条 JSON）：
@@ -471,6 +485,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.shortCircuitReason` 为短路原因（当前支持 `empty_context`）。
 - `meta.firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses` 用于观察“首轮可用性重试”是否触发及是否恢复成功。
 - `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens/qualityIssues/qualityCounts`），用于定位“首轮命中低”或“repair 依赖高”。
+- `meta.tone`（仅 `natural_answer`）用于语气层验收与排障：
+  - `posture`: `judge | explain | advise`
+  - `ruleHits`: 本次命中的语气规则标记
+  - `actionSuggested`: 是否自然包含了下一步动作建议
 
 失败响应（示例）：
 ```json
@@ -525,6 +543,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
 10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/shortCircuitReason/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics/routing` 在响应中存在且可用于排障。
 11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
+12. 自然回答语气层人工验收（建议 15 条样本：judge/explain/advise 各 5）：
+   - 问题-姿态匹配率 `>= 85%`
+   - 首句直答率 `>= 90%`
+   - 内部术语泄露率 `<= 5%`（目标 0）
+   - 模板复读率 `<= 10%`
 
 ### 12.5 Supabase 权限核查
 1. `products` / `sales_records` / `sales_targets` 三张表开启 RLS。

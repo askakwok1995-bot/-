@@ -1,0 +1,17 @@
+[
+  { "id": "judge_01", "posture": "judge", "question": "这个月整体销售表现如何？" },
+  { "id": "judge_02", "posture": "judge", "question": "最近两个月的业绩算稳定吗？" },
+  { "id": "judge_03", "posture": "judge", "question": "现在达成率情况好不好？" },
+  { "id": "judge_04", "posture": "judge", "question": "我们的风险现在大不大？" },
+  { "id": "judge_05", "posture": "judge", "question": "当前趋势总体是向好还是承压？" },
+  { "id": "explain_01", "posture": "explain", "question": "为什么Q1没有达成目标？" },
+  { "id": "explain_02", "posture": "explain", "question": "最近增长放缓的主要原因是什么？" },
+  { "id": "explain_03", "posture": "explain", "question": "为什么核心产品贡献没有继续提高？" },
+  { "id": "explain_04", "posture": "explain", "question": "业绩波动背后的关键因素有哪些？" },
+  { "id": "explain_05", "posture": "explain", "question": "为什么这个月金额增长但达成率仍偏低？" },
+  { "id": "advise_01", "posture": "advise", "question": "接下来我应该优先做什么动作？" },
+  { "id": "advise_02", "posture": "advise", "question": "给我一个本周最可执行的改进建议。" },
+  { "id": "advise_03", "posture": "advise", "question": "如果要提升达成率，下一步怎么推进更有效？" },
+  { "id": "advise_04", "posture": "advise", "question": "请给我一条低成本、见效快的策略建议。" },
+  { "id": "advise_05", "posture": "advise", "question": "现在最值得落地的一项行动计划是什么？" }
+]

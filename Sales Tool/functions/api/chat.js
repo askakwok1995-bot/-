@@ -68,6 +68,11 @@ const BUSINESS_INTENTS = Object.freeze({
   DIAGNOSIS: CHAT_MODES.DIAGNOSIS,
   ACTION_PLAN: CHAT_MODES.ACTION_PLAN,
 });
+const NATURAL_POSTURES = Object.freeze({
+  JUDGE: "judge",
+  EXPLAIN: "explain",
+  ADVISE: "advise",
+});
 const CHAT_HISTORY_ROLES = Object.freeze({
   USER: "user",
   ASSISTANT: "assistant",
@@ -642,6 +647,71 @@ function resolveResponseAction(requestedMode, message, contextV1) {
   };
 }
 
+function hasNaturalAdviseSignal(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  return /(建议|怎么办|怎么做|下一步|行动|计划|策略|落地|推进|优先|改进|优化|措施)/i.test(safeMessage);
+}
+
+function hasNaturalExplainSignal(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  return /(为什么|为何|原因|根因|瓶颈|导致|怎么会|背后|解释|分析一下|影响因素)/i.test(safeMessage);
+}
+
+function hasNaturalJudgeSignal(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  return /(是否|是不是|稳不稳|好吗|好不好|怎么样|问题大吗|风险大吗|可以吗|达标吗|正常吗)/i.test(safeMessage);
+}
+
+function resolveNaturalPosture(message) {
+  const ruleHits = [];
+  if (hasNaturalAdviseSignal(message)) {
+    ruleHits.push("posture_advise_keywords");
+    return {
+      posture: NATURAL_POSTURES.ADVISE,
+      ruleHits,
+    };
+  }
+  if (hasNaturalExplainSignal(message)) {
+    ruleHits.push("posture_explain_keywords");
+    return {
+      posture: NATURAL_POSTURES.EXPLAIN,
+      ruleHits,
+    };
+  }
+  if (hasNaturalJudgeSignal(message)) {
+    ruleHits.push("posture_judge_keywords");
+    return {
+      posture: NATURAL_POSTURES.JUDGE,
+      ruleHits,
+    };
+  }
+  ruleHits.push("posture_default_judge");
+  return {
+    posture: NATURAL_POSTURES.JUDGE,
+    ruleHits,
+  };
+}
+
+function extractLeadingSentence(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return "";
+  }
+  const normalized = safeText.replace(/\s+/g, " ");
+  const firstLine = normalized.split("\n")[0];
+  const match = firstLine.match(/^[^。！？!?]+[。！？!?]?/);
+  return trimString(match ? match[0] : firstLine.slice(0, 80));
+}
+
 function buildClarifyResponse(contextV1, reason) {
   if (reason === "no_data") {
     return {
@@ -669,31 +739,198 @@ function buildClarifyResponse(contextV1, reason) {
   };
 }
 
-function buildNaturalResponse(contextV1, message, modelReply = "") {
+function dedupeStringList(items, maxItems = 12) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  const unique = [];
+  const seen = new Set();
+  for (const item of items) {
+    const safeItem = trimString(item);
+    if (!safeItem || seen.has(safeItem)) {
+      continue;
+    }
+    unique.push(safeItem);
+    seen.add(safeItem);
+    if (unique.length >= maxItems) {
+      break;
+    }
+  }
+  return unique;
+}
+
+function isNaturalTemplateOpening(sentence) {
+  const safeSentence = trimString(sentence);
+  if (!safeSentence) {
+    return false;
+  }
+  return /^(已基于|基于当前|根据当前|结合当前|综合当前|以下是|结论如下|简要结论|当前数据不足)/.test(
+    safeSentence,
+  );
+}
+
+function replaceNaturalTechnicalTerms(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return {
+      text: "",
+      replaced: false,
+    };
+  }
+  let updatedText = safeText;
+  const replacements = [
+    ["scope.period", "时间范围"],
+    ["missingFields", "缺失信息"],
+    ["business.overview", "业务总览数据"],
+    ["query.text", "问题描述"],
+    ["output_truncated", "输出截断"],
+    ["schema_invalid", "结构不完整"],
+    ["formatReason", "回退原因"],
+  ];
+  let replaced = false;
+  for (const [pattern, replacement] of replacements) {
+    const nextText = updatedText.replace(new RegExp(pattern, "gi"), replacement);
+    if (nextText !== updatedText) {
+      replaced = true;
+      updatedText = nextText;
+    }
+  }
+  return {
+    text: updatedText,
+    replaced,
+  };
+}
+
+function buildNaturalDirectLead(message, contextV1, posture) {
+  const safePosture =
+    posture === NATURAL_POSTURES.EXPLAIN || posture === NATURAL_POSTURES.ADVISE
+      ? posture
+      : NATURAL_POSTURES.JUDGE;
+  const hasData = Boolean(contextV1?.quality?.hasData);
+  const trendSummary = trimString(contextV1?.business?.trend?.summary);
+  const safeMessage = trimString(message);
+  if (!hasData) {
+    return safeMessage
+      ? "先说结论：当前可用数据还不完整，我先给你基于现有口径的判断。"
+      : "先说结论：当前可用数据还不完整，请补充后我再给你更准确的判断。";
+  }
+  if (safePosture === NATURAL_POSTURES.ADVISE) {
+    return "先给结论：当前最值得优先推进的是先补强目标缺口最大的环节。";
+  }
+  if (safePosture === NATURAL_POSTURES.EXPLAIN) {
+    return "先说结论：当前表现主要受结构与执行节奏两方面影响。";
+  }
+  if (/(下滑|下降|回落|承压|转弱)/.test(trendSummary)) {
+    return "先说结论：当前表现仍有压力，优先要稳住下滑环节。";
+  }
+  if (/(增长|回升|改善|上升|向好)/.test(trendSummary)) {
+    return "先说结论：当前整体在改善，重点是巩固这波增长趋势。";
+  }
+  return "先说结论：当前整体表现基本稳定，但仍有优化空间。";
+}
+
+function replaceLeadingSentence(text, nextSentence) {
+  const safeText = trimString(text);
+  const safeNextSentence = trimString(nextSentence);
+  if (!safeText || !safeNextSentence) {
+    return safeText;
+  }
+  const firstSentence = extractLeadingSentence(safeText);
+  if (!firstSentence) {
+    return safeNextSentence;
+  }
+  const remaining = trimString(safeText.slice(firstSentence.length));
+  return remaining ? `${safeNextSentence} ${remaining}` : safeNextSentence;
+}
+
+function normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile) {
+  const rawText = trimString(modelReply);
+  if (!rawText) {
+    return {
+      text: "",
+      ruleHits: [],
+    };
+  }
+  const appliedRuleHits = [];
+  let normalizedText = rawText.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const termResult = replaceNaturalTechnicalTerms(normalizedText);
+  normalizedText = termResult.text;
+  if (termResult.replaced) {
+    appliedRuleHits.push("low_tech_missing_info");
+  }
+
+  const currentOpening = extractLeadingSentence(normalizedText);
+  const previousOpening = extractLeadingSentence(toneProfile?.previousAssistantLead);
+  let shouldRewriteOpening = false;
+  if (isNaturalTemplateOpening(currentOpening)) {
+    shouldRewriteOpening = true;
+    appliedRuleHits.push("anti_template_opening");
+  }
+  if (previousOpening && currentOpening && currentOpening === previousOpening) {
+    shouldRewriteOpening = true;
+    appliedRuleHits.push("anti_template_repeat");
+  }
+  if (/^(说明|提示|数据状态)/.test(currentOpening)) {
+    shouldRewriteOpening = true;
+    appliedRuleHits.push("first_sentence_direct_answer");
+  }
+  if (shouldRewriteOpening) {
+    normalizedText = replaceLeadingSentence(
+      normalizedText,
+      buildNaturalDirectLead(message, contextV1, toneProfile?.posture),
+    );
+  }
+
+  return {
+    text: trimString(normalizedText),
+    ruleHits: dedupeStringList(appliedRuleHits, 8),
+  };
+}
+
+function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile = null) {
+  const safePosture =
+    trimString(toneProfile?.posture) === NATURAL_POSTURES.EXPLAIN
+      ? NATURAL_POSTURES.EXPLAIN
+      : trimString(toneProfile?.posture) === NATURAL_POSTURES.ADVISE
+        ? NATURAL_POSTURES.ADVISE
+        : NATURAL_POSTURES.JUDGE;
+  const baseRuleHits = dedupeStringList(toneProfile?.ruleHits, 10);
   const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, 2);
   const trendSummary =
     trimString(contextV1?.business?.trend?.summary) || trimString(contextV1?.business?.overview?.trendOverview?.summary);
   const overviewSummary =
     trimString(contextV1?.business?.overview?.kpi?.summary) || trimString(contextV1?.business?.overview?.summary);
-  const fallbackSummary = contextV1?.quality?.hasData
-    ? "已基于当前业务数据给出简要结论。"
-    : "当前数据不足，以下回复仅供参考。";
-  const summary = overviewSummary || trendSummary || fallbackSummary;
+  const fallbackSummary = overviewSummary || trendSummary || buildNaturalDirectLead(message, contextV1, safePosture);
   const evidenceText =
-    evidenceRefs.length > 0 ? `关键依据：${evidenceRefs.map((item) => `${item.label}${item.value}`).join("；")}。` : "";
+    evidenceRefs.length > 0
+      ? `主要依据是${evidenceRefs.map((item) => `${item.label}${item.value}`).join("，")}。`
+      : "";
   const disclaimerList = [];
   if (!contextV1?.quality?.hasData) {
-    disclaimerList.push("数据不足");
+    disclaimerList.push("当前数据仍不足");
   }
   if (Array.isArray(contextV1?.quality?.missingFields) && contextV1.quality.missingFields.length > 0) {
-    disclaimerList.push("部分口径信息不完整");
+    disclaimerList.push("部分口径信息还不完整");
   }
-  const disclaimerText = disclaimerList.length > 0 ? `说明：${disclaimerList.join("；")}。` : "";
-  const questionHint = trimString(message) ? "" : "请告诉我你想看的指标或时间范围。";
-  const fallbackReply = [summary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
-  const modelText = trimString(modelReply);
+  const disclaimerText = disclaimerList.length > 0 ? `${disclaimerList.join("，")}。` : "";
+  const questionHint = trimString(message) ? "" : "你可以先告诉我你关心的时间范围或指标。";
+  const fallbackReply = [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+  const normalizedModel = normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile);
+  const modelText = trimString(normalizedModel.text);
   const surfaceReply = modelText || fallbackReply;
-  const summaryText = modelText ? trimString(modelText.split(/[。！？\n]/)[0]) || modelText.slice(0, 120) : summary;
+  const summaryText = extractLeadingSentence(surfaceReply) || surfaceReply.slice(0, 120);
+  const actionSuggested = /(建议|下一步|优先|先做|先从|执行|推进|跟进|复盘)/.test(surfaceReply);
+  const toneRuleHits = dedupeStringList(
+    [
+      ...baseRuleHits,
+      "first_sentence_direct_answer",
+      "conclusion_first",
+      "evidence_natural_embed",
+      ...normalizedModel.ruleHits,
+      actionSuggested ? "light_action_suggested" : "",
+    ],
+    12,
+  );
 
   return {
     surfaceReply,
@@ -702,6 +939,7 @@ function buildNaturalResponse(contextV1, message, modelReply = "") {
       summary: summaryText,
       evidenceRefs,
       confidence: contextV1?.quality?.confidence || "medium",
+      posture: safePosture,
       scopeUsed: {
         period: trimString(contextV1?.scope?.period?.label),
         entities: [
@@ -711,6 +949,11 @@ function buildNaturalResponse(contextV1, message, modelReply = "") {
         ].slice(0, 6),
       },
       disclaimers: disclaimerList,
+    },
+    toneMeta: {
+      posture: safePosture,
+      ruleHits: toneRuleHits,
+      actionSuggested,
     },
   };
 }
@@ -967,6 +1210,7 @@ function buildChatSuccessPayload(params) {
     firstTransportRetryRecovered = false,
     firstTransportStatuses = [],
     shortCircuitReason = "",
+    toneMeta = null,
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const normalizedStructured =
@@ -1080,6 +1324,7 @@ function buildChatSuccessPayload(params) {
   const safeFirstTransportRetryRecovered = Boolean(firstTransportRetryRecovered);
   const safeFirstTransportStatuses = normalizeStatusCodeList(firstTransportStatuses);
   const safeShortCircuitReason = trimString(shortCircuitReason);
+  const safeToneMeta = toneMeta && typeof toneMeta === "object" ? toneMeta : null;
 
   const payload = {
     reply,
@@ -1142,6 +1387,20 @@ function buildChatSuccessPayload(params) {
   }
   if (safeShortCircuitReason) {
     payload.meta.shortCircuitReason = safeShortCircuitReason;
+  }
+  if (safeResponseAction === RESPONSE_ACTIONS.NATURAL && safeToneMeta) {
+    const postureCandidate = trimString(safeToneMeta.posture);
+    const posture =
+      postureCandidate === NATURAL_POSTURES.EXPLAIN
+        ? NATURAL_POSTURES.EXPLAIN
+        : postureCandidate === NATURAL_POSTURES.ADVISE
+          ? NATURAL_POSTURES.ADVISE
+          : NATURAL_POSTURES.JUDGE;
+    payload.meta.tone = {
+      posture,
+      ruleHits: dedupeStringList(safeToneMeta.ruleHits, 12),
+      actionSuggested: Boolean(safeToneMeta.actionSuggested),
+    };
   }
   return payload;
 }
@@ -1236,10 +1495,26 @@ function getModeResponseSchema(mode) {
   };
 }
 
-function buildNaturalPrompt(message, contextV1, history) {
+function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
   const safeMessage = trimString(message);
   const safeHistory = sanitizeHistoryList(history);
   const historyText = formatHistoryText(safeHistory);
+  const safePosture =
+    trimString(toneProfile?.posture) === NATURAL_POSTURES.EXPLAIN
+      ? NATURAL_POSTURES.EXPLAIN
+      : trimString(toneProfile?.posture) === NATURAL_POSTURES.ADVISE
+        ? NATURAL_POSTURES.ADVISE
+        : NATURAL_POSTURES.JUDGE;
+  const lastAssistantTurn = [...safeHistory]
+    .reverse()
+    .find((item) => item && item.role === CHAT_HISTORY_ROLES.ASSISTANT && trimString(item.content));
+  const lastAssistantOpening = extractLeadingSentence(lastAssistantTurn?.content);
+  const postureRequirement =
+    safePosture === NATURAL_POSTURES.EXPLAIN
+      ? "姿态：解释型。2-4句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
+      : safePosture === NATURAL_POSTURES.ADVISE
+        ? "姿态：建议型。3-5句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
+        : "姿态：判断型。1-3句，先给明确判断，再给1条关键依据。";
   const naturalContext = {
     scope: contextV1?.scope || {},
     business: {
@@ -1256,10 +1531,16 @@ function buildNaturalPrompt(message, contextV1, history) {
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
     "输出语言：简体中文。",
     "回答形态：自然问答（非结构化模板）。",
-    "回答要求：先给结论，再给1-2条关键依据；必要时给1条可执行建议。",
-    "语气要求：像业务助手，避免机械模板句，不要输出 JSON 或 Markdown 代码块。",
-    "如果信息不足，请明确说明不足点，并给出一个自然的补充问题。",
+    "首句必须直接回答用户问题，禁止先讲流程或系统状态。",
+    "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
+    "证据要求：只嵌入1-2条关键数据点，写成自然句，不做字段播报。",
+    "缺失信息表达：用业务语言说明，不要出现 scope.period、missingFields 等内部术语。",
+    "去模板要求：避免重复固定开场句；若与上一轮开场重复，主动换一种直答句式。",
+    postureRequirement,
+    "语气要求：像专业业务助手，不要输出 JSON 或 Markdown 代码块。",
+    "如果信息不足，请明确不足点，并在必要时给一个自然补充问题。",
     "优先参考最近对话上下文，但以当前业务口径为准。",
+    lastAssistantOpening ? `上一轮助手开场（避免复用）：${lastAssistantOpening}` : "",
     "",
     "最近对话摘要（按时间顺序）：",
     historyText,
@@ -1272,7 +1553,7 @@ function buildNaturalPrompt(message, contextV1, history) {
   ].join("\n");
 }
 
-function buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget = null) {
+function buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget = null, toneProfile = null) {
   const safeThinkingBudget = Number(thinkingBudget);
   const hasThinkingBudget = Number.isFinite(safeThinkingBudget) && safeThinkingBudget >= 0;
   const generationConfig = {
@@ -1292,7 +1573,7 @@ function buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget =
         role: "user",
         parts: [
           {
-            text: buildNaturalPrompt(message, contextV1, history),
+            text: buildNaturalPrompt(message, contextV1, history, toneProfile),
           },
         ],
       },
@@ -2107,9 +2388,9 @@ async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstream
   };
 }
 
-async function generateNaturalModelReply(model, key, message, contextV1, history, thinkingBudget = null) {
+async function generateNaturalModelReply(model, key, message, contextV1, history, thinkingBudget = null, toneProfile = null) {
   const startedAt = Date.now();
-  const payload = buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget);
+  const payload = buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget, toneProfile);
   const firstAttempt = await requestGeminiFirstStageWithAvailabilityRetry(model, key, payload, {
     requestStartedAt: startedAt,
   });
@@ -2702,9 +2983,27 @@ export async function onRequestPost(context) {
   }
 
   if (route.responseAction === RESPONSE_ACTIONS.NATURAL) {
-    const naturalModel = await generateNaturalModelReply(model, key, message, normalizedContext, history, thinkingBudget);
+    const naturalPosture = resolveNaturalPosture(message);
+    const naturalModel = await generateNaturalModelReply(
+      model,
+      key,
+      message,
+      normalizedContext,
+      history,
+      thinkingBudget,
+      naturalPosture,
+    );
     const modelReply = naturalModel.ok ? trimString(naturalModel.reply) : "";
-    const natural = buildNaturalResponse(normalizedContext, message, modelReply);
+    const natural = buildNaturalResponse(normalizedContext, message, modelReply, {
+      posture: naturalPosture.posture,
+      ruleHits: naturalPosture.ruleHits,
+      previousAssistantLead: extractLeadingSentence(
+        [...history]
+          .reverse()
+          .find((item) => item && item.role === CHAT_HISTORY_ROLES.ASSISTANT && trimString(item.content))
+          ?.content,
+      ),
+    });
     const naturalDurationMs = naturalModel.ok
       ? Number(naturalModel.totalDurationMs || 0)
       : Number(naturalModel?.error?.durationMs || 0);
@@ -2771,6 +3070,7 @@ export async function onRequestPost(context) {
         firstTransportRetryApplied,
         firstTransportRetryRecovered,
         firstTransportStatuses,
+        toneMeta: natural.toneMeta,
       }),
       200,
       requestId,
