@@ -724,6 +724,11 @@ function evaluateThresholds(results) {
         pass: metrics.structuredRate >= DEFAULT_THRESHOLD.minStructuredRate,
       },
       {
+        label: "structured 相对 baseline 下滑 <= 10pp",
+        value: formatDeltaPercent(metrics.structuredRate, BASELINE_METRICS.structuredRate),
+        pass: BASELINE_METRICS.structuredRate - metrics.structuredRate <= 0.1,
+      },
+      {
         label: "p95 elapsedMs <= 15000ms",
         value: `${metrics.p95ElapsedMs}ms`,
         pass: metrics.p95ElapsedMs <= DEFAULT_THRESHOLD.maxP95Ms,

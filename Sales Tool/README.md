@@ -253,6 +253,7 @@ window.__APP_CONFIG__ = {
 4. `Settings` -> `Variables and Secrets`：
    - Secret: `GEMINI_API_KEY`
    - Variable: `GEMINI_MODEL=gemini-2.5-flash`
+   - Optional Variable: `GEMINI_THINKING_BUDGET`（仅在需要控制思考 token 成本时配置；未配置则不下发）
 5. 确认 `GEMINI_API_KEY` 已保存到 **Production** 环境，且值无引号、无前后空格；保存后执行一次 Redeploy。
 
 ### 12.1.1 Gemini 连通性硬校验（推荐）
@@ -315,6 +316,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 首轮输出在 `json_parse_failed/output_truncated/schema_invalid` 时才进入 retry（一次 strict 重试，预算约束不变）。
 - strict 重试采用“最小修复输出”：仅返回满足阈值的最小结构，数组仅给最低必要条数，不补充额外解释。
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
+- 空上下文短路：当 `context` 为空或不含有效分析字段时，服务端直接返回最小合法结构化结果（`meta.shortCircuitReason=empty_context`），不调用 Gemini。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
 - 首轮可用性重试（仅 non-streaming）：`first` 阶段命中 `500/502/503/429` 或 `UPSTREAM_TIMEOUT` 时会做 1 次短退避重试（约 `350ms + 随机0~150ms`）；`401/403` 不参与该重试；不启用模型回退。
@@ -334,11 +336,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `action-plan`：`summary/evidence/actions`
   - `nextQuestions` 为可选字段（前端兼容读取）
 - mode 化输出体量约束（用于减少截断）：
-  - 首轮统一规则：禁止复述 `analysis/context` 原文或长清单；仅给结论级证据；每条用一句短句（建议 8~24 字）
+  - 首轮统一规则：禁止复述 `analysis/context` 原文或长清单；每个字段优先短句；先满足最小条目再考虑补充
   - `briefing`：首轮最小合格结构为 `summary 70~100 字`，`highlights/evidence/risks/actions` 各 1 条，`nextQuestions 0~1`
-  - `diagnosis`：首轮最小合格结构为 `summary 60~100 字`，`highlights 1`，`evidence 1~2`，`risks 1`，`actions 0~1`
-  - `action-plan`：首轮最小合格结构为 `summary 60~100 字`，`evidence 1~2`，`actions 1~2`，`risks 0~1`，`highlights 0~1`
-  - 统一约束：每个数组优先最小条数，不做展开说明；若接近输出上限，优先保证合法 JSON + 最小条目
+  - `diagnosis`：首轮最小合格结构为 `summary 60~100 字`，`highlights 1`，`evidence 1`，`risks 1`，`actions 0~1`（最小合格条目优先）
+  - `action-plan`：首轮最小合格结构为 `summary 60~100 字`，`evidence 1`，`actions 1`，`risks/highlights 0~1`
+  - strict 重试：仅输出满足阈值的最小结构，不补充额外解释文本
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
@@ -428,6 +430,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.stageDurations` 为分阶段耗时（`first/retry/repair`）。
 - `meta.finalStage` 为最终命中的阶段。
 - `meta.contextChars/historyChars` 用于观察请求体体量。
+- `meta.shortCircuitReason` 为短路原因（当前支持 `empty_context`）。
 - `meta.firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses` 用于观察“首轮可用性重试”是否触发及是否恢复成功。
 - `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens/qualityIssues/qualityCounts`），用于定位“首轮命中低”或“repair 依赖高”。
 
@@ -479,10 +482,10 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 4. 关闭或清空 `GEMINI_API_KEY` 时，聊天提示“服务端未配置”。
 5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_AUTH_ERROR`、`UPSTREAM_RATE_LIMIT`、`UPSTREAM_ERROR`。
 6. 用户报错时可提供“请求号（requestId）”用于排查。
-7. 错误响应中可见 `error.stage/upstreamStatus/durationMs/firstTransportAttempts/firstTransportStatuses/firstTransportRetryApplied`（如首轮两次都遇到 503）。
+7. 错误响应中可见 `error.stage/upstreamStatus/durationMs/firstTransportAttempts/firstTransportStatuses/firstTransportRetryApplied/firstTransportRetryRecovered`（如首轮两次都遇到 503）。
 8. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
 9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics` 在响应中存在且可用于排障。
+10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/shortCircuitReason/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics` 在响应中存在且可用于排障。
 11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查

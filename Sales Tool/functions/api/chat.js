@@ -62,6 +62,9 @@ const CHAT_FORMAT_REASONS = Object.freeze({
   OUTPUT_TRUNCATED: "output_truncated",
   EMPTY_REPLY: "empty_reply",
 });
+const SHORT_CIRCUIT_REASONS = Object.freeze({
+  EMPTY_CONTEXT: "empty_context",
+});
 
 const MODE_DEFINITIONS = Object.freeze({
   [CHAT_MODES.BRIEFING]: {
@@ -338,6 +341,192 @@ function sanitizeContextPayload(rawContext) {
   return rawContext;
 }
 
+function hasFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function hasMeaningfulContextObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
+function hasMeaningfulContextArray(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function hasEffectiveAnalysisContext(contextPayload) {
+  if (!contextPayload || typeof contextPayload !== "object" || Array.isArray(contextPayload)) {
+    return false;
+  }
+  const topLevelKeys = Object.keys(contextPayload);
+  if (topLevelKeys.length === 0) {
+    return false;
+  }
+
+  const knownKeys = new Set([
+    "analysis",
+    "kpi",
+    "risk",
+    "trendOverview",
+    "trend",
+    "product",
+    "hospital",
+    "overviewMetric",
+    "keyEvidence",
+    "outline",
+  ]);
+  const hasUnknownTopLevelKeys = topLevelKeys.some((key) => !knownKeys.has(key));
+  if (hasUnknownTopLevelKeys) {
+    return true;
+  }
+
+  const hasDataFlag = contextPayload?.analysis?.meta?.hasData;
+  if (hasDataFlag === true) {
+    return true;
+  }
+  if (hasDataFlag === false) {
+    return false;
+  }
+
+  const summaryCandidates = [
+    contextPayload?.kpi?.summary,
+    contextPayload?.risk?.summary,
+    contextPayload?.trendOverview?.summary,
+    contextPayload?.trend?.summary,
+    contextPayload?.product?.summary,
+    contextPayload?.hospital?.summary,
+    contextPayload?.outline?.summary,
+  ];
+  if (summaryCandidates.some((value) => Boolean(trimString(value)))) {
+    return true;
+  }
+
+  const itemCandidates = [
+    contextPayload?.kpi?.items,
+    contextPayload?.risk?.items,
+    contextPayload?.trend?.items,
+    contextPayload?.product?.items,
+    contextPayload?.hospital?.items,
+    contextPayload?.outline?.sections,
+  ];
+  if (itemCandidates.some((value) => hasMeaningfulContextArray(value))) {
+    return true;
+  }
+
+  if (hasMeaningfulContextObject(contextPayload?.overviewMetric) || hasMeaningfulContextObject(contextPayload?.keyEvidence)) {
+    return true;
+  }
+
+  if (hasMeaningfulContextObject(contextPayload?.kpi?.metrics)) {
+    const metricValues = Object.values(contextPayload.kpi.metrics || {});
+    if (metricValues.some((value) => hasFiniteNumber(value))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildEmptyContextStructured(mode) {
+  const safeMode = sanitizeMode(mode);
+  if (safeMode === CHAT_MODES.DIAGNOSIS) {
+    return {
+      summary:
+        "当前上下文缺少诊断所需的销售与结构数据，暂无法判断波动成因或瓶颈环节。请补充按产品、医院、月份拆分的金额与达成信息后，再执行诊断分析并输出可验证结论。",
+      highlights: ["诊断输入数据不足"],
+      evidence: [
+        {
+          label: "数据可用性",
+          value: "缺少有效分析上下文",
+          insight: "未收到可用于定位原因的销售明细与对比数据",
+        },
+      ],
+      risks: ["在数据不足情况下推进诊断，可能导致错误归因和错误决策。"],
+      actions: [
+        {
+          title: "补齐诊断数据",
+          owner: "销售运营",
+          timeline: "本周内",
+          metric: "完成产品/医院/月度数据补录并通过校验",
+        },
+      ],
+      nextQuestions: ["可否先提供最近三个月按产品与医院拆分的金额与达成率？"],
+    };
+  }
+
+  if (safeMode === CHAT_MODES.ACTION_PLAN) {
+    return {
+      summary:
+        "当前缺少生成行动清单所需的业务数据与优先级信息，暂无法输出可信的执行计划。请先补充目标差距、重点客户进展与资源约束，再生成可落地的行动方案。",
+      highlights: ["行动计划输入不足"],
+      evidence: [
+        {
+          label: "计划依据",
+          value: "上下文为空或关键字段缺失",
+          insight: "无法完成任务拆解与负责人分配",
+        },
+      ],
+      risks: ["在缺少依据时直接排计划，执行优先级和资源分配容易失真。"],
+      actions: [
+        {
+          title: "补齐行动计划输入",
+          owner: "销售负责人",
+          timeline: "本周内",
+          metric: "目标差距、客户进展、资源约束三类数据齐全",
+        },
+      ],
+      nextQuestions: ["是否先确认本周最关键的目标缺口与优先客户名单？"],
+    };
+  }
+
+  return {
+    summary:
+      "当前未检测到可用于本月简报的销售数据与目标口径，暂无法形成可信的业绩结论。建议先同步本月销售记录、目标配置和重点医院进展后，再生成正式的阶段性简报。",
+    highlights: ["简报输入数据不足"],
+    evidence: [
+      {
+        label: "数据状态",
+        value: "未收到有效分析上下文",
+        insight: "缺少本月销售与目标数据，无法形成可靠结论",
+      },
+    ],
+    risks: ["在数据不足时输出简报，可能造成经营判断偏差。"],
+    actions: [
+      {
+        title: "补齐本月简报数据",
+        owner: "销售运营",
+        timeline: "本周内",
+        metric: "销售记录与目标口径完整度达到100%",
+      },
+    ],
+    nextQuestions: ["何时可以提供本月完整销售数据与目标配置？"],
+  };
+}
+
+function buildEmptyContextShortCircuitEvaluation(contextPayload, mode) {
+  if (hasEffectiveAnalysisContext(contextPayload)) {
+    return null;
+  }
+
+  const structured = buildEmptyContextStructured(mode);
+  const quality = validateStructuredQuality(structured, mode);
+  if (!quality.ok) {
+    return null;
+  }
+  const reply = JSON.stringify(structured);
+
+  return {
+    format: "structured",
+    structured,
+    reply,
+    formatReason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+    finishReason: "SHORT_CIRCUIT_EMPTY_CONTEXT",
+    outputChars: reply.length,
+    shouldRetry: false,
+    qualityIssues: [],
+    qualityCounts: quality.counts || null,
+  };
+}
+
 function getModeTokenProfile(mode, messageLength = 0) {
   const safeMode = sanitizeMode(mode);
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
@@ -382,6 +571,7 @@ function buildChatSuccessPayload(params) {
     firstTransportRetryApplied = false,
     firstTransportRetryRecovered = false,
     firstTransportStatuses = [],
+    shortCircuitReason = "",
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
   const structured = format === "structured" ? evaluation.structured : null;
@@ -471,8 +661,9 @@ function buildChatSuccessPayload(params) {
   const safeFirstTransportRetryApplied = Boolean(firstTransportRetryApplied);
   const safeFirstTransportRetryRecovered = Boolean(firstTransportRetryRecovered);
   const safeFirstTransportStatuses = normalizeStatusCodeList(firstTransportStatuses);
+  const safeShortCircuitReason = trimString(shortCircuitReason);
 
-  return {
+  const payload = {
     reply,
     model,
     requestId,
@@ -503,6 +694,10 @@ function buildChatSuccessPayload(params) {
       firstTransportStatuses: safeFirstTransportStatuses,
     },
   };
+  if (safeShortCircuitReason) {
+    payload.meta.shortCircuitReason = safeShortCircuitReason;
+  }
+  return payload;
 }
 
 function buildGeminiEndpoint(model, streaming = false) {
@@ -538,29 +733,20 @@ function buildPrompt(message, context, mode, options = {}) {
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
   const history = sanitizeHistoryList(options?.history);
   const historyText = formatHistoryText(history);
+  const modeFirstRule =
+    safeMode === CHAT_MODES.BRIEFING
+      ? "首轮模板：summary 70~100字；highlights/evidence/risks/actions 各 1 条；nextQuestions 0~1 条。"
+      : safeMode === CHAT_MODES.DIAGNOSIS
+        ? "首轮模板：summary 60~100字；highlights 1 条；evidence 1 条；risks 1 条；actions 0~1 条（最小合格条目优先）。"
+        : "首轮模板：summary 60~100字；evidence 1 条；actions 1 条；risks/highlights 0~1 条。";
   const modeCompactRule =
     safeMode === CHAT_MODES.BRIEFING
-      ? "简报模式请紧凑输出：highlights<=2, evidence<=2, risks<=2, actions<=1, nextQuestions<=1。"
+      ? "条目上限：highlights<=2, evidence<=2, risks<=2, actions<=1, nextQuestions<=1。"
       : safeMode === CHAT_MODES.DIAGNOSIS
-        ? "诊断模式请紧凑输出：highlights<=2, evidence<=3, risks<=2, actions<=1, nextQuestions<=1。"
-        : "行动模式请紧凑输出：actions<=3, evidence<=3, risks<=1, highlights<=1, nextQuestions<=1。";
-  const firstMinimalStructureRule =
-    !strictJsonOnly && safeMode === CHAT_MODES.BRIEFING
-      ? "首轮最小合格结构：summary 70~100 字；highlights/evidence/risks/actions 各 1 条；nextQuestions 0~1 条。"
-      : !strictJsonOnly && safeMode === CHAT_MODES.DIAGNOSIS
-        ? "首轮最小合格结构：summary 60~100 字；highlights 1 条；evidence 1~2 条；risks 1 条；actions 0~1 条。"
-        : !strictJsonOnly
-          ? "首轮最小合格结构：summary 60~100 字；evidence 1~2 条；actions 1~2 条；risks 0~1 条；highlights 0~1 条。"
-          : "";
-  const briefingFirstRule =
-    safeMode === CHAT_MODES.BRIEFING && !strictJsonOnly
-      ? "首轮简报请按“汇报摘要”风格：summary 用一段话给出总体结论；highlights/evidence/risks 各 1-2 条；actions 严格 1 条短动作，不做行动拆解；nextQuestions 0-1 条。"
-      : "";
-  const firstRoundSharedRule = strictJsonOnly
-    ? ""
-    : "首轮禁止复述 analysis/context 原文或长清单；仅输出结论级证据，不展开逐条明细；每条只写一句短句。";
+        ? "条目上限：highlights<=2, evidence<=2, risks<=2, actions<=1, nextQuestions<=1。"
+        : "条目上限：evidence<=2, actions<=2, risks<=1, highlights<=1, nextQuestions<=1。";
   const strictMinimalRepairRule = strictJsonOnly
-    ? "纠错重试请只输出满足阈值的最小结构，不补充额外解释；数组仅给最低必要条数。"
+    ? "纠错重试：只输出满足阈值的最小结构，数组保持最低必要条数，不补充解释文本。"
     : "";
 
   return [
@@ -569,25 +755,19 @@ function buildPrompt(message, context, mode, options = {}) {
     `当前模式：${modeDefinition.label}。`,
     `模式目标：${modeDefinition.goal}`,
     `模式重点：${modeDefinition.focus}`,
-    strictJsonOnly
-      ? "本次为纠错重试：你上次输出未通过结构化校验。请只返回合法 JSON。"
-      : "本次为首轮输出，请优先保证结构化完整性和可读性。",
-    strictJsonOnly ? "必须满足最小条数和 summary 最小长度，否则视为无效输出。" : "",
+    strictJsonOnly ? "本次为纠错重试，请只返回合法 JSON。" : "本次为首轮输出，请优先保证结构化完整性。",
+    strictJsonOnly ? "必须满足最小条数和 summary 最小长度，否则视为无效输出。" : "首轮请优先满足最小条数，不要扩展冗长描述。",
     strictMinimalRepairRule,
-    firstRoundSharedRule,
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
     `质量门槛：summary 至少 ${thresholds.minSummaryChars} 字；highlights>=${thresholds.minHighlightsCount}，evidence>=${thresholds.minEvidenceCount}，actions>=${thresholds.minActionsCount}。`,
-    firstMinimalStructureRule,
-    briefingFirstRule,
+    modeFirstRule,
     modeCompactRule,
-    "每个数组优先最小条数，不做展开说明。",
-    "每个字符串字段控制短句（建议 8~24 字）。",
-    "若接近输出上限，优先保证合法 JSON + 最小条目。",
-    "宁可减少条目数量，也必须一次输出完整 JSON，不要输出超长句子。",
-    "禁止长段解释，优先使用短句表达。",
+    "每个数组优先最小条数；每个字符串字段使用短句（建议 8~24 字）。",
+    "禁止复述 analysis/context 原文或长清单；仅保留结论级证据。",
+    "若接近输出上限，优先保证合法 JSON + 最小条目，避免超长句子。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
-    "禁止使用 Markdown 代码块；如果无法保证格式，仍优先输出可解析 JSON。",
+    "禁止使用 Markdown 代码块。",
     "优先参考最近对话上下文，但以当前传入数据口径为准。",
     "",
     "最近对话摘要（按时间顺序）：",
@@ -920,8 +1100,23 @@ function buildGeminiPayload(params) {
     mode,
     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     strictJsonOnly = false,
+    thinkingBudget = null,
   } = params || {};
   const responseSchema = getModeResponseSchema(mode);
+  const safeThinkingBudget = Number(thinkingBudget);
+  const hasThinkingBudget = Number.isFinite(safeThinkingBudget) && safeThinkingBudget >= 0;
+  const generationConfig = {
+    temperature: 0.2,
+    topP: 0.9,
+    maxOutputTokens,
+    responseMimeType: "application/json",
+    responseSchema,
+  };
+  if (hasThinkingBudget) {
+    generationConfig.thinkingConfig = {
+      thinkingBudget: Math.floor(safeThinkingBudget),
+    };
+  }
 
   return {
     contents: [
@@ -937,17 +1132,25 @@ function buildGeminiPayload(params) {
         ],
       },
     ],
-    generationConfig: {
-      temperature: 0.2,
-      topP: 0.9,
-      maxOutputTokens,
-      responseMimeType: "application/json",
-      responseSchema,
-    },
+    generationConfig,
   };
 }
 
-function buildGeminiRepairPayload(rawReply, mode) {
+function buildGeminiRepairPayload(rawReply, mode, thinkingBudget = null) {
+  const safeThinkingBudget = Number(thinkingBudget);
+  const hasThinkingBudget = Number.isFinite(safeThinkingBudget) && safeThinkingBudget >= 0;
+  const generationConfig = {
+    temperature: 0.1,
+    topP: 0.8,
+    maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
+    responseMimeType: "application/json",
+    responseSchema: CHAT_RESPONSE_SCHEMA,
+  };
+  if (hasThinkingBudget) {
+    generationConfig.thinkingConfig = {
+      thinkingBudget: Math.floor(safeThinkingBudget),
+    };
+  }
   return {
     contents: [
       {
@@ -959,14 +1162,20 @@ function buildGeminiRepairPayload(rawReply, mode) {
         ],
       },
     ],
-    generationConfig: {
-      temperature: 0.1,
-      topP: 0.8,
-      maxOutputTokens: RETRY_MAX_OUTPUT_TOKENS,
-      responseMimeType: "application/json",
-      responseSchema: CHAT_RESPONSE_SCHEMA,
-    },
+    generationConfig,
   };
+}
+
+function sanitizeThinkingBudget(rawBudget) {
+  const safeRaw = trimString(rawBudget);
+  if (!safeRaw) {
+    return null;
+  }
+  const numeric = Number(safeRaw);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.floor(numeric);
 }
 
 function readUpstreamErrorMessage(payload) {
@@ -1387,7 +1596,7 @@ async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstream
   };
 }
 
-async function attemptRepairStructured(model, key, rawReply, mode) {
+async function attemptRepairStructured(model, key, rawReply, mode, thinkingBudget = null) {
   const sourceText = trimString(rawReply);
   if (!sourceText) {
     return {
@@ -1397,7 +1606,7 @@ async function attemptRepairStructured(model, key, rawReply, mode) {
     };
   }
 
-  const repairPayload = buildGeminiRepairPayload(sourceText, mode);
+  const repairPayload = buildGeminiRepairPayload(sourceText, mode, thinkingBudget);
   const repairAttempt = await requestGeminiNonStreaming(model, key, repairPayload, {
     stage: "repair",
   });
@@ -1698,7 +1907,7 @@ async function requestGeminiStreaming(model, key, upstreamPayload, onDelta, opti
   };
 }
 
-async function generateChatResponse(model, key, message, contextPayload, mode, history) {
+async function generateChatResponse(model, key, message, contextPayload, mode, history, thinkingBudget = null) {
   const startedAt = Date.now();
   const hasBudgetForNextAttempt = () => Date.now() - startedAt < TOTAL_CHAT_BUDGET_MS;
   const stageDurations = {};
@@ -1725,6 +1934,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     mode,
     maxOutputTokens: modeTokenProfile.first,
     strictJsonOnly: false,
+    thinkingBudget,
   });
   attemptCount += 1;
   const firstStageStartedAt = Date.now();
@@ -1764,6 +1974,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
       mode,
       maxOutputTokens: modeTokenProfile.retry,
       strictJsonOnly: true,
+      thinkingBudget,
     });
     attemptCount += 1;
     const retryStageStartedAt = Date.now();
@@ -1808,7 +2019,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     repairApplied = true;
     attemptCount += 1;
     const repairStageStartedAt = Date.now();
-    const repairAttempt = await attemptRepairStructured(model, key, finalEvaluation.reply, mode);
+    const repairAttempt = await attemptRepairStructured(model, key, finalEvaluation.reply, mode, thinkingBudget);
     stageDurations.repair = Date.now() - repairStageStartedAt;
     if (repairAttempt.ok && repairAttempt.evaluation) {
       attemptDiagnostics.push(
@@ -1859,6 +2070,7 @@ export async function onRequestPost(context) {
 
   const key = getEnvString(context.env, "GEMINI_API_KEY");
   const model = sanitizeModelName(getEnvString(context.env, "GEMINI_MODEL"));
+  const thinkingBudget = sanitizeThinkingBudget(getEnvString(context.env, "GEMINI_THINKING_BUDGET"));
 
   if (!key) {
     return errorResponse(CHAT_ERROR_CODES.CONFIG_MISSING, "服务端缺少 GEMINI_API_KEY 配置。", 500, requestId);
@@ -1892,6 +2104,33 @@ export async function onRequestPost(context) {
     );
   }
 
+  const shortCircuitEvaluation = buildEmptyContextShortCircuitEvaluation(contextPayload, mode);
+  if (shortCircuitEvaluation) {
+    return jsonResponse(
+      buildChatSuccessPayload({
+        evaluation: shortCircuitEvaluation,
+        model,
+        requestId,
+        mode,
+        retryCount: 0,
+        repairApplied: false,
+        repairSucceeded: false,
+        attemptCount: 1,
+        totalDurationMs: 0,
+        stageDurations: {
+          first: 0,
+        },
+        finalStage: "first",
+        contextChars: requestContextChars,
+        historyChars: requestHistoryChars,
+        attemptDiagnostics: [buildAttemptDiagnostic("first", shortCircuitEvaluation, 0, 0)],
+        shortCircuitReason: SHORT_CIRCUIT_REASONS.EMPTY_CONTEXT,
+      }),
+      200,
+      requestId,
+    );
+  }
+
   if (stream) {
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
@@ -1912,6 +2151,7 @@ export async function onRequestPost(context) {
             mode,
             maxOutputTokens: modeTokenProfile.first,
             strictJsonOnly: false,
+            thinkingBudget,
           });
 
           const streamResult = await requestGeminiStreaming(
@@ -1935,7 +2175,7 @@ export async function onRequestPost(context) {
 
           if (!streamResult.ok) {
             if (!hasDelta) {
-              const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history);
+              const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history, thinkingBudget);
               if (fallback.ok) {
                 const payload = buildChatSuccessPayload({
                   evaluation: fallback.evaluation,
@@ -1951,6 +2191,7 @@ export async function onRequestPost(context) {
                   finalStage: fallback.finalStage,
                   contextChars: fallback.contextChars,
                   historyChars: fallback.historyChars,
+                  shortCircuitReason: fallback.shortCircuitReason,
                 });
                 emit({
                   type: "done",
@@ -1982,7 +2223,7 @@ export async function onRequestPost(context) {
           }
 
           if (!streamResult.hasDelta) {
-            const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history);
+            const fallback = await generateChatResponse(model, key, message, contextPayload, mode, history, thinkingBudget);
             if (fallback.ok) {
               const payload = buildChatSuccessPayload({
                 evaluation: fallback.evaluation,
@@ -1998,6 +2239,7 @@ export async function onRequestPost(context) {
                 finalStage: fallback.finalStage,
                 contextChars: fallback.contextChars,
                 historyChars: fallback.historyChars,
+                shortCircuitReason: fallback.shortCircuitReason,
               });
               emit({
                 type: "done",
@@ -2069,7 +2311,7 @@ export async function onRequestPost(context) {
     return ndjsonResponse(readable, requestId);
   }
 
-  const generated = await generateChatResponse(model, key, message, contextPayload, mode, history);
+  const generated = await generateChatResponse(model, key, message, contextPayload, mode, history, thinkingBudget);
   if (!generated.ok) {
     return errorResponse(generated.error.code, generated.error.message, generated.error.status, requestId, {
       stage: generated.error.stage,
@@ -2094,6 +2336,11 @@ export async function onRequestPost(context) {
       contextChars: generated.contextChars,
       historyChars: generated.historyChars,
       attemptDiagnostics: generated.attemptDiagnostics,
+      firstTransportAttempts: generated.firstTransportAttempts,
+      firstTransportRetryApplied: generated.firstTransportRetryApplied,
+      firstTransportRetryRecovered: generated.firstTransportRetryRecovered,
+      firstTransportStatuses: generated.firstTransportStatuses,
+      shortCircuitReason: generated.shortCircuitReason,
     }),
     200,
     requestId,
