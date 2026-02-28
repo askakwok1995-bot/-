@@ -313,6 +313,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
 - 首轮输出在 `json_parse_failed/output_truncated/schema_invalid` 时才进入 retry（一次 strict 重试，预算约束不变）。
+- strict 重试采用“最小修复输出”：仅返回满足阈值的最小结构，数组仅给最低必要条数，不补充额外解释。
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
@@ -332,11 +333,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `action-plan`：`summary/evidence/actions`
   - `nextQuestions` 为可选字段（前端兼容读取）
 - mode 化输出体量约束（用于减少截断）：
-  - 首轮统一规则：禁止复述 `analysis/context` 原文或长清单，只给结论级证据，每条用一句短句表达
-  - `briefing`：首轮走“汇报摘要”风格（summary 一段总体结论；`highlights/evidence/risks` 各 1-2 条；`actions` 严格 1 条短动作且不做拆解；`nextQuestions` 0-1 条）
-  - `diagnosis`：`highlights<=2,evidence<=3,risks<=2,actions<=1,nextQuestions<=1`
-  - `action-plan`：`actions<=3,evidence<=3,risks<=1,highlights<=1,nextQuestions<=1`
-  - 统一约束：宁可少条目，也要一次输出完整 JSON，避免超长句子
+  - 首轮统一规则：禁止复述 `analysis/context` 原文或长清单；仅给结论级证据；每条用一句短句（建议 8~24 字）
+  - `briefing`：首轮最小合格结构为 `summary 70~100 字`，`highlights/evidence/risks/actions` 各 1 条，`nextQuestions 0~1`
+  - `diagnosis`：首轮最小合格结构为 `summary 60~100 字`，`highlights 1`，`evidence 1~2`，`risks 1`，`actions 0~1`
+  - `action-plan`：首轮最小合格结构为 `summary 60~100 字`，`evidence 1~2`，`actions 1~2`，`risks 0~1`，`highlights 0~1`
+  - 统一约束：每个数组优先最小条数，不做展开说明；若接近输出上限，优先保证合法 JSON + 最小条目
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
@@ -520,6 +521,9 @@ npm run check:chat-stability
    - `firstTransportRetryApplied` 占比
    - `firstTransportRetryRecovered` 占比
    - `upstreamStatus=503` 占比
+12. 首轮命中质量统计（overall + by mode）：
+   - `first structured_ok` 占比
+   - `first output_truncated` 占比
 
 注意：
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。

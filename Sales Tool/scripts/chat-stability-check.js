@@ -464,6 +464,56 @@ function printAttemptReasonStats(results) {
   return stats;
 }
 
+function getStageReasonCount(stageStats, reason) {
+  if (!stageStats || !Array.isArray(stageStats.entries)) {
+    return 0;
+  }
+  const found = stageStats.entries.find((item) => item && item.reason === reason);
+  return found ? found.count : 0;
+}
+
+function printFirstHitQualityStats(reasonStats, totalRows = 0) {
+  const safeTotalRows =
+    Number.isFinite(Number(totalRows)) && Number(totalRows) > 0 ? Math.floor(Number(totalRows)) : 1;
+  const overallFirstStats = reasonStats?.overall?.first || { entries: [] };
+  const overallStructuredOkCount = getStageReasonCount(overallFirstStats, "structured_ok");
+  const overallOutputTruncatedCount = getStageReasonCount(overallFirstStats, "output_truncated");
+  console.log("\n=== 首轮命中质量（overall）===");
+  console.log("| first structured_ok 占比 | first output_truncated 占比 |");
+  console.log("|--------------------------|-----------------------------|");
+  console.log(
+    `| ${toPercent(overallStructuredOkCount / safeTotalRows)} | ${toPercent(overallOutputTruncatedCount / safeTotalRows)} |`,
+  );
+
+  const byMode = Array.isArray(reasonStats?.byMode) ? reasonStats.byMode : [];
+  console.log("\n=== 首轮命中质量（by mode）===");
+  console.log("| mode | 样本数 | first structured_ok 占比 | first output_truncated 占比 |");
+  console.log("|------|--------|--------------------------|-----------------------------|");
+  const modeRows = byMode.map((item) => {
+    const total = Number.isFinite(Number(item?.total)) && Number(item.total) > 0 ? Math.floor(Number(item.total)) : 1;
+    const firstStats = item?.first || { entries: [] };
+    const structuredOkCount = getStageReasonCount(firstStats, "structured_ok");
+    const outputTruncatedCount = getStageReasonCount(firstStats, "output_truncated");
+    console.log(
+      `| ${item.mode} | ${total} | ${toPercent(structuredOkCount / total)} | ${toPercent(outputTruncatedCount / total)} |`,
+    );
+    return {
+      mode: item.mode,
+      total,
+      firstStructuredOkRate: structuredOkCount / total,
+      firstOutputTruncatedRate: outputTruncatedCount / total,
+    };
+  });
+
+  return {
+    overall: {
+      firstStructuredOkRate: overallStructuredOkCount / safeTotalRows,
+      firstOutputTruncatedRate: overallOutputTruncatedCount / safeTotalRows,
+    },
+    byMode: modeRows,
+  };
+}
+
 function printSchemaInvalidIssueTable(title, stageStats, totalRows, topN = 5) {
   console.log(title);
   console.log("| stage | issue | count | rate |");
@@ -502,7 +552,7 @@ function pickTopReason(stageStats) {
   return `${first.reason} (${first.count})`;
 }
 
-function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats) {
+function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats) {
   console.log("\n=== 重点指标 ===");
   console.log(`- structured 占比: ${toPercent(summary.metrics.structuredRate)}`);
   console.log(`- finalStage=first 占比: ${toPercent(summary.metrics.finalStageFirstRate)}`);
@@ -514,6 +564,10 @@ function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats)
     console.log(`- firstTransportRetryApplied 占比: ${toPercent(firstTransportStats.overall.appliedRate)}`);
     console.log(`- firstTransportRetryRecovered 占比: ${toPercent(firstTransportStats.overall.recoveredRate)}`);
     console.log(`- upstreamStatus=503 占比: ${toPercent(firstTransportStats.overall.upstream503Rate)}`);
+  }
+  if (firstHitQualityStats && typeof firstHitQualityStats === "object") {
+    console.log(`- first structured_ok 占比: ${toPercent(firstHitQualityStats.overall.firstStructuredOkRate)}`);
+    console.log(`- first output_truncated 占比: ${toPercent(firstHitQualityStats.overall.firstOutputTruncatedRate)}`);
   }
   console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
   console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
@@ -945,11 +999,12 @@ async function run() {
   console.log("\n=== 按 mode 统计 ===");
   const modeStats = printModeStats(results);
   const reasonStats = printAttemptReasonStats(results);
+  const firstHitQualityStats = printFirstHitQualityStats(reasonStats, results.length);
   const schemaInvalidIssueStats = printSchemaInvalidIssueStats(results);
   const firstTransportStats = printFirstTransportStats(results);
 
   const summary = evaluateThresholds(results);
-  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats);
+  printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats);
   console.log("\n=== FinalStage 总体占比 ===");
   printFinalStageSummary(summary);
   console.log("\n=== 判定结果 ===");

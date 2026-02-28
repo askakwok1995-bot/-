@@ -541,6 +541,14 @@ function buildPrompt(message, context, mode, options = {}) {
       : safeMode === CHAT_MODES.DIAGNOSIS
         ? "诊断模式请紧凑输出：highlights<=2, evidence<=3, risks<=2, actions<=1, nextQuestions<=1。"
         : "行动模式请紧凑输出：actions<=3, evidence<=3, risks<=1, highlights<=1, nextQuestions<=1。";
+  const firstMinimalStructureRule =
+    !strictJsonOnly && safeMode === CHAT_MODES.BRIEFING
+      ? "首轮最小合格结构：summary 70~100 字；highlights/evidence/risks/actions 各 1 条；nextQuestions 0~1 条。"
+      : !strictJsonOnly && safeMode === CHAT_MODES.DIAGNOSIS
+        ? "首轮最小合格结构：summary 60~100 字；highlights 1 条；evidence 1~2 条；risks 1 条；actions 0~1 条。"
+        : !strictJsonOnly
+          ? "首轮最小合格结构：summary 60~100 字；evidence 1~2 条；actions 1~2 条；risks 0~1 条；highlights 0~1 条。"
+          : "";
   const briefingFirstRule =
     safeMode === CHAT_MODES.BRIEFING && !strictJsonOnly
       ? "首轮简报请按“汇报摘要”风格：summary 用一段话给出总体结论；highlights/evidence/risks 各 1-2 条；actions 严格 1 条短动作，不做行动拆解；nextQuestions 0-1 条。"
@@ -548,6 +556,9 @@ function buildPrompt(message, context, mode, options = {}) {
   const firstRoundSharedRule = strictJsonOnly
     ? ""
     : "首轮禁止复述 analysis/context 原文或长清单；仅输出结论级证据，不展开逐条明细；每条只写一句短句。";
+  const strictMinimalRepairRule = strictJsonOnly
+    ? "纠错重试请只输出满足阈值的最小结构，不补充额外解释；数组仅给最低必要条数。"
+    : "";
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -559,12 +570,17 @@ function buildPrompt(message, context, mode, options = {}) {
       ? "本次为纠错重试：你上次输出未通过结构化校验。请只返回合法 JSON。"
       : "本次为首轮输出，请优先保证结构化完整性和可读性。",
     strictJsonOnly ? "必须满足最小条数和 summary 最小长度，否则视为无效输出。" : "",
+    strictMinimalRepairRule,
     firstRoundSharedRule,
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
     `质量门槛：summary 至少 ${thresholds.minSummaryChars} 字；highlights>=${thresholds.minHighlightsCount}，evidence>=${thresholds.minEvidenceCount}，actions>=${thresholds.minActionsCount}。`,
+    firstMinimalStructureRule,
     briefingFirstRule,
     modeCompactRule,
+    "每个数组优先最小条数，不做展开说明。",
+    "每个字符串字段控制短句（建议 8~24 字）。",
+    "若接近输出上限，优先保证合法 JSON + 最小条目。",
     "宁可减少条目数量，也必须一次输出完整 JSON，不要输出超长句子。",
     "禁止长段解释，优先使用短句表达。",
     "若上下文不足，也要输出合法 JSON，并在 summary 或 risks 中明确“数据不足/口径不足”。",
