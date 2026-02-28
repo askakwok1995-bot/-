@@ -408,6 +408,45 @@ function buildChatSuccessPayload(params) {
           const outputCharsRaw = Number(item.outputChars);
           const elapsedMsRaw = Number(item.elapsedMs);
           const maxOutputTokensRaw = Number(item.maxOutputTokens);
+          const qualityIssues = Array.isArray(item.qualityIssues)
+            ? item.qualityIssues.map((issue) => trimString(issue)).filter((issue) => issue)
+            : [];
+          const qualityCountsRaw = item.qualityCounts && typeof item.qualityCounts === "object" ? item.qualityCounts : null;
+          const qualityCounts = qualityCountsRaw
+            ? {
+                summaryChars: Number.isFinite(Number(qualityCountsRaw.summaryChars)) && Number(qualityCountsRaw.summaryChars) >= 0
+                  ? Math.floor(Number(qualityCountsRaw.summaryChars))
+                  : 0,
+                highlightsCount:
+                  Number.isFinite(Number(qualityCountsRaw.highlightsCount)) && Number(qualityCountsRaw.highlightsCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.highlightsCount))
+                    : 0,
+                evidenceCount:
+                  Number.isFinite(Number(qualityCountsRaw.evidenceCount)) && Number(qualityCountsRaw.evidenceCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.evidenceCount))
+                    : 0,
+                actionsCount:
+                  Number.isFinite(Number(qualityCountsRaw.actionsCount)) && Number(qualityCountsRaw.actionsCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.actionsCount))
+                    : 0,
+                minSummaryChars:
+                  Number.isFinite(Number(qualityCountsRaw.minSummaryChars)) && Number(qualityCountsRaw.minSummaryChars) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.minSummaryChars))
+                    : 0,
+                minHighlightsCount:
+                  Number.isFinite(Number(qualityCountsRaw.minHighlightsCount)) && Number(qualityCountsRaw.minHighlightsCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.minHighlightsCount))
+                    : 0,
+                minEvidenceCount:
+                  Number.isFinite(Number(qualityCountsRaw.minEvidenceCount)) && Number(qualityCountsRaw.minEvidenceCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.minEvidenceCount))
+                    : 0,
+                minActionsCount:
+                  Number.isFinite(Number(qualityCountsRaw.minActionsCount)) && Number(qualityCountsRaw.minActionsCount) >= 0
+                    ? Math.floor(Number(qualityCountsRaw.minActionsCount))
+                    : 0,
+              }
+            : undefined;
           return {
             stage,
             format,
@@ -416,6 +455,8 @@ function buildChatSuccessPayload(params) {
             outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
             elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
             maxOutputTokens: Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+            qualityIssues,
+            qualityCounts,
           };
         })
         .filter((item) => item !== null)
@@ -489,6 +530,7 @@ function buildPrompt(message, context, mode, options = {}) {
   const safeMessage = trimString(message);
   const safeMode = sanitizeMode(mode);
   const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
+  const thresholds = getModeQualityThreshold(safeMode);
   const contextText = safeContextText(context);
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
   const history = sanitizeHistoryList(options?.history);
@@ -516,9 +558,11 @@ function buildPrompt(message, context, mode, options = {}) {
     strictJsonOnly
       ? "本次为纠错重试：你上次输出未通过结构化校验。请只返回合法 JSON。"
       : "本次为首轮输出，请优先保证结构化完整性和可读性。",
+    strictJsonOnly ? "必须满足最小条数和 summary 最小长度，否则视为无效输出。" : "",
     firstRoundSharedRule,
     "必须输出单个 JSON 对象，禁止输出除 JSON 外的解释文字。",
     "JSON 字段必须完整：summary(string), highlights(string[]), evidence([{label,value,insight}]), risks(string[]), actions([{title,owner,timeline,metric}]), nextQuestions(string[])。",
+    `质量门槛：summary 至少 ${thresholds.minSummaryChars} 字；highlights>=${thresholds.minHighlightsCount}，evidence>=${thresholds.minEvidenceCount}，actions>=${thresholds.minActionsCount}。`,
     briefingFirstRule,
     modeCompactRule,
     "宁可减少条目数量，也必须一次输出完整 JSON，不要输出超长句子。",
@@ -726,32 +770,50 @@ function validateStructuredQuality(structured, mode) {
     return {
       ok: false,
       reason: CHAT_FORMAT_REASONS.JSON_PARSE_FAILED,
+      issues: [],
+      counts: null,
     };
   }
 
   const threshold = getModeQualityThreshold(mode);
-
+  const counts = {
+    summaryChars: structured.summary.length,
+    highlightsCount: structured.highlights.length,
+    evidenceCount: structured.evidence.length,
+    actionsCount: structured.actions.length,
+    minSummaryChars: threshold.minSummaryChars,
+    minHighlightsCount: threshold.minHighlightsCount,
+    minEvidenceCount: threshold.minEvidenceCount,
+    minActionsCount: threshold.minActionsCount,
+  };
+  const issues = [];
   if (structured.summary.length < threshold.minSummaryChars) {
-    return {
-      ok: false,
-      reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
-    };
+    issues.push("summary_too_short");
+  }
+  if (structured.highlights.length < threshold.minHighlightsCount) {
+    issues.push("highlights_below_min");
+  }
+  if (structured.evidence.length < threshold.minEvidenceCount) {
+    issues.push("evidence_below_min");
+  }
+  if (structured.actions.length < threshold.minActionsCount) {
+    issues.push("actions_below_min");
   }
 
-  if (
-    structured.highlights.length < threshold.minHighlightsCount ||
-    structured.evidence.length < threshold.minEvidenceCount ||
-    structured.actions.length < threshold.minActionsCount
-  ) {
+  if (issues.length > 0) {
     return {
       ok: false,
       reason: CHAT_FORMAT_REASONS.SCHEMA_INVALID,
+      issues,
+      counts,
     };
   }
 
   return {
     ok: true,
     reason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+    issues: [],
+    counts,
   };
 }
 
@@ -769,6 +831,8 @@ function evaluateGeminiOutput(reply, finishReason, mode) {
       finishReason: safeFinishReason,
       outputChars,
       shouldRetry: true,
+      qualityIssues: [],
+      qualityCounts: null,
     };
   }
 
@@ -781,6 +845,8 @@ function evaluateGeminiOutput(reply, finishReason, mode) {
       finishReason: safeFinishReason,
       outputChars,
       shouldRetry: true,
+      qualityIssues: [],
+      qualityCounts: null,
     };
   }
 
@@ -794,6 +860,8 @@ function evaluateGeminiOutput(reply, finishReason, mode) {
       finishReason: safeFinishReason,
       outputChars,
       shouldRetry: true,
+      qualityIssues: [],
+      qualityCounts: null,
     };
   }
 
@@ -807,6 +875,8 @@ function evaluateGeminiOutput(reply, finishReason, mode) {
       finishReason: safeFinishReason,
       outputChars,
       shouldRetry: true,
+      qualityIssues: quality.issues || [],
+      qualityCounts: quality.counts || null,
     };
   }
 
@@ -818,6 +888,8 @@ function evaluateGeminiOutput(reply, finishReason, mode) {
     finishReason: safeFinishReason,
     outputChars,
     shouldRetry: false,
+    qualityIssues: quality.issues || [],
+    qualityCounts: quality.counts || null,
   };
 }
 
@@ -1309,6 +1381,46 @@ function buildAttemptDiagnostic(stage, evaluation, maxOutputTokens, elapsedMs) {
   const outputCharsRaw = Number(evaluation?.outputChars);
   const elapsedMsRaw = Number(elapsedMs);
   const maxOutputTokensRaw = Number(maxOutputTokens);
+  const qualityIssues = Array.isArray(evaluation?.qualityIssues)
+    ? evaluation.qualityIssues.map((issue) => trimString(issue)).filter((issue) => issue)
+    : [];
+  const qualityCountsRaw =
+    evaluation?.qualityCounts && typeof evaluation.qualityCounts === "object" ? evaluation.qualityCounts : null;
+  const qualityCounts = qualityCountsRaw
+    ? {
+        summaryChars: Number.isFinite(Number(qualityCountsRaw.summaryChars)) && Number(qualityCountsRaw.summaryChars) >= 0
+          ? Math.floor(Number(qualityCountsRaw.summaryChars))
+          : 0,
+        highlightsCount:
+          Number.isFinite(Number(qualityCountsRaw.highlightsCount)) && Number(qualityCountsRaw.highlightsCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.highlightsCount))
+            : 0,
+        evidenceCount:
+          Number.isFinite(Number(qualityCountsRaw.evidenceCount)) && Number(qualityCountsRaw.evidenceCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.evidenceCount))
+            : 0,
+        actionsCount:
+          Number.isFinite(Number(qualityCountsRaw.actionsCount)) && Number(qualityCountsRaw.actionsCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.actionsCount))
+            : 0,
+        minSummaryChars:
+          Number.isFinite(Number(qualityCountsRaw.minSummaryChars)) && Number(qualityCountsRaw.minSummaryChars) >= 0
+            ? Math.floor(Number(qualityCountsRaw.minSummaryChars))
+            : 0,
+        minHighlightsCount:
+          Number.isFinite(Number(qualityCountsRaw.minHighlightsCount)) && Number(qualityCountsRaw.minHighlightsCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.minHighlightsCount))
+            : 0,
+        minEvidenceCount:
+          Number.isFinite(Number(qualityCountsRaw.minEvidenceCount)) && Number(qualityCountsRaw.minEvidenceCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.minEvidenceCount))
+            : 0,
+        minActionsCount:
+          Number.isFinite(Number(qualityCountsRaw.minActionsCount)) && Number(qualityCountsRaw.minActionsCount) >= 0
+            ? Math.floor(Number(qualityCountsRaw.minActionsCount))
+            : 0,
+      }
+    : null;
   return {
     stage: normalizedStage,
     format: normalizedFormat,
@@ -1317,6 +1429,8 @@ function buildAttemptDiagnostic(stage, evaluation, maxOutputTokens, elapsedMs) {
     outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
     elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
     maxOutputTokens: Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
+    qualityIssues,
+    qualityCounts,
   };
 }
 
@@ -1594,7 +1708,8 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
   const firstElapsed = stageDurations.first;
   const shouldTriggerRetry =
     finalEvaluation.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED ||
-    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED;
+    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED ||
+    finalEvaluation.formatReason === CHAT_FORMAT_REASONS.SCHEMA_INVALID;
   if (shouldTriggerRetry && hasBudgetForNextAttempt() && firstElapsed < FIRST_STAGE_BUDGET_MS) {
     retryCount = 1;
     const retryPayload = buildGeminiPayload({

@@ -312,7 +312,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 结构化生成策略：
 - 服务端通过 `responseMimeType: application/json` + `responseSchema` 约束 Gemini 输出。
-- 首轮输出仅在 `json_parse_failed/output_truncated` 时才进入 retry；`schema_invalid` 不默认重试（减少无效二次调用）。
+- 首轮输出在 `json_parse_failed/output_truncated/schema_invalid` 时才进入 retry（一次 strict 重试，预算约束不变）。
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
@@ -427,7 +427,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `meta.finalStage` 为最终命中的阶段。
 - `meta.contextChars/historyChars` 用于观察请求体体量。
 - `meta.firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses` 用于观察“首轮可用性重试”是否触发及是否恢复成功。
-- `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens`），用于定位“首轮命中低”或“repair 依赖高”。
+- `meta.attemptDiagnostics` 为按阶段记录的尝试诊断数组（`stage/format/formatReason/finishReason/outputChars/elapsedMs/maxOutputTokens/qualityIssues/qualityCounts`），用于定位“首轮命中低”或“repair 依赖高”。
 
 失败响应（示例）：
 ```json
@@ -505,17 +505,18 @@ npm run check:chat-stability
 2. `finalStage` 总体占比（`first/retry/repair`）
 3. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`finalStage=first/retry/repair` 占比、`p95 elapsedMs`）
 4. `attemptDiagnostics.formatReason` 分布（overall + by mode，分别输出 `first/retry` 的 top reasons，含 `unknown_source` 兜底标记）
-5. 重点指标摘要（`structured` 占比、`finalStage=first` 占比、`text_fallback by mode`、`first/retry top formatReason`）
-6. 总体耗时统计（`p50/p95 elapsedMs`）
-7. 与 baseline 对比（固定基线：`p50=30815`, `p95=45849`, `structured=50%`, `attempt3=40%`, `briefing repair=100%`, `diagnosis fallback=66.7%`, `action-plan fallback=100%`）
-8. 阈值判定（Pass/Fail）：
+5. `schema_invalid` 失败项分布（overall + by mode，分别输出 `first/retry` 的 top issues）
+6. 重点指标摘要（`structured` 占比、`finalStage=first` 占比、`text_fallback by mode`、`first/retry top formatReason`）
+7. 总体耗时统计（`p50/p95 elapsedMs`）
+8. 与 baseline 对比（固定基线：`p50=30815`, `p95=45849`, `structured=50%`, `attempt3=40%`, `briefing repair=100%`, `diagnosis fallback=66.7%`, `action-plan fallback=100%`）
+9. 阈值判定（Pass/Fail）：
    - 总失败率 `<= 20%`
    - `UPSTREAM_TIMEOUT` 占比 `<= 10%`
    - `attemptCount=3` 占比 `<= 30%`
    - `structured` 占比 `>= 60%`
    - `p95 elapsedMs <= 15000ms`（目标值）
-9. 自动日志判读建议（基于错误码与阶段）
-10. 首轮可用性重试统计（overall + by mode）：
+10. 自动日志判读建议（基于错误码与阶段，含 `schema_invalid` 首要失败项）
+11. 首轮可用性重试统计（overall + by mode）：
    - `firstTransportRetryApplied` 占比
    - `firstTransportRetryRecovered` 占比
    - `upstreamStatus=503` 占比

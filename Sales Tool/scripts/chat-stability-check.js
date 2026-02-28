@@ -197,7 +197,10 @@ function normalizeAttemptDiagnostics(rawDiagnostics) {
       const stageCandidate = trim(item.stage);
       const stage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
       const formatReason = trim(item.formatReason) || "unknown_reason";
-      return { stage, formatReason };
+      const qualityIssues = Array.isArray(item.qualityIssues)
+        ? item.qualityIssues.map((issue) => trim(issue)).filter((issue) => issue)
+        : [];
+      return { stage, formatReason, qualityIssues };
     })
     .filter((item) => item !== null);
 }
@@ -369,6 +372,68 @@ function buildAttemptReasonStats(results) {
   };
 }
 
+function collectSchemaInvalidIssueStats(rows, stage) {
+  const normalizedStage = stage === "retry" ? "retry" : "first";
+  const issueCount = new Map();
+  let sampleCount = 0;
+  for (const row of rows) {
+    const diagnostics = Array.isArray(row?.attemptDiagnostics) ? row.attemptDiagnostics : [];
+    const related = diagnostics.filter(
+      (item) => item && item.stage === normalizedStage && item.formatReason === "schema_invalid",
+    );
+    if (related.length === 0) {
+      continue;
+    }
+    sampleCount += related.length;
+    for (const item of related) {
+      const issues = Array.isArray(item.qualityIssues) ? item.qualityIssues : [];
+      if (issues.length === 0) {
+        issueCount.set("unknown_issue", (issueCount.get("unknown_issue") || 0) + 1);
+        continue;
+      }
+      for (const issue of issues) {
+        issueCount.set(issue, (issueCount.get(issue) || 0) + 1);
+      }
+    }
+  }
+
+  const entries = Array.from(issueCount.entries())
+    .map(([issue, count]) => ({ issue, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.issue.localeCompare(b.issue, "zh-CN");
+    });
+  return {
+    stage: normalizedStage,
+    sampleCount,
+    entries,
+  };
+}
+
+function buildSchemaInvalidIssueStats(results) {
+  const safeResults = Array.isArray(results) ? results : [];
+  const grouped = new Map();
+  for (const row of safeResults) {
+    const mode = row?.mode || "unknown";
+    if (!grouped.has(mode)) {
+      grouped.set(mode, []);
+    }
+    grouped.get(mode).push(row);
+  }
+  return {
+    overall: {
+      first: collectSchemaInvalidIssueStats(safeResults, "first"),
+      retry: collectSchemaInvalidIssueStats(safeResults, "retry"),
+    },
+    byMode: Array.from(grouped.entries()).map(([mode, rows]) => ({
+      mode,
+      total: rows.length,
+      first: collectSchemaInvalidIssueStats(rows, "first"),
+      retry: collectSchemaInvalidIssueStats(rows, "retry"),
+    })),
+  };
+}
+
 function printTopReasonsTable(title, stageStats, totalRows, topN = 5) {
   console.log(title);
   console.log("| stage | reason | count | rate |");
@@ -395,6 +460,36 @@ function printAttemptReasonStats(results) {
   console.log("\n=== attemptDiagnostics.formatReason 分布（by mode）===");
   for (const item of stats.byMode) {
     printTopReasonsTable(`mode=${item.mode}`, item, item.total);
+  }
+  return stats;
+}
+
+function printSchemaInvalidIssueTable(title, stageStats, totalRows, topN = 5) {
+  console.log(title);
+  console.log("| stage | issue | count | rate |");
+  console.log("|-------|-------|-------|------|");
+  const safeTotalRows = Number.isFinite(Number(totalRows)) && Number(totalRows) > 0 ? Math.floor(Number(totalRows)) : 1;
+  const firstRows = stageStats.first.entries.slice(0, topN);
+  const retryRows = stageStats.retry.entries.slice(0, topN);
+  if (firstRows.length === 0 && retryRows.length === 0) {
+    console.log("| - | - | 0 | 0.0% |");
+    return;
+  }
+  for (const item of firstRows) {
+    console.log(`| first | ${item.issue} | ${item.count} | ${toPercent(item.count / safeTotalRows)} |`);
+  }
+  for (const item of retryRows) {
+    console.log(`| retry | ${item.issue} | ${item.count} | ${toPercent(item.count / safeTotalRows)} |`);
+  }
+}
+
+function printSchemaInvalidIssueStats(results) {
+  const stats = buildSchemaInvalidIssueStats(results);
+  console.log("\n=== schema_invalid 失败项分布（overall）===");
+  printSchemaInvalidIssueTable("overall schema_invalid issues", stats.overall, results.length);
+  console.log("\n=== schema_invalid 失败项分布（by mode）===");
+  for (const item of stats.byMode) {
+    printSchemaInvalidIssueTable(`mode=${item.mode}`, item, item.total);
   }
   return stats;
 }
@@ -850,6 +945,7 @@ async function run() {
   console.log("\n=== 按 mode 统计 ===");
   const modeStats = printModeStats(results);
   const reasonStats = printAttemptReasonStats(results);
+  const schemaInvalidIssueStats = printSchemaInvalidIssueStats(results);
   const firstTransportStats = printFirstTransportStats(results);
 
   const summary = evaluateThresholds(results);
@@ -883,6 +979,16 @@ async function run() {
   for (const note of buildDiagnosis(results, summary)) {
     console.log(`- ${note}`);
   }
+  const topSchemaFirstIssue =
+    schemaInvalidIssueStats?.overall?.first?.entries && schemaInvalidIssueStats.overall.first.entries.length > 0
+      ? `${schemaInvalidIssueStats.overall.first.entries[0].issue} (${schemaInvalidIssueStats.overall.first.entries[0].count})`
+      : "-";
+  const topSchemaRetryIssue =
+    schemaInvalidIssueStats?.overall?.retry?.entries && schemaInvalidIssueStats.overall.retry.entries.length > 0
+      ? `${schemaInvalidIssueStats.overall.retry.entries[0].issue} (${schemaInvalidIssueStats.overall.retry.entries[0].count})`
+      : "-";
+  console.log(`- schema_invalid first top issue: ${topSchemaFirstIssue}`);
+  console.log(`- schema_invalid retry top issue: ${topSchemaRetryIssue}`);
 
   const allPass = summary.checks.every((item) => item.pass);
   if (!allPass) {
