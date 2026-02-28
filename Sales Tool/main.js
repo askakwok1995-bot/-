@@ -1334,10 +1334,8 @@ async function initializeApp() {
     }
 
     const range = analysisContext?.range && typeof analysisContext.range === "object" ? analysisContext.range : {};
-    const periodStart = String(range.start || "").trim();
-    const periodEnd = String(range.end || "").trim();
-    const startYm = periodStart ? periodStart.slice(0, 7) : "";
-    const endYm = periodEnd ? periodEnd.slice(0, 7) : "";
+    const startYm = String(range.startYm || "").trim();
+    const endYm = String(range.endYm || "").trim();
     const periodLabel = String(range.label || "").trim() || `${startYm || "未知"}~${endYm || "未知"}`;
     const products = compactProductItems.map((item) => String(item.title || "").trim()).filter((item) => item).slice(0, 3);
     const hospitals = compactHospitalItems

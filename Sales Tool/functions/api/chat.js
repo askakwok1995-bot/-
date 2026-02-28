@@ -22,6 +22,7 @@ const FIRST_TRANSPORT_TIMEOUT_RETRY_BUDGET_BUFFER_MS = 1000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
+const NATURAL_MAX_OUTPUT_TOKENS = 768;
 const MIN_SUMMARY_CHARS = 70;
 const MIN_HIGHLIGHTS_COUNT = 1;
 const MIN_EVIDENCE_COUNT = 1;
@@ -668,7 +669,7 @@ function buildClarifyResponse(contextV1, reason) {
   };
 }
 
-function buildNaturalResponse(contextV1, message) {
+function buildNaturalResponse(contextV1, message, modelReply = "") {
   const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, 2);
   const trendSummary =
     trimString(contextV1?.business?.trend?.summary) || trimString(contextV1?.business?.overview?.trendOverview?.summary);
@@ -685,17 +686,20 @@ function buildNaturalResponse(contextV1, message) {
     disclaimerList.push("数据不足");
   }
   if (Array.isArray(contextV1?.quality?.missingFields) && contextV1.quality.missingFields.length > 0) {
-    disclaimerList.push(`缺少字段：${contextV1.quality.missingFields.join("、")}`);
+    disclaimerList.push("部分口径信息不完整");
   }
   const disclaimerText = disclaimerList.length > 0 ? `说明：${disclaimerList.join("；")}。` : "";
   const questionHint = trimString(message) ? "" : "请告诉我你想看的指标或时间范围。";
-  const surfaceReply = [summary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+  const fallbackReply = [summary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+  const modelText = trimString(modelReply);
+  const surfaceReply = modelText || fallbackReply;
+  const summaryText = modelText ? trimString(modelText.split(/[。！？\n]/)[0]) || modelText.slice(0, 120) : summary;
 
   return {
     surfaceReply,
     internalStructured: {
       kind: "natural",
-      summary,
+      summary: summaryText,
       evidenceRefs,
       confidence: contextV1?.quality?.confidence || "medium",
       scopeUsed: {
@@ -1229,6 +1233,71 @@ function getModeResponseSchema(mode) {
   return {
     ...CHAT_RESPONSE_SCHEMA,
     required: requiredFields,
+  };
+}
+
+function buildNaturalPrompt(message, contextV1, history) {
+  const safeMessage = trimString(message);
+  const safeHistory = sanitizeHistoryList(history);
+  const historyText = formatHistoryText(safeHistory);
+  const naturalContext = {
+    scope: contextV1?.scope || {},
+    business: {
+      overview: contextV1?.business?.overview || {},
+      trend: contextV1?.business?.trend || {},
+      evidenceTop: contextV1?.business?.evidenceTop || [],
+      riskTop: contextV1?.business?.riskTop || [],
+    },
+    quality: contextV1?.quality || {},
+  };
+  const contextText = safeContextText(naturalContext);
+
+  return [
+    "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
+    "输出语言：简体中文。",
+    "回答形态：自然问答（非结构化模板）。",
+    "回答要求：先给结论，再给1-2条关键依据；必要时给1条可执行建议。",
+    "语气要求：像业务助手，避免机械模板句，不要输出 JSON 或 Markdown 代码块。",
+    "如果信息不足，请明确说明不足点，并给出一个自然的补充问题。",
+    "优先参考最近对话上下文，但以当前业务口径为准。",
+    "",
+    "最近对话摘要（按时间顺序）：",
+    historyText,
+    "",
+    "用户问题：",
+    safeMessage,
+    "",
+    "业务上下文(JSON)：",
+    contextText,
+  ].join("\n");
+}
+
+function buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget = null) {
+  const safeThinkingBudget = Number(thinkingBudget);
+  const hasThinkingBudget = Number.isFinite(safeThinkingBudget) && safeThinkingBudget >= 0;
+  const generationConfig = {
+    temperature: 0.25,
+    topP: 0.9,
+    maxOutputTokens: NATURAL_MAX_OUTPUT_TOKENS,
+  };
+  if (hasThinkingBudget) {
+    generationConfig.thinkingConfig = {
+      thinkingBudget: Math.floor(safeThinkingBudget),
+    };
+  }
+
+  return {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: buildNaturalPrompt(message, contextV1, history),
+          },
+        ],
+      },
+    ],
+    generationConfig,
   };
 }
 
@@ -2038,6 +2107,34 @@ async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstream
   };
 }
 
+async function generateNaturalModelReply(model, key, message, contextV1, history, thinkingBudget = null) {
+  const startedAt = Date.now();
+  const payload = buildGeminiNaturalPayload(message, contextV1, history, thinkingBudget);
+  const firstAttempt = await requestGeminiFirstStageWithAvailabilityRetry(model, key, payload, {
+    requestStartedAt: startedAt,
+  });
+  if (!firstAttempt.ok) {
+    if (firstAttempt.error && typeof firstAttempt.error === "object") {
+      firstAttempt.error.firstTransportAttempts = Number(firstAttempt?.firstTransport?.firstTransportAttempts) > 1 ? 2 : 1;
+      firstAttempt.error.firstTransportRetryApplied = Boolean(firstAttempt?.firstTransport?.firstTransportRetryApplied);
+      firstAttempt.error.firstTransportRetryRecovered = Boolean(firstAttempt?.firstTransport?.firstTransportRetryRecovered);
+      firstAttempt.error.firstTransportStatuses = normalizeStatusCodeList(firstAttempt?.firstTransport?.firstTransportStatuses);
+    }
+    return firstAttempt;
+  }
+
+  return {
+    ok: true,
+    reply: trimString(firstAttempt.reply),
+    finishReason: trimString(firstAttempt.finishReason),
+    totalDurationMs: Date.now() - startedAt,
+    firstTransportAttempts: Number(firstAttempt?.firstTransport?.firstTransportAttempts) > 1 ? 2 : 1,
+    firstTransportRetryApplied: Boolean(firstAttempt?.firstTransport?.firstTransportRetryApplied),
+    firstTransportRetryRecovered: Boolean(firstAttempt?.firstTransport?.firstTransportRetryRecovered),
+    firstTransportStatuses: normalizeStatusCodeList(firstAttempt?.firstTransport?.firstTransportStatuses),
+  };
+}
+
 async function attemptRepairStructured(model, key, rawReply, mode, thinkingBudget = null) {
   const sourceText = trimString(rawReply);
   if (!sourceText) {
@@ -2605,18 +2702,47 @@ export async function onRequestPost(context) {
   }
 
   if (route.responseAction === RESPONSE_ACTIONS.NATURAL) {
-    const natural = buildNaturalResponse(normalizedContext, message);
+    const naturalModel = await generateNaturalModelReply(model, key, message, normalizedContext, history, thinkingBudget);
+    const modelReply = naturalModel.ok ? trimString(naturalModel.reply) : "";
+    const natural = buildNaturalResponse(normalizedContext, message, modelReply);
+    const naturalDurationMs = naturalModel.ok
+      ? Number(naturalModel.totalDurationMs || 0)
+      : Number(naturalModel?.error?.durationMs || 0);
+    const safeNaturalDurationMs =
+      Number.isFinite(naturalDurationMs) && naturalDurationMs >= 0 ? Math.floor(naturalDurationMs) : 0;
+    const naturalFormatReason = modelReply
+      ? CHAT_FORMAT_REASONS.STRUCTURED_OK
+      : trimString(naturalModel?.error?.code).toLowerCase() || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
     const evaluation = {
-      format: "structured",
+      format: modelReply ? "structured" : "text_fallback",
       structured: null,
       reply: natural.surfaceReply,
-      formatReason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
-      finishReason: "NATURAL_ROUTED",
+      formatReason: naturalFormatReason,
+      finishReason: modelReply
+        ? trimString(naturalModel.finishReason) || "NATURAL_ROUTED"
+        : trimString(naturalModel?.error?.code) || "NATURAL_FALLBACK",
       outputChars: natural.surfaceReply.length,
       shouldRetry: false,
       qualityIssues: [],
       qualityCounts: null,
     };
+    const firstTransportAttempts = naturalModel.ok
+      ? Number(naturalModel.firstTransportAttempts || 1)
+      : Number(naturalModel?.error?.firstTransportAttempts || 1);
+    const firstTransportRetryApplied = naturalModel.ok
+      ? Boolean(naturalModel.firstTransportRetryApplied)
+      : Boolean(naturalModel?.error?.firstTransportRetryApplied);
+    const firstTransportRetryRecovered = naturalModel.ok
+      ? Boolean(naturalModel.firstTransportRetryRecovered)
+      : Boolean(naturalModel?.error?.firstTransportRetryRecovered);
+    const firstTransportStatuses = naturalModel.ok
+      ? normalizeStatusCodeList(naturalModel.firstTransportStatuses)
+      : normalizeStatusCodeList(naturalModel?.error?.firstTransportStatuses);
+    const naturalAttemptDiagnostics =
+      naturalModel.ok || modelReply
+        ? [buildAttemptDiagnostic("first", evaluation, NATURAL_MAX_OUTPUT_TOKENS, safeNaturalDurationMs)]
+        : [buildAttemptDiagnosticFromError("first", naturalModel.error, NATURAL_MAX_OUTPUT_TOKENS, safeNaturalDurationMs)];
+
     return jsonResponse(
       buildChatSuccessPayload({
         evaluation,
@@ -2633,14 +2759,18 @@ export async function onRequestPost(context) {
         repairApplied: false,
         repairSucceeded: false,
         attemptCount: 1,
-        totalDurationMs: 0,
+        totalDurationMs: safeNaturalDurationMs,
         stageDurations: {
-          first: 0,
+          first: safeNaturalDurationMs,
         },
         finalStage: "first",
         contextChars: requestContextChars,
         historyChars: requestHistoryChars,
-        attemptDiagnostics: [buildAttemptDiagnostic("first", evaluation, 0, 0)],
+        attemptDiagnostics: naturalAttemptDiagnostics,
+        firstTransportAttempts,
+        firstTransportRetryApplied,
+        firstTransportRetryRecovered,
+        firstTransportStatuses,
       }),
       200,
       requestId,
