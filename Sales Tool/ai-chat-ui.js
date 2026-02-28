@@ -5,9 +5,15 @@ const CHAT_STATES = {
   EXPANDED: "expanded",
 };
 const CHAT_MODES = {
+  AUTO: "auto",
   BRIEFING: "briefing",
   DIAGNOSIS: "diagnosis",
   ACTION_PLAN: "action-plan",
+};
+const CHAT_RESPONSE_ACTIONS = {
+  NATURAL: "natural_answer",
+  STRUCTURED: "structured_answer",
+  CLARIFY: "clarify",
 };
 const CHAT_FORMAT_REASONS = {
   STRUCTURED_OK: "structured_ok",
@@ -28,18 +34,32 @@ function isValidState(value) {
 }
 
 function isValidMode(value) {
-  return value === CHAT_MODES.BRIEFING || value === CHAT_MODES.DIAGNOSIS || value === CHAT_MODES.ACTION_PLAN;
+  return (
+    value === CHAT_MODES.AUTO ||
+    value === CHAT_MODES.BRIEFING ||
+    value === CHAT_MODES.DIAGNOSIS ||
+    value === CHAT_MODES.ACTION_PLAN
+  );
 }
 
 function normalizeMode(value) {
   const candidate = String(value || "").trim();
-  return isValidMode(candidate) ? candidate : CHAT_MODES.BRIEFING;
+  return isValidMode(candidate) ? candidate : CHAT_MODES.AUTO;
 }
 
 function getModeLabel(mode) {
+  if (mode === CHAT_MODES.AUTO) return "自动";
   if (mode === CHAT_MODES.DIAGNOSIS) return "诊断";
   if (mode === CHAT_MODES.ACTION_PLAN) return "行动";
   return "简报";
+}
+
+function normalizeResponseAction(value) {
+  const candidate = toText(value);
+  if (candidate === CHAT_RESPONSE_ACTIONS.NATURAL || candidate === CHAT_RESPONSE_ACTIONS.CLARIFY) {
+    return candidate;
+  }
+  return CHAT_RESPONSE_ACTIONS.STRUCTURED;
 }
 
 function toText(value) {
@@ -633,9 +653,13 @@ export function initAiChatUi(options = {}) {
     if (typeof payload === "string") {
       return {
         reply: payload.trim(),
+        surfaceReply: payload.trim(),
         structured: null,
         mode: currentMode,
         format: "text_fallback",
+        responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
+        businessIntent: "chat",
+        internalStructured: null,
         requestId: "",
         meta: null,
         fallbackNotice: "",
@@ -644,9 +668,13 @@ export function initAiChatUi(options = {}) {
     if (!payload || typeof payload !== "object") {
       return {
         reply: "",
+        surfaceReply: "",
         structured: null,
         mode: currentMode,
         format: "text_fallback",
+        responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
+        businessIntent: "chat",
+        internalStructured: null,
         requestId: "",
         meta: null,
         fallbackNotice: "",
@@ -654,10 +682,14 @@ export function initAiChatUi(options = {}) {
     }
 
     const reply =
+      toText(payload.surfaceReply) ||
       toText(payload.reply) ||
       toText(payload.message) ||
       toText(payload.text);
+    const responseAction = normalizeResponseAction(payload.responseAction);
+    const businessIntent = toText(payload.businessIntent) || (responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED ? normalizeMode(payload.mode) : "chat");
     const structured = normalizeStructuredPayload(payload.structured);
+    const internalStructured = payload.internalStructured && typeof payload.internalStructured === "object" ? payload.internalStructured : null;
     const mode = normalizeMode(payload.mode || currentMode);
     const format = payload.format === "structured" ? "structured" : "text_fallback";
     const requestId = toText(payload.requestId);
@@ -682,7 +714,11 @@ export function initAiChatUi(options = {}) {
       : null;
     return {
       reply,
+      surfaceReply: reply,
       structured,
+      internalStructured,
+      responseAction,
+      businessIntent,
       mode,
       format,
       requestId,
@@ -739,7 +775,9 @@ export function initAiChatUi(options = {}) {
       const normalized = normalizeReplyPayload(result);
       let hasRendered = false;
 
-      if (normalized.structured) {
+      const shouldRenderStructuredCard =
+        normalized.responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED && normalized.structured;
+      if (shouldRenderStructuredCard) {
         removeLiveMessage(liveMessage);
         hasRendered = appendStructuredAssistantMessage(normalized.structured, normalized.mode);
       }
@@ -760,7 +798,10 @@ export function initAiChatUi(options = {}) {
       resetFailureState();
 
       dom.statusEl.classList.add("ai-chat-status-ready");
-      if (normalized.format === "text_fallback") {
+      if (
+        normalized.format === "text_fallback" &&
+        normalized.responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED
+      ) {
         let fallbackStatus = normalized.fallbackNotice;
         if (!fallbackStatus && normalized.meta) {
           fallbackStatus = `已回退文本显示：${getFormatReasonLabel(normalized.meta.formatReason)}（原因码: ${normalized.meta.formatReason}）`;
@@ -780,6 +821,10 @@ export function initAiChatUi(options = {}) {
             : `已回退文本显示（请求号: ${normalized.requestId}）。`;
         }
         dom.statusEl.textContent = fallbackStatus || "已回退文本显示。";
+      } else if (normalized.responseAction === CHAT_RESPONSE_ACTIONS.CLARIFY) {
+        dom.statusEl.textContent = "AI 需要你补充信息后继续分析。";
+      } else if (normalized.responseAction === CHAT_RESPONSE_ACTIONS.NATURAL) {
+        dom.statusEl.textContent = "AI 已按自由问答回复。";
       } else {
         if (hasRendered && debugStatusDetails && normalized.meta) {
           dom.statusEl.textContent = `AI 已按${getModeLabel(normalized.mode)}模式回复（耗时 ${formatDurationSeconds(

@@ -50,6 +50,23 @@ const CHAT_MODES = Object.freeze({
   DIAGNOSIS: "diagnosis",
   ACTION_PLAN: "action-plan",
 });
+const CHAT_REQUEST_MODES = Object.freeze({
+  AUTO: "auto",
+  BRIEFING: CHAT_MODES.BRIEFING,
+  DIAGNOSIS: CHAT_MODES.DIAGNOSIS,
+  ACTION_PLAN: CHAT_MODES.ACTION_PLAN,
+});
+const RESPONSE_ACTIONS = Object.freeze({
+  NATURAL: "natural_answer",
+  STRUCTURED: "structured_answer",
+  CLARIFY: "clarify",
+});
+const BUSINESS_INTENTS = Object.freeze({
+  CHAT: "chat",
+  BRIEFING: CHAT_MODES.BRIEFING,
+  DIAGNOSIS: CHAT_MODES.DIAGNOSIS,
+  ACTION_PLAN: CHAT_MODES.ACTION_PLAN,
+});
 const CHAT_HISTORY_ROLES = Object.freeze({
   USER: "user",
   ASSISTANT: "assistant",
@@ -262,6 +279,19 @@ function sanitizeMode(rawMode) {
   return CHAT_MODES.BRIEFING;
 }
 
+function sanitizeRequestedMode(rawMode) {
+  const mode = trimString(rawMode).toLowerCase();
+  if (
+    mode === CHAT_REQUEST_MODES.AUTO ||
+    mode === CHAT_REQUEST_MODES.BRIEFING ||
+    mode === CHAT_REQUEST_MODES.DIAGNOSIS ||
+    mode === CHAT_REQUEST_MODES.ACTION_PLAN
+  ) {
+    return mode;
+  }
+  return CHAT_REQUEST_MODES.AUTO;
+}
+
 function isValidHistoryRole(role) {
   return role === CHAT_HISTORY_ROLES.USER || role === CHAT_HISTORY_ROLES.ASSISTANT;
 }
@@ -324,6 +354,361 @@ function formatHistoryText(history) {
       return `${index + 1}. ${roleLabel}：${item.content}`;
     })
     .join("\n");
+}
+
+function sanitizeStringList(value, maxItems = 6) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => trimString(item))
+    .filter((item) => item)
+    .slice(0, maxItems);
+}
+
+function sanitizeEvidenceRefs(value, maxItems = 2) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const label = trimString(item.label);
+      const valueText = trimString(item.value);
+      const source = trimString(item.source) || "reportRecords";
+      if (!label || !valueText) {
+        return null;
+      }
+      return { label, value: valueText, source };
+    })
+    .filter((item) => item !== null)
+    .slice(0, maxItems);
+}
+
+function sanitizeScope(rawScope) {
+  const scope = rawScope && typeof rawScope === "object" ? rawScope : {};
+  const levelCandidate = trimString(scope.level).toLowerCase();
+  const levelSet = new Set(["overall", "product", "hospital", "mixed", "unknown"]);
+  return {
+    period: {
+      startYm: trimString(scope?.period?.startYm),
+      endYm: trimString(scope?.period?.endYm),
+      label: trimString(scope?.period?.label),
+      isExplicit: Boolean(scope?.period?.isExplicit),
+    },
+    entities: {
+      products: sanitizeStringList(scope?.entities?.products, 8),
+      hospitals: sanitizeStringList(scope?.entities?.hospitals, 8),
+      regions: sanitizeStringList(scope?.entities?.regions, 8),
+    },
+    level: levelSet.has(levelCandidate) ? levelCandidate : "unknown",
+  };
+}
+
+function sanitizeSession(rawSession) {
+  const session = rawSession && typeof rawSession === "object" ? rawSession : {};
+  const intentCandidate = trimString(session.lastIntent).toLowerCase();
+  const actionCandidate = trimString(session.lastResponseAction).toLowerCase();
+  return {
+    lastIntent:
+      intentCandidate === BUSINESS_INTENTS.BRIEFING ||
+      intentCandidate === BUSINESS_INTENTS.DIAGNOSIS ||
+      intentCandidate === BUSINESS_INTENTS.ACTION_PLAN ||
+      intentCandidate === BUSINESS_INTENTS.CHAT
+        ? intentCandidate
+        : "",
+    lastResponseAction:
+      actionCandidate === RESPONSE_ACTIONS.NATURAL ||
+      actionCandidate === RESPONSE_ACTIONS.STRUCTURED ||
+      actionCandidate === RESPONSE_ACTIONS.CLARIFY
+        ? actionCandidate
+        : "",
+    lastScope: session.lastScope && typeof session.lastScope === "object" ? session.lastScope : null,
+    unresolvedClarify: trimString(session.unresolvedClarify),
+  };
+}
+
+function sanitizeBusiness(rawBusiness) {
+  const business = rawBusiness && typeof rawBusiness === "object" ? rawBusiness : {};
+  const legacyContext =
+    business.legacyContext && typeof business.legacyContext === "object" ? business.legacyContext : {};
+  return {
+    overview: business.overview && typeof business.overview === "object" ? business.overview : {},
+    trend: business.trend && typeof business.trend === "object" ? business.trend : {},
+    evidenceTop: sanitizeEvidenceRefs(business.evidenceTop, 3),
+    riskTop: sanitizeStringList(business.riskTop, 4),
+    outline: business.outline && typeof business.outline === "object" ? business.outline : {},
+    legacyContext,
+  };
+}
+
+function inferHasDataFromLegacyContext(legacyContext) {
+  if (legacyContext && typeof legacyContext === "object") {
+    const explicitFlag = legacyContext?.analysis?.meta?.hasData;
+    if (explicitFlag === true || explicitFlag === false) {
+      return explicitFlag;
+    }
+  }
+  return hasEffectiveAnalysisContext(legacyContext);
+}
+
+function sanitizeQuality(rawQuality, legacyContext) {
+  const quality = rawQuality && typeof rawQuality === "object" ? rawQuality : {};
+  const confidenceCandidate = trimString(quality.confidence).toLowerCase();
+  const sourceCandidate = trimString(quality.source);
+  const hasData =
+    typeof quality.hasData === "boolean" ? quality.hasData : inferHasDataFromLegacyContext(legacyContext);
+  return {
+    hasData,
+    confidence:
+      confidenceCandidate === "high" || confidenceCandidate === "low"
+        ? confidenceCandidate
+        : "medium",
+    missingFields: sanitizeStringList(quality.missingFields, 8),
+    source: sourceCandidate || "reportRecords",
+  };
+}
+
+function isContextV1(rawContext) {
+  if (!rawContext || typeof rawContext !== "object" || Array.isArray(rawContext)) {
+    return false;
+  }
+  return Boolean(rawContext.query || rawContext.scope || rawContext.session || rawContext.business || rawContext.quality);
+}
+
+function pickLegacyContextFromV1Business(business) {
+  if (business?.legacyContext && hasMeaningfulContextObject(business.legacyContext)) {
+    return business.legacyContext;
+  }
+
+  const fallback = {
+    analysis: business?.overview?.analysis || {},
+    kpi: business?.overview?.kpi || business?.overview || {},
+    trendOverview: business?.trend?.trendOverview || business?.trend || {},
+    trend: business?.trend?.trend || business?.trend || {},
+    risk: {
+      ok: Array.isArray(business?.riskTop) ? business.riskTop.length > 0 : false,
+      summary: Array.isArray(business?.riskTop) ? business.riskTop.join("；") : "",
+      items: Array.isArray(business?.riskTop)
+        ? business.riskTop.map((item, index) => ({
+            id: `risk_${index + 1}`,
+            title: "风险提示",
+            summary: item,
+          }))
+        : [],
+    },
+    overviewMetric: business?.overview?.overviewMetric || null,
+    keyEvidence:
+      Array.isArray(business?.evidenceTop) && business.evidenceTop.length > 0
+        ? business.evidenceTop[0]
+        : null,
+    outline: business?.outline || {},
+  };
+  return fallback;
+}
+
+function normalizeContextV1(rawContext, message) {
+  const raw = rawContext && typeof rawContext === "object" ? rawContext : {};
+  if (isContextV1(raw)) {
+    const business = sanitizeBusiness(raw.business);
+    const legacyContext = pickLegacyContextFromV1Business(business);
+    return {
+      query: {
+        text: trimString(raw?.query?.text) || trimString(message),
+      },
+      scope: sanitizeScope(raw.scope),
+      session: sanitizeSession(raw.session),
+      business,
+      quality: sanitizeQuality(raw.quality, legacyContext),
+      legacyContext,
+    };
+  }
+
+  const legacyContext = sanitizeContextPayload(rawContext);
+  const derivedEvidence =
+    legacyContext?.keyEvidence && typeof legacyContext.keyEvidence === "object"
+      ? sanitizeEvidenceRefs([legacyContext.keyEvidence], 1)
+      : [];
+  const derivedRisks = sanitizeStringList(
+    Array.isArray(legacyContext?.risk?.items)
+      ? legacyContext.risk.items.map((item) => trimString(item?.summary || item?.title))
+      : [],
+    3,
+  );
+  return {
+    query: {
+      text: trimString(message),
+    },
+    scope: sanitizeScope(null),
+    session: sanitizeSession(null),
+    business: {
+      overview: legacyContext,
+      trend: legacyContext?.trend || legacyContext?.trendOverview || {},
+      evidenceTop: derivedEvidence,
+      riskTop: derivedRisks,
+      outline: legacyContext?.outline || {},
+      legacyContext,
+    },
+    quality: sanitizeQuality(null, legacyContext),
+    legacyContext,
+  };
+}
+
+function hasPeriodSignal(message) {
+  const text = trimString(message);
+  if (!text) {
+    return false;
+  }
+  return /(同比|环比|本月|上月|季度|q[1-4]|趋势|变化|增长|下降|今年|去年|月度|季度)/i.test(text);
+}
+
+function resolveResponseAction(requestedMode, message, contextV1) {
+  const explicitMode = sanitizeMode(requestedMode);
+  if (requestedMode !== CHAT_REQUEST_MODES.AUTO) {
+    return {
+      responseAction: RESPONSE_ACTIONS.STRUCTURED,
+      businessIntent: explicitMode,
+      structuredMode: explicitMode,
+      ruleId: "explicit_mode",
+      routeSource: "explicit",
+      confidence: "high",
+    };
+  }
+
+  if (contextV1?.quality?.hasData === false) {
+    return {
+      responseAction: RESPONSE_ACTIONS.CLARIFY,
+      businessIntent: BUSINESS_INTENTS.CHAT,
+      structuredMode: "",
+      ruleId: "clarify_no_data",
+      routeSource: "rule",
+      confidence: "high",
+      clarifyReason: "no_data",
+    };
+  }
+
+  const periodExplicit = Boolean(contextV1?.scope?.period?.isExplicit);
+  const hasSessionPeriod =
+    Boolean(trimString(contextV1?.session?.lastScope?.period?.startYm)) ||
+    Boolean(trimString(contextV1?.session?.lastScope?.period?.endYm)) ||
+    Boolean(trimString(contextV1?.session?.lastScope?.period?.label));
+  if (hasPeriodSignal(message) && !periodExplicit && !hasSessionPeriod) {
+    return {
+      responseAction: RESPONSE_ACTIONS.CLARIFY,
+      businessIntent: BUSINESS_INTENTS.CHAT,
+      structuredMode: "",
+      ruleId: "clarify_missing_period",
+      routeSource: "rule",
+      confidence: "high",
+      clarifyReason: "missing_period",
+    };
+  }
+
+  const safeMessage = trimString(message);
+  if (
+    /(简报|汇报|周报|月报|总结|概览|诊断|分析|原因|为什么|根因|瓶颈|异常|行动|计划|执行|落地|负责人|步骤|清单)/i.test(
+      safeMessage,
+    )
+  ) {
+    let structuredMode = CHAT_MODES.BRIEFING;
+    let ruleId = "structured_briefing";
+    if (/(行动|计划|执行|落地|负责人|步骤|清单|里程碑)/i.test(safeMessage)) {
+      structuredMode = CHAT_MODES.ACTION_PLAN;
+      ruleId = "structured_action_plan";
+    } else if (/(诊断|分析|原因|为什么|根因|瓶颈|异常|下滑|波动)/i.test(safeMessage)) {
+      structuredMode = CHAT_MODES.DIAGNOSIS;
+      ruleId = "structured_diagnosis";
+    }
+    return {
+      responseAction: RESPONSE_ACTIONS.STRUCTURED,
+      businessIntent: structuredMode,
+      structuredMode,
+      ruleId,
+      routeSource: "rule",
+      confidence: "medium",
+    };
+  }
+
+  return {
+    responseAction: RESPONSE_ACTIONS.NATURAL,
+    businessIntent: BUSINESS_INTENTS.CHAT,
+    structuredMode: "",
+    ruleId: "default_chat",
+    routeSource: "rule",
+    confidence: "high",
+  };
+}
+
+function buildClarifyResponse(contextV1, reason) {
+  if (reason === "no_data") {
+    return {
+      surfaceReply: "我现在拿不到可用业务数据。请先同步销售记录或目标配置，我再给你可执行的结论。",
+      internalStructured: {
+        kind: "clarify",
+        missingSlot: "data",
+        confidence: "high",
+        question: "请先确认是否已导入本期销售数据与目标口径。",
+      },
+    };
+  }
+
+  const currentPeriod = trimString(contextV1?.scope?.period?.label);
+  return {
+    surfaceReply: currentPeriod
+      ? `你想看的时间范围是哪个？当前可用范围是“${currentPeriod}”，我也可以按你指定的月份或季度重算。`
+      : "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+    internalStructured: {
+      kind: "clarify",
+      missingSlot: "period",
+      confidence: "high",
+      question: "请补充 period（例如本月、上月、季度）。",
+    },
+  };
+}
+
+function buildNaturalResponse(contextV1, message) {
+  const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, 2);
+  const trendSummary =
+    trimString(contextV1?.business?.trend?.summary) || trimString(contextV1?.business?.overview?.trendOverview?.summary);
+  const overviewSummary =
+    trimString(contextV1?.business?.overview?.kpi?.summary) || trimString(contextV1?.business?.overview?.summary);
+  const fallbackSummary = contextV1?.quality?.hasData
+    ? "已基于当前业务数据给出简要结论。"
+    : "当前数据不足，以下回复仅供参考。";
+  const summary = overviewSummary || trendSummary || fallbackSummary;
+  const evidenceText =
+    evidenceRefs.length > 0 ? `关键依据：${evidenceRefs.map((item) => `${item.label}${item.value}`).join("；")}。` : "";
+  const disclaimerList = [];
+  if (!contextV1?.quality?.hasData) {
+    disclaimerList.push("数据不足");
+  }
+  if (Array.isArray(contextV1?.quality?.missingFields) && contextV1.quality.missingFields.length > 0) {
+    disclaimerList.push(`缺少字段：${contextV1.quality.missingFields.join("、")}`);
+  }
+  const disclaimerText = disclaimerList.length > 0 ? `说明：${disclaimerList.join("；")}。` : "";
+  const questionHint = trimString(message) ? "" : "请告诉我你想看的指标或时间范围。";
+  const surfaceReply = [summary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+
+  return {
+    surfaceReply,
+    internalStructured: {
+      kind: "natural",
+      summary,
+      evidenceRefs,
+      confidence: contextV1?.quality?.confidence || "medium",
+      scopeUsed: {
+        period: trimString(contextV1?.scope?.period?.label),
+        entities: [
+          ...sanitizeStringList(contextV1?.scope?.entities?.products, 4),
+          ...sanitizeStringList(contextV1?.scope?.entities?.hospitals, 4),
+          ...sanitizeStringList(contextV1?.scope?.entities?.regions, 4),
+        ].slice(0, 6),
+      },
+      disclaimers: disclaimerList,
+    },
+  };
 }
 
 function safeJsonLength(value) {
@@ -557,6 +942,12 @@ function buildChatSuccessPayload(params) {
     model,
     requestId,
     mode,
+    surfaceReply = "",
+    internalStructured = null,
+    responseAction = RESPONSE_ACTIONS.STRUCTURED,
+    businessIntent = BUSINESS_INTENTS.BRIEFING,
+    legacyStructured,
+    routing = null,
     retryCount = 0,
     repairApplied = false,
     repairSucceeded = false,
@@ -574,9 +965,32 @@ function buildChatSuccessPayload(params) {
     shortCircuitReason = "",
   } = params || {};
   const format = evaluation && evaluation.format === "structured" ? "structured" : "text_fallback";
-  const structured = format === "structured" ? evaluation.structured : null;
+  const normalizedStructured =
+    format === "structured" && evaluation && typeof evaluation.structured === "object"
+      ? evaluation.structured
+      : null;
+  const structured = typeof legacyStructured === "undefined" ? normalizedStructured : legacyStructured;
   const fallbackReply = trimString(evaluation?.reply) || "结构化输出未完成，请重试。";
-  const reply = format === "structured" ? structured.summary : fallbackReply;
+  const computedReply = format === "structured" && structured && trimString(structured.summary)
+    ? trimString(structured.summary)
+    : fallbackReply;
+  const reply = trimString(surfaceReply) || computedReply;
+  const safeResponseAction =
+    responseAction === RESPONSE_ACTIONS.NATURAL ||
+    responseAction === RESPONSE_ACTIONS.CLARIFY ||
+    responseAction === RESPONSE_ACTIONS.STRUCTURED
+      ? responseAction
+      : RESPONSE_ACTIONS.STRUCTURED;
+  const safeBusinessIntent =
+    businessIntent === BUSINESS_INTENTS.CHAT ||
+    businessIntent === BUSINESS_INTENTS.BRIEFING ||
+    businessIntent === BUSINESS_INTENTS.DIAGNOSIS ||
+    businessIntent === BUSINESS_INTENTS.ACTION_PLAN
+      ? businessIntent
+      : BUSINESS_INTENTS.BRIEFING;
+  const safeInternalStructured =
+    internalStructured && typeof internalStructured === "object" ? internalStructured : null;
+  const safeRouting = routing && typeof routing === "object" ? routing : null;
   const safeAttemptCount = Number.isFinite(Number(attemptCount)) && Number(attemptCount) > 0 ? Math.floor(Number(attemptCount)) : 1;
   const totalDuration = Number.isFinite(Number(totalDurationMs)) && Number(totalDurationMs) >= 0 ? Math.floor(Number(totalDurationMs)) : 0;
   const safeFirstDuration = Number.isFinite(Number(stageDurations?.first)) && Number(stageDurations.first) >= 0 ? Math.floor(Number(stageDurations.first)) : 0;
@@ -665,6 +1079,10 @@ function buildChatSuccessPayload(params) {
 
   const payload = {
     reply,
+    surfaceReply: reply,
+    internalStructured: safeInternalStructured,
+    responseAction: safeResponseAction,
+    businessIntent: safeBusinessIntent,
     model,
     requestId,
     mode,
@@ -694,6 +1112,30 @@ function buildChatSuccessPayload(params) {
       firstTransportStatuses: safeFirstTransportStatuses,
     },
   };
+  if (safeRouting) {
+    payload.meta.routing = {
+      requestedMode:
+        trimString(safeRouting.requestedMode) === CHAT_REQUEST_MODES.BRIEFING ||
+        trimString(safeRouting.requestedMode) === CHAT_REQUEST_MODES.DIAGNOSIS ||
+        trimString(safeRouting.requestedMode) === CHAT_REQUEST_MODES.ACTION_PLAN
+          ? trimString(safeRouting.requestedMode)
+          : CHAT_REQUEST_MODES.AUTO,
+      responseAction:
+        trimString(safeRouting.responseAction) === RESPONSE_ACTIONS.NATURAL ||
+        trimString(safeRouting.responseAction) === RESPONSE_ACTIONS.CLARIFY
+          ? trimString(safeRouting.responseAction)
+          : RESPONSE_ACTIONS.STRUCTURED,
+      businessIntent:
+        trimString(safeRouting.businessIntent) === BUSINESS_INTENTS.CHAT ||
+        trimString(safeRouting.businessIntent) === BUSINESS_INTENTS.DIAGNOSIS ||
+        trimString(safeRouting.businessIntent) === BUSINESS_INTENTS.ACTION_PLAN
+          ? trimString(safeRouting.businessIntent)
+          : BUSINESS_INTENTS.BRIEFING,
+      routeSource: trimString(safeRouting.routeSource) === "explicit" ? "explicit" : "rule",
+      confidence: trimString(safeRouting.confidence) === "high" ? "high" : "medium",
+      ruleId: trimString(safeRouting.ruleId) || "rule_default",
+    };
+  }
   if (safeShortCircuitReason) {
     payload.meta.shortCircuitReason = safeShortCircuitReason;
   }
@@ -2084,9 +2526,10 @@ export async function onRequestPost(context) {
   }
 
   const message = trimString(body && body.message);
-  const contextPayload = sanitizeContextPayload(body && body.context);
+  const normalizedContext = normalizeContextV1(body && body.context, message);
+  const contextPayload = sanitizeContextPayload(normalizedContext.legacyContext);
   const history = sanitizeHistoryList(body && body.history);
-  const mode = sanitizeMode(body && body.mode);
+  const requestedMode = sanitizeRequestedMode(body && body.mode);
   const stream = Boolean(body && body.stream);
   const requestContextChars = safeJsonLength(contextPayload);
   const requestHistoryChars = safeJsonLength(history);
@@ -2104,11 +2547,117 @@ export async function onRequestPost(context) {
     );
   }
 
+  const route = resolveResponseAction(requestedMode, message, normalizedContext);
+  const compatibleMode =
+    route.responseAction === RESPONSE_ACTIONS.STRUCTURED
+      ? sanitizeMode(route.structuredMode)
+      : sanitizeMode(normalizedContext?.session?.lastIntent);
+  const routingMeta = {
+    requestedMode,
+    responseAction: route.responseAction,
+    businessIntent: route.businessIntent,
+    routeSource: route.routeSource,
+    confidence: route.confidence,
+    ruleId: route.ruleId,
+  };
+
+  if (route.responseAction === RESPONSE_ACTIONS.CLARIFY) {
+    const clarify = buildClarifyResponse(normalizedContext, route.clarifyReason);
+    const evaluation = {
+      format: "structured",
+      structured: null,
+      reply: clarify.surfaceReply,
+      formatReason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+      finishReason: "CLARIFY_ROUTED",
+      outputChars: clarify.surfaceReply.length,
+      shouldRetry: false,
+      qualityIssues: [],
+      qualityCounts: null,
+    };
+    return jsonResponse(
+      buildChatSuccessPayload({
+        evaluation,
+        surfaceReply: clarify.surfaceReply,
+        internalStructured: clarify.internalStructured,
+        responseAction: RESPONSE_ACTIONS.CLARIFY,
+        businessIntent: BUSINESS_INTENTS.CHAT,
+        legacyStructured: null,
+        routing: routingMeta,
+        model,
+        requestId,
+        mode: compatibleMode,
+        retryCount: 0,
+        repairApplied: false,
+        repairSucceeded: false,
+        attemptCount: 1,
+        totalDurationMs: 0,
+        stageDurations: {
+          first: 0,
+        },
+        finalStage: "first",
+        contextChars: requestContextChars,
+        historyChars: requestHistoryChars,
+        attemptDiagnostics: [buildAttemptDiagnostic("first", evaluation, 0, 0)],
+      }),
+      200,
+      requestId,
+    );
+  }
+
+  if (route.responseAction === RESPONSE_ACTIONS.NATURAL) {
+    const natural = buildNaturalResponse(normalizedContext, message);
+    const evaluation = {
+      format: "structured",
+      structured: null,
+      reply: natural.surfaceReply,
+      formatReason: CHAT_FORMAT_REASONS.STRUCTURED_OK,
+      finishReason: "NATURAL_ROUTED",
+      outputChars: natural.surfaceReply.length,
+      shouldRetry: false,
+      qualityIssues: [],
+      qualityCounts: null,
+    };
+    return jsonResponse(
+      buildChatSuccessPayload({
+        evaluation,
+        surfaceReply: natural.surfaceReply,
+        internalStructured: natural.internalStructured,
+        responseAction: RESPONSE_ACTIONS.NATURAL,
+        businessIntent: BUSINESS_INTENTS.CHAT,
+        legacyStructured: null,
+        routing: routingMeta,
+        model,
+        requestId,
+        mode: compatibleMode,
+        retryCount: 0,
+        repairApplied: false,
+        repairSucceeded: false,
+        attemptCount: 1,
+        totalDurationMs: 0,
+        stageDurations: {
+          first: 0,
+        },
+        finalStage: "first",
+        contextChars: requestContextChars,
+        historyChars: requestHistoryChars,
+        attemptDiagnostics: [buildAttemptDiagnostic("first", evaluation, 0, 0)],
+      }),
+      200,
+      requestId,
+    );
+  }
+
+  const mode = compatibleMode;
   const shortCircuitEvaluation = buildEmptyContextShortCircuitEvaluation(contextPayload, mode);
   if (shortCircuitEvaluation) {
     return jsonResponse(
       buildChatSuccessPayload({
         evaluation: shortCircuitEvaluation,
+        surfaceReply: shortCircuitEvaluation.structured?.summary || shortCircuitEvaluation.reply,
+        internalStructured: shortCircuitEvaluation.structured,
+        responseAction: RESPONSE_ACTIONS.STRUCTURED,
+        businessIntent: route.businessIntent,
+        routing: routingMeta,
         model,
         requestId,
         mode,
@@ -2179,6 +2728,13 @@ export async function onRequestPost(context) {
               if (fallback.ok) {
                 const payload = buildChatSuccessPayload({
                   evaluation: fallback.evaluation,
+                  surfaceReply:
+                    fallback.evaluation?.structured?.summary || trimString(fallback.evaluation?.reply),
+                  internalStructured:
+                    fallback.evaluation?.format === "structured" ? fallback.evaluation.structured : null,
+                  responseAction: RESPONSE_ACTIONS.STRUCTURED,
+                  businessIntent: route.businessIntent,
+                  routing: routingMeta,
                   model,
                   requestId,
                   mode,
@@ -2227,6 +2783,13 @@ export async function onRequestPost(context) {
             if (fallback.ok) {
               const payload = buildChatSuccessPayload({
                 evaluation: fallback.evaluation,
+                surfaceReply:
+                  fallback.evaluation?.structured?.summary || trimString(fallback.evaluation?.reply),
+                internalStructured:
+                  fallback.evaluation?.format === "structured" ? fallback.evaluation.structured : null,
+                responseAction: RESPONSE_ACTIONS.STRUCTURED,
+                businessIntent: route.businessIntent,
+                routing: routingMeta,
                 model,
                 requestId,
                 mode,
@@ -2271,6 +2834,11 @@ export async function onRequestPost(context) {
           const streamEvaluation = evaluateGeminiOutput(streamResult.reply, streamResult.finishReason, mode);
           const payload = buildChatSuccessPayload({
             evaluation: streamEvaluation,
+            surfaceReply: streamEvaluation?.structured?.summary || trimString(streamEvaluation?.reply),
+            internalStructured: streamEvaluation?.format === "structured" ? streamEvaluation.structured : null,
+            responseAction: RESPONSE_ACTIONS.STRUCTURED,
+            businessIntent: route.businessIntent,
+            routing: routingMeta,
             model,
             requestId,
             mode,
@@ -2317,12 +2885,20 @@ export async function onRequestPost(context) {
       stage: generated.error.stage,
       upstreamStatus: generated.error.upstreamStatus,
       durationMs: generated.error.durationMs,
+      firstTransportAttempts: generated.error.firstTransportAttempts,
+      firstTransportStatuses: generated.error.firstTransportStatuses,
+      firstTransportRetryApplied: generated.error.firstTransportRetryApplied,
     });
   }
 
   return jsonResponse(
     buildChatSuccessPayload({
       evaluation: generated.evaluation,
+      surfaceReply: generated.evaluation?.structured?.summary || trimString(generated.evaluation?.reply),
+      internalStructured: generated.evaluation?.format === "structured" ? generated.evaluation.structured : null,
+      responseAction: RESPONSE_ACTIONS.STRUCTURED,
+      businessIntent: route.businessIntent,
+      routing: routingMeta,
       model,
       requestId,
       mode,

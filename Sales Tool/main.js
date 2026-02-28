@@ -1222,8 +1222,9 @@ async function initializeApp() {
     };
   }
 
-  function buildAiChatContextPayload(mode, rangeOverride) {
-    const safeMode = sanitizeChatMode(mode);
+  function buildAiChatContextPayload(mode, message, rangeOverride) {
+    const requestMode = sanitizeChatRequestMode(mode);
+    const safeMode = requestMode === CHAT_MODES.AUTO ? CHAT_MODES.BRIEFING : sanitizeChatMode(requestMode);
     const analysisContext = buildAnalyticsContext(rangeOverride);
     const kpi = getKpiOverview(analysisContext);
     const trend = getTrendInsights(analysisContext);
@@ -1275,7 +1276,7 @@ async function initializeApp() {
     };
     const outlineMaxSections = safeMode === CHAT_MODES.ACTION_PLAN ? 3 : 4;
 
-    const payload = {
+    const legacyPayload = {
       analysis: {
         ok: analysisContext.ok,
         range: analysisContext.range,
@@ -1303,36 +1304,148 @@ async function initializeApp() {
     };
 
     if (safeMode === CHAT_MODES.DIAGNOSIS) {
-      payload.trend = {
+      legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
         items: compactTrendItems.slice(0, Math.max(AI_CHAT_MODE_EXTRA_TOP_N, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
       };
     } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
-      payload.trend = {
+      legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
         items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
       };
-      payload.product = {
+      legacyPayload.product = {
         ok: Boolean(product?.ok),
         summary: String(product?.summary || "").trim(),
         items: compactProductItems,
       };
-      payload.hospital = {
+      legacyPayload.hospital = {
         ok: Boolean(hospital?.ok),
         summary: String(hospital?.summary || "").trim(),
         items: compactHospitalItems,
       };
     } else {
-      payload.trend = {
+      legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
         items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
       };
     }
 
-    return payload;
+    const range = analysisContext?.range && typeof analysisContext.range === "object" ? analysisContext.range : {};
+    const periodStart = String(range.start || "").trim();
+    const periodEnd = String(range.end || "").trim();
+    const startYm = periodStart ? periodStart.slice(0, 7) : "";
+    const endYm = periodEnd ? periodEnd.slice(0, 7) : "";
+    const periodLabel = String(range.label || "").trim() || `${startYm || "未知"}~${endYm || "未知"}`;
+    const products = compactProductItems.map((item) => String(item.title || "").trim()).filter((item) => item).slice(0, 3);
+    const hospitals = compactHospitalItems
+      .map((item) => String(item.title || "").trim())
+      .filter((item) => item)
+      .slice(0, 3);
+    let level = "overall";
+    if (products.length > 0 && hospitals.length > 0) {
+      level = "mixed";
+    } else if (products.length > 0) {
+      level = "product";
+    } else if (hospitals.length > 0) {
+      level = "hospital";
+    }
+
+    const evidenceTop = [];
+    if (keyEvidence && keyEvidence.label && keyEvidence.value) {
+      evidenceTop.push({
+        label: keyEvidence.label,
+        value: keyEvidence.value,
+        source: keyEvidence.source || "overview_metric",
+      });
+    }
+    for (const item of compactTrendItems) {
+      if (!item || !Array.isArray(item.evidence) || item.evidence.length === 0) {
+        continue;
+      }
+      const firstEvidence = item.evidence[0];
+      if (
+        !firstEvidence?.label ||
+        (typeof firstEvidence.value !== "string" && typeof firstEvidence.value !== "number")
+      ) {
+        continue;
+      }
+      evidenceTop.push({
+        label: String(firstEvidence.label || "").trim(),
+        value: String(firstEvidence.value || "").trim(),
+        source: String(item.id || item.title || "trend").trim(),
+      });
+      if (evidenceTop.length >= 3) break;
+    }
+    const riskTop = compactRiskItems
+      .map((item) => String(item.summary || item.title || "").trim())
+      .filter((item) => item)
+      .slice(0, 3);
+    const hasData = Boolean(analysisContext?.meta?.hasData);
+    const missingFields = [];
+    if (!hasData) {
+      missingFields.push("business.overview");
+    }
+    if (!startYm && !endYm) {
+      missingFields.push("scope.period");
+    }
+
+    return {
+      query: {
+        text: String(message || "").trim(),
+      },
+      scope: {
+        period: {
+          startYm,
+          endYm,
+          label: periodLabel,
+          isExplicit: false,
+        },
+        entities: {
+          products,
+          hospitals,
+          regions: [],
+        },
+        level,
+      },
+      session: {
+        lastIntent: String(chatSessionState.lastIntent || "").trim(),
+        lastResponseAction: String(chatSessionState.lastResponseAction || "").trim(),
+        lastScope:
+          chatSessionState.lastScope && typeof chatSessionState.lastScope === "object"
+            ? chatSessionState.lastScope
+            : null,
+        unresolvedClarify: String(chatSessionState.unresolvedClarify || "").trim(),
+      },
+      business: {
+        overview: {
+          analysis: legacyPayload.analysis,
+          kpi: legacyPayload.kpi,
+          risk: legacyPayload.risk,
+          trendOverview: legacyPayload.trendOverview,
+          overviewMetric: legacyPayload.overviewMetric,
+          keyEvidence: legacyPayload.keyEvidence,
+        },
+        trend: {
+          summary: String(trend?.summary || "").trim(),
+          trend: legacyPayload.trend,
+          product: legacyPayload.product || null,
+          hospital: legacyPayload.hospital || null,
+        },
+        evidenceTop,
+        riskTop,
+        outline: legacyPayload.outline,
+        legacyContext: legacyPayload,
+      },
+      quality: {
+        hasData,
+        confidence: hasData ? "high" : "low",
+        missingFields,
+        source: "reportRecords",
+      },
+    };
   }
 
   async function parseJsonSafe(response) {
@@ -1352,20 +1465,68 @@ async function initializeApp() {
   }
 
   const CHAT_MODES = Object.freeze({
+    AUTO: "auto",
     BRIEFING: "briefing",
     DIAGNOSIS: "diagnosis",
     ACTION_PLAN: "action-plan",
   });
+  const CHAT_RESPONSE_ACTIONS = Object.freeze({
+    NATURAL: "natural_answer",
+    STRUCTURED: "structured_answer",
+    CLARIFY: "clarify",
+  });
+  const CHAT_BUSINESS_INTENTS = Object.freeze({
+    CHAT: "chat",
+    BRIEFING: CHAT_MODES.BRIEFING,
+    DIAGNOSIS: CHAT_MODES.DIAGNOSIS,
+    ACTION_PLAN: CHAT_MODES.ACTION_PLAN,
+  });
   const CHAT_HISTORY_MAX_ITEMS = 8;
   const CHAT_HISTORY_MAX_CHARS = 2000;
+  let chatSessionState = {
+    lastIntent: "",
+    lastResponseAction: "",
+    lastScope: null,
+    unresolvedClarify: "",
+  };
 
   function isValidChatMode(mode) {
     return mode === CHAT_MODES.BRIEFING || mode === CHAT_MODES.DIAGNOSIS || mode === CHAT_MODES.ACTION_PLAN;
   }
 
+  function isValidChatRequestMode(mode) {
+    return mode === CHAT_MODES.AUTO || isValidChatMode(mode);
+  }
+
   function sanitizeChatMode(mode) {
     const candidate = String(mode || "").trim();
     return isValidChatMode(candidate) ? candidate : CHAT_MODES.BRIEFING;
+  }
+
+  function sanitizeChatRequestMode(mode) {
+    const candidate = String(mode || "").trim();
+    return isValidChatRequestMode(candidate) ? candidate : CHAT_MODES.AUTO;
+  }
+
+  function normalizeChatResponseAction(value) {
+    const candidate = String(value || "").trim();
+    if (candidate === CHAT_RESPONSE_ACTIONS.NATURAL || candidate === CHAT_RESPONSE_ACTIONS.CLARIFY) {
+      return candidate;
+    }
+    return CHAT_RESPONSE_ACTIONS.STRUCTURED;
+  }
+
+  function normalizeChatBusinessIntent(value, modeFallback = CHAT_MODES.BRIEFING) {
+    const candidate = String(value || "").trim();
+    if (
+      candidate === CHAT_BUSINESS_INTENTS.CHAT ||
+      candidate === CHAT_BUSINESS_INTENTS.DIAGNOSIS ||
+      candidate === CHAT_BUSINESS_INTENTS.ACTION_PLAN ||
+      candidate === CHAT_BUSINESS_INTENTS.BRIEFING
+    ) {
+      return candidate;
+    }
+    return sanitizeChatMode(modeFallback);
   }
 
   function isValidChatHistoryRole(role) {
@@ -1622,19 +1783,29 @@ async function initializeApp() {
 
   function normalizeChatSuccessPayload(payload, modeFallback = CHAT_MODES.BRIEFING, requestIdFallback = "") {
     const requestId = String(requestIdFallback || payload?.requestId || "").trim();
-    const reply = String(payload?.reply || "").trim();
+    const surfaceReply = String(payload?.surfaceReply || payload?.reply || "").trim();
     const structured = payload?.structured && typeof payload.structured === "object" ? payload.structured : null;
+    const internalStructured =
+      payload?.internalStructured && typeof payload.internalStructured === "object"
+        ? payload.internalStructured
+        : null;
     const responseMode = sanitizeChatMode(payload?.mode || modeFallback);
     const format = payload?.format === "structured" ? "structured" : "text_fallback";
+    const responseAction = normalizeChatResponseAction(payload?.responseAction);
+    const businessIntent = normalizeChatBusinessIntent(payload?.businessIntent, responseMode);
     const normalizedMeta = normalizeChatMeta(payload?.meta, format);
-    const fallbackReply = reply || String(structured?.summary || "").trim();
+    const fallbackReply = surfaceReply || String(structured?.summary || "").trim();
     if (!fallbackReply && !structured) {
       throw new Error(appendRequestId("服务端未返回有效回复。", requestId));
     }
 
     return {
       reply: fallbackReply,
+      surfaceReply: fallbackReply,
       structured,
+      internalStructured,
+      responseAction,
+      businessIntent,
       mode: responseMode,
       format,
       model: String(payload?.model || "").trim(),
@@ -1763,7 +1934,7 @@ async function initializeApp() {
     if (!safeMessage) {
       throw new Error("消息不能为空。");
     }
-    const safeMode = sanitizeChatMode(options && typeof options === "object" ? options.mode : "");
+    const safeMode = sanitizeChatRequestMode(options && typeof options === "object" ? options.mode : "");
     const streamEnabled = Boolean(options && typeof options === "object" && options.stream === true);
     const onThinking = options && typeof options.onThinking === "function" ? options.onThinking : null;
     const onDelta = options && typeof options.onDelta === "function" ? options.onDelta : null;
@@ -1778,7 +1949,7 @@ async function initializeApp() {
 
     const requestBody = {
       message: safeMessage,
-      context: buildAiChatContextPayload(safeMode),
+      context: buildAiChatContextPayload(safeMode, safeMessage),
       mode: safeMode,
       stream: streamEnabled,
       history,
@@ -1822,13 +1993,35 @@ async function initializeApp() {
           onDone,
           onError,
         });
-        return normalizeChatSuccessPayload(streamResult.payload, safeMode, streamResult.requestId);
+        const normalized = normalizeChatSuccessPayload(streamResult.payload, safeMode, streamResult.requestId);
+        const contextScope =
+          requestBody?.context?.scope && typeof requestBody.context.scope === "object" ? requestBody.context.scope : null;
+        chatSessionState = {
+          lastIntent: String(normalized.businessIntent || "").trim(),
+          lastResponseAction: String(normalized.responseAction || "").trim(),
+          lastScope: contextScope,
+          unresolvedClarify:
+            normalized.responseAction === CHAT_RESPONSE_ACTIONS.CLARIFY
+              ? String(normalized.internalStructured?.missingSlot || "unknown").trim()
+              : "",
+        };
+        return normalized;
       } catch (error) {
         throw error;
       }
     }
 
     const normalized = await parseJsonResponse(response);
+    const contextScope = requestBody?.context?.scope && typeof requestBody.context.scope === "object" ? requestBody.context.scope : null;
+    chatSessionState = {
+      lastIntent: String(normalized.businessIntent || "").trim(),
+      lastResponseAction: String(normalized.responseAction || "").trim(),
+      lastScope: contextScope,
+      unresolvedClarify:
+        normalized.responseAction === CHAT_RESPONSE_ACTIONS.CLARIFY
+          ? String(normalized.internalStructured?.missingSlot || "unknown").trim()
+          : "",
+    };
     if (onDone) {
       onDone(normalized, normalized.requestId);
     }

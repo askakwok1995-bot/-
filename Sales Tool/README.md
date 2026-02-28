@@ -290,23 +290,44 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 {
   "message": "用户问题",
   "context": {
-    "kpi": {},
-    "trend": {},
-    "product": {},
-    "hospital": {},
-    "risk": {},
-    "outline": {}
+    "query": { "text": "用户问题" },
+    "scope": {
+      "period": { "startYm": "2026-01", "endYm": "2026-03", "label": "2026年Q1", "isExplicit": false },
+      "entities": { "products": [], "hospitals": [], "regions": [] },
+      "level": "overall"
+    },
+    "session": {
+      "lastIntent": "chat",
+      "lastResponseAction": "natural_answer",
+      "lastScope": null,
+      "unresolvedClarify": ""
+    },
+    "business": {
+      "overview": {},
+      "trend": {},
+      "evidenceTop": [],
+      "riskTop": [],
+      "outline": {},
+      "legacyContext": {}
+    },
+    "quality": {
+      "hasData": true,
+      "confidence": "high",
+      "missingFields": [],
+      "source": "reportRecords"
+    }
   },
   "history": [
     { "role": "user", "content": "上次你给我的简报结论是什么？" },
     { "role": "assistant", "content": "上次结论为：整体销售微增但达成率未达标。" }
   ],
-  "mode": "briefing",
+  "mode": "auto",
   "stream": false
 }
 ```
 
 `mode` 可选值：
+- `auto`：自由问答入口（默认），系统先判回答形态再自动路由内部能力
 - `briefing`：简报模式（结论+亮点+风险+动作）
 - `diagnosis`：诊断模式（异常定位+原因假设+影响范围）
 - `action-plan`：行动模式（执行清单+负责人+时间+追踪指标）
@@ -351,7 +372,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 非流式成功响应（`stream=false`，默认）：
 ```json
 {
-  "reply": "结构化摘要文本（兼容旧前端）",
+  "surfaceReply": "用户可见文本",
+  "internalStructured": {},
+  "responseAction": "natural_answer",
+  "businessIntent": "chat",
+  "reply": "用户可见文本（兼容旧前端）",
   "model": "gemini-2.5-flash",
   "requestId": "...",
   "mode": "briefing",
@@ -383,7 +408,15 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
         "elapsedMs": 8421,
         "maxOutputTokens": 896
       }
-    ]
+    ],
+    "routing": {
+      "requestedMode": "auto",
+      "responseAction": "natural_answer",
+      "businessIntent": "chat",
+      "routeSource": "rule",
+      "confidence": "high",
+      "ruleId": "default_chat"
+    }
   },
   "structured": {
     "summary": "总体结论",
@@ -399,6 +432,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   }
 }
 ```
+
+回答形态说明：
+- `responseAction = natural_answer`：用户侧显示自然文本，`internalStructured` 为轻量内部结构（证据追踪/质量验收）。
+- `responseAction = structured_answer`：继续走 `briefing/diagnosis/action-plan` 结构化链路。
+- `responseAction = clarify`：先追问关键缺失信息（第一版仅高置信触发：无数据、明确需要 period 但缺失）。
 
 流式响应（`stream=true`）：
 - 响应头：`content-type: application/x-ndjson`
@@ -454,12 +492,12 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 ### 12.3 前端接线说明
 - `main.js` 在初始化后会调用 `window.__SALES_TOOL_AI_CHAT__.setSendHandler(...)`。
-- 发送消息前会自动组装阶段1指标上下文，并携带当前模式调用 `/api/chat`，默认 `stream=false`（稳态优先）。
+- 发送消息前会自动组装输入层契约（`query/scope/session/business/quality`），默认 `mode=auto` 调用 `/api/chat`。
 - 前端会在内存中维护最近 6 轮会话历史用于 UI 连续性，但请求透传会裁剪为最多 4 轮（8 条，2000 字符）。
 - 仅当显式传入 `stream=true` 时才走流式增量渲染；流式失败时前端不会再发起二次补发请求。
 - 发送后会先显示 `AI 思考中...` 占位消息（带三点动画），随后按 `delta` 事件逐步更新文本。
 - 若 Functions 未部署或 Secret 缺失，聊天区会显示明确中文错误（错误态会附带请求号）。
-- 当 `format = text_fallback` 时，前端会显示“文本回退”状态提示（含 `requestId + formatReason`）。
+- 当 `responseAction=structured_answer` 且 `format=text_fallback` 时，前端才显示“文本回退”提示（含 `requestId + formatReason`）。
 - 仅在 `formatReason` 为 `json_parse_failed/output_truncated` 且 `repairSucceeded=false` 时，前端才提示“结构化输出未完成，请重试”。
 - 若连续失败达到阈值，发送按钮会短暂冷却：
   - 连续失败 2 次：冷却 3 秒
@@ -470,7 +508,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `localhost/127.0.0.1` 自动显示
   - 或控制台设置 `window.__SALES_TOOL_CHAT_DEBUG__ = true`
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
-- AI 聊天头部支持模式切换：`简报 / 诊断 / 行动`。
+- AI 聊天默认自由提问，不再要求用户手动切换 `简报/诊断/行动`。
 - 调试桥接：
   - `window.__SALES_TOOL_AI_CHAT__.getSessionHistory()`
   - `window.__SALES_TOOL_AI_CHAT__.clearSessionHistory()`
@@ -483,9 +521,9 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 5. 错误码可区分：`UNAUTHORIZED(401)`、`CONFIG_MISSING`、`AUTH_UPSTREAM_TIMEOUT(504)`、`UPSTREAM_TIMEOUT(504)`、`UPSTREAM_AUTH_ERROR`、`UPSTREAM_RATE_LIMIT`、`UPSTREAM_ERROR`。
 6. 用户报错时可提供“请求号（requestId）”用于排查。
 7. 错误响应中可见 `error.stage/upstreamStatus/durationMs/firstTransportAttempts/firstTransportStatuses/firstTransportRetryApplied/firstTransportRetryRecovered`（如首轮两次都遇到 503）。
-8. 切换不同模式发送时，请求体 `mode` 与当前按钮一致。
+8. 默认自由提问时，请求体 `mode=auto`；显式传入 `briefing/diagnosis/action-plan` 时仍可强制模式。
 9. `format: structured` 时渲染结构化卡片；`format: text_fallback` 时自动回退文本显示。
-10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/shortCircuitReason/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics` 在响应中存在且可用于排障。
+10. `meta.formatReason/retryCount/finishReason/outputChars/repairApplied/repairSucceeded/attemptCount/totalDurationMs/stageDurations/finalStage/contextChars/historyChars/shortCircuitReason/firstTransportAttempts/firstTransportRetryApplied/firstTransportRetryRecovered/firstTransportStatuses/attemptDiagnostics/routing` 在响应中存在且可用于排障。
 11. 流式场景下，发送后 300ms 内可见 `AI 思考中...`，并按 `delta` 事件逐步显示文本。
 
 ### 12.5 Supabase 权限核查
