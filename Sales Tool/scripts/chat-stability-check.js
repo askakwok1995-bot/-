@@ -241,7 +241,11 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
         ? error.firstTransportRetryApplied
         : null;
   const firstTransportRetryRecovered =
-    typeof meta?.firstTransportRetryRecovered === "boolean" ? meta.firstTransportRetryRecovered : null;
+    typeof meta?.firstTransportRetryRecovered === "boolean"
+      ? meta.firstTransportRetryRecovered
+      : typeof error?.firstTransportRetryRecovered === "boolean"
+        ? error.firstTransportRetryRecovered
+        : null;
   const firstTransportStatuses = normalizeStatusCodeList(meta?.firstTransportStatuses);
   const firstTransportStatusesFromError =
     firstTransportStatuses.length > 0 ? firstTransportStatuses : normalizeStatusCodeList(error?.firstTransportStatuses);

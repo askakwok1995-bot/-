@@ -317,7 +317,8 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 若首轮 + 纠错重试后仍为 `json_parse_failed/output_truncated`，会触发一次“结构化修复调用”。
 - 对 `schema_invalid`：仅 `diagnosis/action-plan` 在满足 `elapsedAfterRetry < 22000ms` 且 `outputChars >= 300` 时才允许进入 repair；`briefing` 不放开，避免时延继续抬升。
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
-- 首轮可用性重试（仅 non-streaming）：`first` 阶段命中 `500/502/503/429` 时会做 1 次短退避重试（约 `350ms + 随机0~150ms`）；`401/403` 与 `UPSTREAM_TIMEOUT` 不参与该重试；不启用模型回退。
+- 首轮可用性重试（仅 non-streaming）：`first` 阶段命中 `500/502/503/429` 或 `UPSTREAM_TIMEOUT` 时会做 1 次短退避重试（约 `350ms + 随机0~150ms`）；`401/403` 不参与该重试；不启用模型回退。
+- 对 `UPSTREAM_TIMEOUT` 的首轮重试采用短超时窗口（默认不超过 `12000ms`），并要求剩余预算充足（默认 `>=9000ms`），避免单请求链路拖到 60 秒。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
   - `briefing`: first `1280` / retry `1408`
   - `diagnosis`: first `1408` / retry `1792`
@@ -441,7 +442,8 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "durationMs": 30012,
     "firstTransportAttempts": 2,
     "firstTransportStatuses": [503, 503],
-    "firstTransportRetryApplied": true
+    "firstTransportRetryApplied": true,
+    "firstTransportRetryRecovered": false
   },
   "requestId": "..."
 }

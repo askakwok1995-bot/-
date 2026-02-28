@@ -16,6 +16,9 @@ const SCHEMA_INVALID_REPAIR_MIN_OUTPUT_CHARS = 300;
 const FIRST_TRANSPORT_RETRY_BASE_DELAY_MS = 350;
 const FIRST_TRANSPORT_RETRY_JITTER_MS = 150;
 const FIRST_TRANSPORT_MIN_REMAINING_BUDGET_MS = 2500;
+const FIRST_TRANSPORT_TIMEOUT_MIN_REMAINING_BUDGET_MS = 9000;
+const FIRST_TRANSPORT_TIMEOUT_RETRY_TIMEOUT_MS = 12000;
+const FIRST_TRANSPORT_TIMEOUT_RETRY_BUDGET_BUFFER_MS = 1000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
@@ -1169,6 +1172,9 @@ function buildChatError(code, message, status, details = null) {
   if (typeof safeDetails?.firstTransportRetryApplied === "boolean") {
     error.firstTransportRetryApplied = safeDetails.firstTransportRetryApplied;
   }
+  if (typeof safeDetails?.firstTransportRetryRecovered === "boolean") {
+    error.firstTransportRetryRecovered = safeDetails.firstTransportRetryRecovered;
+  }
   return error;
 }
 
@@ -1213,6 +1219,10 @@ function mapGeminiUpstreamHttpError(status, upstreamMessage, diagnostics = null)
 
 async function requestGeminiNonStreaming(model, key, upstreamPayload, options = null) {
   const stage = trimString(options?.stage);
+  const timeoutMsRaw = Number(options?.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? Math.floor(timeoutMsRaw)
+    : GEMINI_UPSTREAM_TIMEOUT_MS;
   const startedAt = Date.now();
   const endpoint = buildGeminiEndpoint(model, false);
 
@@ -1228,7 +1238,7 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload, options = 
         },
         body: JSON.stringify(upstreamPayload),
       },
-      GEMINI_UPSTREAM_TIMEOUT_MS,
+      timeoutMs,
     );
   } catch (error) {
     if (isTimeoutError(error)) {
@@ -1236,7 +1246,7 @@ async function requestGeminiNonStreaming(model, key, upstreamPayload, options = 
         ok: false,
         error: buildChatError(
           CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
-          `Gemini 请求超时（>${GEMINI_UPSTREAM_TIMEOUT_MS}ms），请稍后重试。`,
+          `Gemini 请求超时（>${timeoutMs}ms），请稍后重试。`,
           504,
           {
             stage,
@@ -1324,11 +1334,17 @@ async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstream
   }
 
   const errorCode = trimString(firstAttempt.error?.code);
+  const isTimeoutRetry = errorCode === CHAT_ERROR_CODES.UPSTREAM_TIMEOUT;
   const retryableCode =
-    errorCode === CHAT_ERROR_CODES.UPSTREAM_ERROR || errorCode === CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT;
-  const retryableStatus = isRetryableUpstreamStatus(firstAttempt.error?.upstreamStatus);
+    errorCode === CHAT_ERROR_CODES.UPSTREAM_ERROR ||
+    errorCode === CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT ||
+    isTimeoutRetry;
+  const retryableStatus = isTimeoutRetry ? true : isRetryableUpstreamStatus(firstAttempt.error?.upstreamStatus);
   const remainingBudgetMs = canUseBudget ? TOTAL_CHAT_BUDGET_MS - (Date.now() - requestStartedAt) : TOTAL_CHAT_BUDGET_MS;
-  const canRetry = retryableCode && retryableStatus && remainingBudgetMs >= FIRST_TRANSPORT_MIN_REMAINING_BUDGET_MS;
+  const minRemainingBudgetMs = isTimeoutRetry
+    ? FIRST_TRANSPORT_TIMEOUT_MIN_REMAINING_BUDGET_MS
+    : FIRST_TRANSPORT_MIN_REMAINING_BUDGET_MS;
+  const canRetry = retryableCode && retryableStatus && remainingBudgetMs >= minRemainingBudgetMs;
   if (!canRetry) {
     return {
       ...firstAttempt,
@@ -1340,8 +1356,20 @@ async function requestGeminiFirstStageWithAvailabilityRetry(model, key, upstream
     FIRST_TRANSPORT_RETRY_BASE_DELAY_MS +
     Math.floor(Math.random() * (FIRST_TRANSPORT_RETRY_JITTER_MS + 1));
   await sleep(retryDelayMs);
+  const postDelayRemainingBudgetMs = canUseBudget
+    ? TOTAL_CHAT_BUDGET_MS - (Date.now() - requestStartedAt)
+    : TOTAL_CHAT_BUDGET_MS;
+  const timeoutRetryTimeoutMs = Math.floor(
+    Math.min(
+      FIRST_TRANSPORT_TIMEOUT_RETRY_TIMEOUT_MS,
+      postDelayRemainingBudgetMs - FIRST_TRANSPORT_TIMEOUT_RETRY_BUDGET_BUFFER_MS,
+    ),
+  );
+  const secondTimeoutMs =
+    isTimeoutRetry && timeoutRetryTimeoutMs > 0 ? timeoutRetryTimeoutMs : GEMINI_UPSTREAM_TIMEOUT_MS;
   const secondAttempt = await requestGeminiNonStreaming(model, key, upstreamPayload, {
     stage: "first",
+    timeoutMs: secondTimeoutMs,
   });
   const secondStatus = pickAttemptUpstreamStatus(secondAttempt);
   if (secondStatus > 0) {
@@ -1712,6 +1740,7 @@ async function generateChatResponse(model, key, message, contextPayload, mode, h
     if (firstAttempt.error && typeof firstAttempt.error === "object") {
       firstAttempt.error.firstTransportAttempts = firstTransportAttempts;
       firstAttempt.error.firstTransportRetryApplied = firstTransportRetryApplied;
+      firstAttempt.error.firstTransportRetryRecovered = firstTransportRetryRecovered;
       firstAttempt.error.firstTransportStatuses = firstTransportStatuses;
     }
     return firstAttempt;
