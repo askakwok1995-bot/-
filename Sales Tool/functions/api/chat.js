@@ -2,8 +2,6 @@ const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONTEXT_CHARS = 18000;
-const FIRST_CONTEXT_MAX_CHARS = 12000;
-const RETRY_CONTEXT_MAX_CHARS = 18000;
 const MAX_HISTORY_ITEMS = 12;
 const MAX_HISTORY_CHARS = 4000;
 const MAX_REPAIR_SOURCE_CHARS = 8000;
@@ -342,13 +340,13 @@ function getModeTokenProfile(mode, messageLength = 0) {
   let first = DEFAULT_MAX_OUTPUT_TOKENS;
   let retry = RETRY_MAX_OUTPUT_TOKENS;
   if (safeMode === CHAT_MODES.BRIEFING) {
-    first = 1408;
+    first = 1280;
     retry = 1408;
   } else if (safeMode === CHAT_MODES.DIAGNOSIS) {
-    first = 1792;
+    first = 1408;
     retry = 1792;
   } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
-    first = 2048;
+    first = 1664;
     retry = 2048;
   }
 
@@ -512,20 +510,17 @@ function buildGeminiEndpoint(model, streaming = false) {
   return `${base}:generateContent`;
 }
 
-function safeContextText(context, maxChars = MAX_CONTEXT_CHARS) {
+function safeContextText(context) {
   if (!context || typeof context !== "object") {
     return "{}";
   }
-  const safeMaxCharsRaw = Number(maxChars);
-  const safeMaxChars =
-    Number.isFinite(safeMaxCharsRaw) && safeMaxCharsRaw > 0 ? Math.floor(safeMaxCharsRaw) : MAX_CONTEXT_CHARS;
 
   try {
     const json = JSON.stringify(context);
-    if (json.length <= safeMaxChars) {
+    if (json.length <= MAX_CONTEXT_CHARS) {
       return json;
     }
-    return `${json.slice(0, safeMaxChars)}...(truncated)`;
+    return `${json.slice(0, MAX_CONTEXT_CHARS)}...(truncated)`;
   } catch (_error) {
     return "{}";
   }
@@ -536,8 +531,8 @@ function buildPrompt(message, context, mode, options = {}) {
   const safeMode = sanitizeMode(mode);
   const modeDefinition = MODE_DEFINITIONS[safeMode] || MODE_DEFINITIONS[CHAT_MODES.BRIEFING];
   const thresholds = getModeQualityThreshold(safeMode);
+  const contextText = safeContextText(context);
   const strictJsonOnly = Boolean(options && options.strictJsonOnly);
-  const contextText = safeContextText(context, strictJsonOnly ? RETRY_CONTEXT_MAX_CHARS : FIRST_CONTEXT_MAX_CHARS);
   const history = sanitizeHistoryList(options?.history);
   const historyText = formatHistoryText(history);
   const modeCompactRule =
