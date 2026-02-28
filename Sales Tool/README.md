@@ -319,9 +319,9 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 分阶段预算保护：总预算 `35000ms`；`first >= 18000ms` 时不再进入 retry，`first+retry >= 24000ms` 时不再进入 repair。
 - 首轮可用性重试（仅 non-streaming）：`first` 阶段命中 `500/502/503/429` 时会做 1 次短退避重试（约 `350ms + 随机0~150ms`）；`401/403` 与 `UPSTREAM_TIMEOUT` 不参与该重试；不启用模型回退。
 - 按 mode 动态 token（并按问题长度上下浮动 1 档）：
-  - `briefing`: first `1280` / retry `1408`
-  - `diagnosis`: first `1408` / retry `1792`
-  - `action-plan`: first `1664` / retry `2048`
+  - `briefing`: first `1408` / retry `1408`
+  - `diagnosis`: first `1792` / retry `1792`
+  - `action-plan`: first `2048` / retry `2048`
 - Gemini 上游超时：`30000ms`；登录态校验超时仍为 `12000ms`。
 - 结构化质量门槛（mode 化）：
   - `briefing`：`summary>=70`，`highlights>=1`，`evidence>=1`，`actions>=1`
@@ -340,6 +340,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - 统一约束：每个数组优先最小条数，不做展开说明；若接近输出上限，优先保证合法 JSON + 最小条目
 - 会话历史门槛：最多携带最近 4 轮（8 条）`history`，总字符上限约 `2000`。
 - 上下文瘦身策略（按模式）：
+  - 按阶段上下文长度：first `12000` 字符、retry `18000` 字符（减少首轮截断，保留重试信息完整度）
   - 每种 mode 至少保留：`overviewMetric`（总览指标）+ `trendOverview`（趋势信息）+ `keyEvidence`（关键证据）
   - `briefing`：基础字段 + `trend.items` Top 1
   - `diagnosis`：`trend.items` Top 2（摘要与建议做长度截断）
