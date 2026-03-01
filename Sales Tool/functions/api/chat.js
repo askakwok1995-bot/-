@@ -1193,6 +1193,101 @@ function replaceLeadingSentence(text, nextSentence) {
   return remaining ? `${safeNextSentence} ${remaining}` : safeNextSentence;
 }
 
+function sanitizeBulletSentence(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return "";
+  }
+  return trimString(
+    safeText
+      .replace(/^(结论|依据|建议)\s*[:：]\s*/i, "")
+      .replace(/^(先说结论|先给结论)\s*[:：]\s*/i, "")
+      .replace(/^[-*•]\s+/, "")
+      .replace(/^\d+[.)、]\s+/, ""),
+  );
+}
+
+function splitSentences(text, maxItems = 12) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return [];
+  }
+  const normalized = safeText
+    .replace(/\r\n/g, "\n")
+    .replace(/(结论|依据|建议)\s*[:：]/g, "\n")
+    .replace(/[-*•]\s+/g, "")
+    .replace(/\n{2,}/g, "\n");
+  const chunks = normalized
+    .split(/[\n。！？；]/)
+    .map((item) => sanitizeBulletSentence(item))
+    .filter((item) => item);
+  return dedupeStringList(chunks, maxItems);
+}
+
+function hasBulletLayout(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return false;
+  }
+  return (
+    /(结论)\s*[:：]/.test(safeText) &&
+    /(依据)\s*[:：]/.test(safeText) &&
+    /(建议)\s*[:：]/.test(safeText) &&
+    /\n\s*[-*•]\s+/.test(safeText)
+  );
+}
+
+function formatBulletSection(title, items) {
+  const safeItems = Array.isArray(items) ? items.map((item) => sanitizeBulletSentence(item)).filter((item) => item) : [];
+  return `${title}\n${safeItems.slice(0, 3).map((item) => `- ${item}`).join("\n")}`;
+}
+
+function buildDefaultSuggestion(posture) {
+  if (posture === NATURAL_POSTURES.ADVISE) {
+    return "建议先聚焦贡献最高且波动最大的环节，按周跟进执行结果。";
+  }
+  if (posture === NATURAL_POSTURES.EXPLAIN) {
+    return "建议继续观察后续月度变化，并按产品与医院进一步拆分验证原因。";
+  }
+  return "建议先跟踪下一个月度周期，若波动持续再做明细拆解。";
+}
+
+function formatNaturalBulletLayout(text, posture, message, contextV1) {
+  const sentences = splitSentences(text, 18);
+  const leadSentence = sanitizeBulletSentence(extractLeadingSentence(text));
+  const safePosture =
+    posture === NATURAL_POSTURES.EXPLAIN || posture === NATURAL_POSTURES.ADVISE
+      ? posture
+      : NATURAL_POSTURES.JUDGE;
+
+  let conclusionItems = [];
+  if (leadSentence) {
+    conclusionItems.push(leadSentence);
+  } else if (sentences.length > 0) {
+    conclusionItems.push(sentences[0]);
+  } else {
+    conclusionItems.push(sanitizeBulletSentence(buildNaturalDirectLead(message, contextV1, safePosture)));
+  }
+  conclusionItems = dedupeStringList(conclusionItems, 2);
+
+  const evidenceCandidates = sentences.filter((sentence) => !conclusionItems.includes(sentence));
+  const evidenceItems = dedupeStringList(evidenceCandidates, 2);
+
+  const suggestionCandidates = sentences.filter((sentence) =>
+    /(建议|下一步|优先|先做|先从|执行|推进|跟进|复盘|补齐|调整|优化)/.test(sentence),
+  );
+  const suggestionItems = dedupeStringList(
+    suggestionCandidates.length > 0 ? suggestionCandidates : [buildDefaultSuggestion(safePosture)],
+    2,
+  );
+
+  return [
+    formatBulletSection("结论：", conclusionItems),
+    formatBulletSection("依据：", evidenceItems.length > 0 ? evidenceItems : [conclusionItems[0]]),
+    formatBulletSection("建议：", suggestionItems),
+  ].join("\n");
+}
+
 function normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile) {
   const rawText = trimString(modelReply);
   if (!rawText) {
@@ -1230,6 +1325,10 @@ function normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfil
       buildNaturalDirectLead(message, contextV1, toneProfile?.posture),
     );
   }
+  if (!hasBulletLayout(normalizedText)) {
+    normalizedText = formatNaturalBulletLayout(normalizedText, toneProfile?.posture, message, contextV1);
+    appliedRuleHits.push("bullet_layout_fallback");
+  }
 
   return {
     text: trimString(normalizedText),
@@ -1265,11 +1364,18 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
   }
   const disclaimerText = disclaimerList.length > 0 ? `${disclaimerList[0]}` : "";
   const questionHint = trimString(message) ? "" : "你可以先告诉我你关心的时间范围或指标。";
-  const fallbackReply = [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+  const fallbackReply = formatNaturalBulletLayout(
+    [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" "),
+    safePosture,
+    message,
+    contextV1,
+  );
   const normalizedModel = normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile);
   const modelText = trimString(normalizedModel.text);
   const surfaceReply = modelText || fallbackReply;
-  const summaryText = extractLeadingSentence(surfaceReply) || surfaceReply.slice(0, 120);
+  const summaryText = hasBulletLayout(surfaceReply)
+    ? splitSentences(surfaceReply, 1)[0] || surfaceReply.slice(0, 120)
+    : extractLeadingSentence(surfaceReply) || surfaceReply.slice(0, 120);
   const actionSuggested = /(建议|下一步|优先|先做|先从|执行|推进|跟进|复盘)/.test(surfaceReply);
   const toneRuleHits = dedupeStringList(
     [
@@ -1900,6 +2006,8 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "回答形态：自然问答（非结构化模板）。",
     "首句必须直接回答用户问题，禁止先讲流程或系统状态。",
     "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
+    "输出格式（默认执行）：必须使用三段小标题并分点：结论：/依据：/建议：。",
+    "每段 1-3 条，使用“- ”开头；总条数建议 3-6 条；禁止整段长文。",
     longAnswerPreferred
       ? "证据要求：优先嵌入2-3条关键数据点，写成自然句，不做字段播报。"
       : "证据要求：优先嵌入2条关键数据点，必要时可到3条，写成自然句，不做字段播报。",

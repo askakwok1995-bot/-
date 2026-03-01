@@ -688,6 +688,17 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 2. 将 `buildNaturalPrompt()` 中 posture 句数区间改回原值（explain `3-5/4-6`，advise `4-6/5-7`，judge `2-4/3-5`）。
 3. 重新部署并跑一轮 natural + structured 回归。
 
+#### natural_answer 分点输出（默认生效）
+
+- 当前自然问答默认采用三段分点格式：`结论：`、`依据：`、`建议：`。
+- 每段 1-3 条，使用 `- ` 开头；目标是提升可读性，减少单段长文。
+- 生效范围仅 `natural_answer`，不影响 structured 模式 schema 与渲染。
+
+回退方式：
+1. 在 `functions/api/chat.js` 中移除 `buildNaturalPrompt()` 的分点强约束文案。
+2. 在 `normalizeNaturalSurfaceReply()` 中取消 `formatNaturalBulletLayout(...)` 兜底调用。
+3. 重新部署并跑一轮 natural + structured 回归。
+
 ```bash
 # natural 题集（mode=auto）对比 baseline
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
