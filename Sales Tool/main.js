@@ -214,6 +214,19 @@ async function initializeApp() {
     reportAmountUnitId: initialReportAmountUnitId,
     activeHospitalChartKey: "",
   };
+
+  function hydrateReportRangeInputs(domRef, stateRef) {
+    const startInput = domRef.reportStartMonthInput instanceof HTMLInputElement ? domRef.reportStartMonthInput : null;
+    const endInput = domRef.reportEndMonthInput instanceof HTMLInputElement ? domRef.reportEndMonthInput : null;
+    if (startInput) {
+      startInput.value = String(stateRef.reportStartYm || "").trim();
+    }
+    if (endInput) {
+      endInput.value = String(stateRef.reportEndYm || "").trim();
+    }
+  }
+
+  hydrateReportRangeInputs(dom, state);
   let listStatusTimer = null;
 
   function mapCloudProductToLocal(row) {

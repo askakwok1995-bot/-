@@ -496,6 +496,7 @@ export function normalizeReportRange(state, dom, deps) {
 
   if (startInput) startInput.value = startYm;
   if (endInput) endInput.value = endYm;
+  // 仅在起止月双端有效且顺序合法时持久化，避免单端输入覆盖历史有效区间。
   if (typeof deps.saveReportRange === "function") {
     deps.saveReportRange({ startYm, endYm });
   }

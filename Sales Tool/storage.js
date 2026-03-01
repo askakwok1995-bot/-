@@ -113,20 +113,21 @@ export function clearSalesDraft() {
 }
 
 export function loadReportRange(defaultRange) {
-  const fallback = normalizeReportRangePayload(defaultRange);
+  const fallback = normalizeReportRangeFallback(defaultRange);
   const raw = localStorage.getItem(REPORT_RANGE_STORAGE_KEY);
   if (!raw) return fallback;
 
   try {
     const parsed = JSON.parse(raw);
-    return normalizeReportRangePayload(parsed, fallback);
+    const normalized = normalizeReportRangePayload(parsed, fallback);
+    return normalized || fallback;
   } catch (_error) {
     return fallback;
   }
 }
 
 export function saveReportRange(range) {
-  const normalized = normalizeReportRangePayload(range);
+  const normalized = normalizeReportRangePayload(range, null);
   if (!normalized) return;
   localStorage.setItem(REPORT_RANGE_STORAGE_KEY, JSON.stringify(normalized));
 }
@@ -469,19 +470,37 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function normalizeReportRangePayload(payload, fallback = null) {
+const EMPTY_REPORT_RANGE_PAYLOAD = Object.freeze({
+  startYm: "",
+  endYm: "",
+});
+
+function normalizeReportRangeFallback(fallback) {
+  if (!fallback || typeof fallback !== "object") {
+    return { ...EMPTY_REPORT_RANGE_PAYLOAD };
+  }
+  const startYm = normalizeYmText(fallback.startYm);
+  const endYm = normalizeYmText(fallback.endYm);
+  if (!startYm || !endYm || startYm > endYm) {
+    return { ...EMPTY_REPORT_RANGE_PAYLOAD };
+  }
+  return { startYm, endYm };
+}
+
+function normalizeReportRangePayload(payload, fallback = EMPTY_REPORT_RANGE_PAYLOAD) {
+  const safeFallback = fallback === null ? null : normalizeReportRangeFallback(fallback);
   if (!payload || typeof payload !== "object") {
-    return fallback;
+    return safeFallback;
   }
 
-  const startYm = normalizeYmText(payload.startYm);
-  const endYm = normalizeYmText(payload.endYm);
+  const startYm = normalizeYmText(payload.startYm ?? payload.startMonth ?? payload.start);
+  const endYm = normalizeYmText(payload.endYm ?? payload.endMonth ?? payload.end);
   if (!startYm || !endYm) {
-    return fallback;
+    return safeFallback;
   }
 
   if (startYm > endYm) {
-    return fallback;
+    return safeFallback;
   }
 
   return { startYm, endYm };
