@@ -633,9 +633,9 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 #### natural_answer 档位对比（baseline vs plus）
 
 当前决策快照（2026-03-01）：
-- 默认档位：`baseline`（用于 `natural_answer`）
-- 决策依据：最新 natural matrix 中 `baseline/plus` 在路由与姿态指标表现一致（`naturalRouteRate=100%`、`postureMatchRate=100%`、`gapHintOverfireRate=0%`），且 `plus` 未体现稳定的质量增益。
-- 切换条件：仅当 `plus` 在“深度质量指标”（明细数值回答/证据覆盖）相对 `baseline` 至少一项提升 `>=10pp`，且稳定性不回退（失败率/超时率不高于 baseline +5pp，`p95` 不恶化超过 +15%）时，才考虑切默认。
+- 默认档位：`plus`（用于 `natural_answer` 运行时默认）
+- 决策依据：最新 v2 natural matrix 显示 `plus` 在稳定性不回退前提下，深度质量显著优于 `baseline`（`detailNumericAnswerRate` 与 `detailEvidenceCoverageRate` 均提升，且 `baseline` 的 `gapHintOverfireRate` 超阈值）。
+- 回退条件：仅当后续观测到 `plus` 在稳定性显著恶化（失败率/超时率高于 baseline +5pp，或 `p95` 恶化 >15%）且质量优势消失时，才回退 `baseline`。
 
 ```bash
 # natural 题集（mode=auto）对比 baseline

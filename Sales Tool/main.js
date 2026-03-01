@@ -1265,12 +1265,12 @@ async function initializeApp() {
     ) {
       return candidate;
     }
-    return AI_CHAT_INPUT_PROFILES.BASELINE;
+    return AI_CHAT_INPUT_PROFILES.PLUS;
   }
 
   function getChatInputProfileConfig(profile) {
     const safeProfile = normalizeChatInputProfile(profile);
-    return AI_CHAT_INPUT_PROFILE_CONFIGS[safeProfile] || AI_CHAT_INPUT_PROFILE_CONFIGS[AI_CHAT_INPUT_PROFILES.BASELINE];
+    return AI_CHAT_INPUT_PROFILE_CONFIGS[safeProfile] || AI_CHAT_INPUT_PROFILE_CONFIGS[AI_CHAT_INPUT_PROFILES.PLUS];
   }
 
   function pickNaturalMonthlyCount(message, profileConfig) {
@@ -1444,7 +1444,7 @@ async function initializeApp() {
     return naturalMini;
   }
 
-  function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_INPUT_PROFILES.BASELINE) {
+  function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_INPUT_PROFILES.PLUS) {
     const requestMode = sanitizeChatRequestMode(mode);
     const safeMode = requestMode === CHAT_MODES.AUTO ? CHAT_MODES.BRIEFING : sanitizeChatMode(requestMode);
     const safeInputProfile = normalizeChatInputProfile(inputProfile);
