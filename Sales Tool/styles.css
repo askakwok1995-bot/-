@@ -529,8 +529,12 @@ body.ai-chat-open .container {
   color: var(--subtle);
 }
 
-.ai-chat-status-ready {
-  color: var(--success);
+.ai-chat-status:empty {
+  display: none;
+}
+
+.ai-chat-status-error {
+  color: var(--error);
 }
 
 h2 {

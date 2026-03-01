@@ -50,13 +50,6 @@ function normalizeMode(value) {
   return isValidMode(candidate) ? candidate : CHAT_MODES.AUTO;
 }
 
-function getModeLabel(mode) {
-  if (mode === CHAT_MODES.AUTO) return "自动";
-  if (mode === CHAT_MODES.DIAGNOSIS) return "诊断";
-  if (mode === CHAT_MODES.ACTION_PLAN) return "行动";
-  return "简报";
-}
-
 function normalizeResponseAction(value) {
   const candidate = toText(value);
   if (candidate === CHAT_RESPONSE_ACTIONS.NATURAL || candidate === CHAT_RESPONSE_ACTIONS.CLARIFY) {
@@ -73,42 +66,6 @@ function normalizeFormatReason(value) {
   const candidate = toText(value);
   const allowed = Object.values(CHAT_FORMAT_REASONS);
   return allowed.includes(candidate) ? candidate : CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
-}
-
-function getFormatReasonLabel(reason) {
-  const safeReason = normalizeFormatReason(reason);
-  if (safeReason === CHAT_FORMAT_REASONS.SCHEMA_INVALID) return "结构化字段不完整";
-  if (safeReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED) return "输出被截断";
-  if (safeReason === CHAT_FORMAT_REASONS.EMPTY_REPLY) return "输出为空";
-  if (safeReason === CHAT_FORMAT_REASONS.STRUCTURED_OK) return "结构化成功";
-  return "结构化解析失败";
-}
-
-function formatDurationSeconds(durationMs) {
-  const safe = Number(durationMs);
-  if (!Number.isFinite(safe) || safe <= 0) {
-    return "0.0";
-  }
-  return (safe / 1000).toFixed(1);
-}
-
-function isLikelyDevHost() {
-  const host = String(window?.location?.hostname || "").trim().toLowerCase();
-  return host === "localhost" || host === "127.0.0.1";
-}
-
-function looksLikeJsonFragment(text) {
-  const safeText = toText(text);
-  if (!safeText || !safeText.startsWith("{")) {
-    return false;
-  }
-
-  try {
-    JSON.parse(safeText);
-    return false;
-  } catch (_error) {
-    return true;
-  }
 }
 
 function normalizeAttemptDiagnostics(rawDiagnostics) {
@@ -257,16 +214,21 @@ export function initAiChatUi(options = {}) {
   let cooldownUntilMs = 0;
   let cooldownTimerId = 0;
 
-  const placeholderStatus =
+  const serviceUnavailableStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
       ? options.placeholderStatus.trim()
-      : "聊天接口已接线；请先登录并完成服务端 Gemini 配置。";
-  const readyStatus =
-    typeof options.readyStatus === "string" && options.readyStatus.trim()
-      ? options.readyStatus.trim()
-      : "聊天接口已就绪，可开始提问。";
-  const debugStatusDetails =
-    Boolean(options.debugStatusDetails) || Boolean(window.__SALES_TOOL_CHAT_DEBUG__) || isLikelyDevHost();
+      : "聊天服务暂不可用，请稍后再试。";
+
+  function showErrorStatus(message) {
+    const text = toText(message) || "暂时无法完成本次回答，请稍后重试。";
+    dom.statusEl.classList.add("ai-chat-status-error");
+    dom.statusEl.textContent = text;
+  }
+
+  function clearStatus() {
+    dom.statusEl.classList.remove("ai-chat-status-error");
+    dom.statusEl.textContent = "";
+  }
 
   function updateResizeControl() {
     if (state === CHAT_STATES.EXPANDED) {
@@ -383,8 +345,7 @@ export function initAiChatUi(options = {}) {
       return false;
     }
     const remainingSec = Math.ceil(remainingMs / 1000);
-    dom.statusEl.classList.remove("ai-chat-status-ready");
-    dom.statusEl.textContent = `调用过于频繁，${remainingSec} 秒后可重试。`;
+    showErrorStatus(`操作过于频繁，请 ${remainingSec} 秒后重试。`);
     return true;
   }
 
@@ -435,8 +396,7 @@ export function initAiChatUi(options = {}) {
       renderCooldownStatus();
       return;
     }
-    dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
-    dom.statusEl.textContent = hasHandler ? readyStatus : placeholderStatus;
+    clearStatus();
   }
 
   function sanitizeHistoryItem(item) {
@@ -478,9 +438,7 @@ export function initAiChatUi(options = {}) {
 
   function clearSessionHistory() {
     sessionHistory = [];
-    const hasHandler = typeof sendHandler === "function";
-    dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
-    dom.statusEl.textContent = "会话记忆已清空。";
+    clearStatus();
   }
 
   function getCurrentReportRange() {
@@ -787,8 +745,7 @@ export function initAiChatUi(options = {}) {
     }
 
     if (typeof sendHandler !== "function") {
-      dom.statusEl.classList.remove("ai-chat-status-ready");
-      dom.statusEl.textContent = placeholderStatus;
+      showErrorStatus(serviceUnavailableStatus);
       return;
     }
 
@@ -798,8 +755,7 @@ export function initAiChatUi(options = {}) {
     isSending = true;
     updateComposerState();
     const liveMessage = createThinkingMessage();
-    dom.statusEl.classList.remove("ai-chat-status-ready");
-    dom.statusEl.textContent = "AI 思考中...";
+    clearStatus();
 
     try {
       const result = await Promise.resolve(
@@ -808,13 +764,9 @@ export function initAiChatUi(options = {}) {
           history: getSessionHistory(),
           onThinking: (message) => {
             updateThinkingLabel(liveMessage, message);
-            dom.statusEl.classList.remove("ai-chat-status-ready");
-            dom.statusEl.textContent = "AI 思考中...";
           },
           onDelta: (chunk) => {
             appendLiveMessageDelta(liveMessage, chunk);
-            dom.statusEl.classList.remove("ai-chat-status-ready");
-            dom.statusEl.textContent = "AI 正在生成回复...";
           },
         }),
       );
@@ -842,53 +794,17 @@ export function initAiChatUi(options = {}) {
         pushHistory("assistant", assistantHistoryText);
       }
       resetFailureState();
-
-      dom.statusEl.classList.add("ai-chat-status-ready");
-      if (
-        normalized.format === "text_fallback" &&
-        normalized.responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED
-      ) {
-        let fallbackStatus = normalized.fallbackNotice;
-        if (!fallbackStatus && normalized.meta) {
-          fallbackStatus = `已回退文本显示：${getFormatReasonLabel(normalized.meta.formatReason)}（原因码: ${normalized.meta.formatReason}）`;
-        }
-        const shouldShowIncompleteJsonHint =
-          looksLikeJsonFragment(normalized.reply) &&
-          normalized.meta &&
-          (normalized.meta.formatReason === CHAT_FORMAT_REASONS.OUTPUT_TRUNCATED ||
-            normalized.meta.formatReason === CHAT_FORMAT_REASONS.JSON_PARSE_FAILED) &&
-          !normalized.meta.repairSucceeded;
-        if (shouldShowIncompleteJsonHint) {
-          fallbackStatus = "结构化输出未完成，请重试。";
-        }
-        if (normalized.requestId && !fallbackStatus.includes("请求号")) {
-          fallbackStatus = fallbackStatus
-            ? `${fallbackStatus}（请求号: ${normalized.requestId}）`
-            : `已回退文本显示（请求号: ${normalized.requestId}）。`;
-        }
-        dom.statusEl.textContent = fallbackStatus || "已回退文本显示。";
-      } else if (normalized.responseAction === CHAT_RESPONSE_ACTIONS.CLARIFY) {
-        dom.statusEl.textContent = "AI 需要你补充信息后继续分析。";
-      } else if (normalized.responseAction === CHAT_RESPONSE_ACTIONS.NATURAL) {
-        dom.statusEl.textContent = "AI 已按自由问答回复。";
-      } else {
-        if (hasRendered && debugStatusDetails && normalized.meta) {
-          dom.statusEl.textContent = `AI 已按${getModeLabel(normalized.mode)}模式回复（耗时 ${formatDurationSeconds(
-            normalized.meta.totalDurationMs,
-          )}s，阶段 ${normalized.meta.finalStage}，尝试 ${normalized.meta.attemptCount} 次）。`;
-        } else {
-          dom.statusEl.textContent = hasRendered
-            ? `AI 已按${getModeLabel(normalized.mode)}模式回复。`
-            : "处理器已执行，但未返回可显示内容。";
-        }
-      }
+      clearStatus();
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
-      dom.statusEl.classList.remove("ai-chat-status-ready");
-      dom.statusEl.textContent = `调用失败：${message}`;
+      const userErrorMessage =
+        message && message !== "请稍后重试"
+          ? `暂时无法完成本次回答，请稍后重试。（${message}）`
+          : "暂时无法完成本次回答，请稍后重试。";
+      showErrorStatus(userErrorMessage);
       if (!liveMessage.hasDelta) {
         removeLiveMessage(liveMessage);
-        appendTextMessage("assistant", `调用失败：${message}`);
+        appendTextMessage("assistant", userErrorMessage);
       }
       consecutiveFailureCount += 1;
       if (consecutiveFailureCount >= 3) {
