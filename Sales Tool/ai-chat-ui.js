@@ -303,6 +303,11 @@ export function initAiChatUi(options = {}) {
       return;
     }
 
+    const prevState = state;
+    if (prevState === CHAT_STATES.CLOSED && nextState !== CHAT_STATES.CLOSED) {
+      refreshSystemIntro();
+    }
+
     state = nextState;
     const isOpen = state !== CHAT_STATES.CLOSED;
     document.body.classList.toggle("ai-chat-open", isOpen);
@@ -332,12 +337,10 @@ export function initAiChatUi(options = {}) {
   }
 
   function openCompact() {
-    refreshSystemIntro();
     applyState(CHAT_STATES.COMPACT);
   }
 
   function openExpanded() {
-    refreshSystemIntro();
     applyState(CHAT_STATES.EXPANDED);
   }
 
