@@ -22,7 +22,7 @@ const FIRST_TRANSPORT_TIMEOUT_RETRY_BUDGET_BUFFER_MS = 1000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
-const NATURAL_MAX_OUTPUT_TOKENS = 896;
+const NATURAL_MAX_OUTPUT_TOKENS = 1100;
 const MIN_SUMMARY_CHARS = 70;
 const MIN_HIGHLIGHTS_COUNT = 1;
 const MIN_EVIDENCE_COUNT = 1;
@@ -1868,15 +1868,15 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
   const postureRequirement =
     safePosture === NATURAL_POSTURES.EXPLAIN
       ? longAnswerPreferred
-        ? "姿态：解释型。4-6句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
-        : "姿态：解释型。3-5句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
+        ? "姿态：解释型。5-7句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
+        : "姿态：解释型。4-6句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
       : safePosture === NATURAL_POSTURES.ADVISE
         ? longAnswerPreferred
-          ? "姿态：建议型。5-7句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
-          : "姿态：建议型。4-6句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
+          ? "姿态：建议型。6-8句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
+          : "姿态：建议型。5-7句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
         : longAnswerPreferred
-          ? "姿态：判断型。3-5句，先给明确判断，再给1-2条关键依据。"
-          : "姿态：判断型。2-4句，先给明确判断，再给1条关键依据。";
+          ? "姿态：判断型。4-6句，先给明确判断，再给1-2条关键依据。"
+          : "姿态：判断型。3-5句，先给明确判断，再给1条关键依据。";
   const naturalContext = {
     scope: contextV1?.scope || {},
     business: {

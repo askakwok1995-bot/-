@@ -656,6 +656,20 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 硬回退（未提交前）：
 - `git restore main.js README.md`
 
+#### natural_answer 长度微调（仅自然问答链路）
+
+- 当前参数：`functions/api/chat.js` 中 `NATURAL_MAX_OUTPUT_TOKENS=1100`（由 `896` 小幅上调约 20%）。
+- Prompt 句数上限同步上调（各姿态 +1 句上限）：
+  - explain：短 `4-6`、长 `5-7`
+  - advise：短 `5-7`、长 `6-8`
+  - judge：短 `3-5`、长 `4-6`
+- 生效范围：仅 `natural_answer`，不影响 `structured_answer` schema 与路由。
+
+回退方式：
+1. 将 `NATURAL_MAX_OUTPUT_TOKENS` 改回 `896`。
+2. 将 `buildNaturalPrompt()` 中 posture 句数区间改回原值（explain `3-5/4-6`，advise `4-6/5-7`，judge `2-4/3-5`）。
+3. 重新部署并跑一轮 natural + structured 回归。
+
 ```bash
 # natural 题集（mode=auto）对比 baseline
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
