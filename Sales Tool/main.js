@@ -1083,6 +1083,7 @@ async function initializeApp() {
   const AI_CHAT_MODE_EXTRA_TOP_N = 2;
   const AI_CHAT_MIN_CONTEXT_TREND_ITEMS = 1;
   const AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS = 1;
+  const AI_CHAT_MAX_SAFE_INSIGHT_EVIDENCE_ITEMS = 50;
   const AI_CHAT_INPUT_PROFILES = Object.freeze({
     BASELINE: "baseline",
     PLUS: "plus",
@@ -1108,6 +1109,9 @@ async function initializeApp() {
       trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
       entityLabelMaxCount: 3,
       riskTopMaxCount: 3,
+      insightSummaryMaxChars: 120,
+      insightSuggestionMaxChars: 120,
+      insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
     }),
     [AI_CHAT_INPUT_PROFILES.PLUS]: Object.freeze({
@@ -1123,6 +1127,9 @@ async function initializeApp() {
       trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
       entityLabelMaxCount: 3,
       riskTopMaxCount: 3,
+      insightSummaryMaxChars: 120,
+      insightSuggestionMaxChars: 120,
+      insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
     }),
     [AI_CHAT_INPUT_PROFILES.RICH]: Object.freeze({
@@ -1138,6 +1145,9 @@ async function initializeApp() {
       trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
       entityLabelMaxCount: 3,
       riskTopMaxCount: 3,
+      insightSummaryMaxChars: 120,
+      insightSuggestionMaxChars: 120,
+      insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
     }),
     [AI_CHAT_INPUT_PROFILES.FULL]: Object.freeze({
@@ -1153,6 +1163,9 @@ async function initializeApp() {
       trendMinCount: 6,
       entityLabelMaxCount: 20,
       riskTopMaxCount: 20,
+      insightSummaryMaxChars: 0,
+      insightSuggestionMaxChars: 0,
+      insightEvidenceMaxItems: 30,
       disableNaturalMiniTrim: true,
     }),
   });
@@ -1192,8 +1205,14 @@ async function initializeApp() {
 
   function compactInsightItems(items, maxItems = AI_CHAT_CONTEXT_TOP_N, options = {}) {
     const evidenceMaxItemsRaw = Number(options.maxEvidenceItems);
-    const evidenceMaxItems =
-      Number.isFinite(evidenceMaxItemsRaw) && evidenceMaxItemsRaw > 0 ? Math.floor(evidenceMaxItemsRaw) : 2;
+    const evidenceMaxItemsCandidate =
+      Number.isFinite(evidenceMaxItemsRaw) && evidenceMaxItemsRaw > 0
+        ? Math.floor(evidenceMaxItemsRaw)
+        : AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS;
+    const evidenceMaxItems = Math.min(
+      evidenceMaxItemsCandidate,
+      AI_CHAT_MAX_SAFE_INSIGHT_EVIDENCE_ITEMS,
+    );
     const summaryMaxChars = Number(options.maxSummaryChars);
     const suggestionMaxChars = Number(options.maxSuggestionChars);
     if (!Array.isArray(items)) {
@@ -1516,6 +1535,21 @@ async function initializeApp() {
       Number.isFinite(riskTopMaxCountRaw) && riskTopMaxCountRaw > 0
         ? Math.floor(riskTopMaxCountRaw)
         : 3;
+    const insightSummaryMaxCharsRaw = Number(profileConfig.insightSummaryMaxChars);
+    const insightSummaryMaxChars =
+      Number.isFinite(insightSummaryMaxCharsRaw) && insightSummaryMaxCharsRaw >= 0
+        ? Math.floor(insightSummaryMaxCharsRaw)
+        : 120;
+    const insightSuggestionMaxCharsRaw = Number(profileConfig.insightSuggestionMaxChars);
+    const insightSuggestionMaxChars =
+      Number.isFinite(insightSuggestionMaxCharsRaw) && insightSuggestionMaxCharsRaw >= 0
+        ? Math.floor(insightSuggestionMaxCharsRaw)
+        : 120;
+    const insightEvidenceMaxItemsRaw = Number(profileConfig.insightEvidenceMaxItems);
+    const insightEvidenceMaxItems =
+      Number.isFinite(insightEvidenceMaxItemsRaw) && insightEvidenceMaxItemsRaw > 0
+        ? Math.floor(insightEvidenceMaxItemsRaw)
+        : AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS;
     const analysisContext = buildAnalyticsContext(rangeOverride);
     const kpi = getKpiOverview(analysisContext);
     const trend = getTrendInsights(analysisContext);
@@ -1524,27 +1558,29 @@ async function initializeApp() {
     const risk = getRiskAlerts(analysisContext);
     const outline = buildBriefingOutline(analysisContext);
     const compactKpiItems = compactInsightItems(kpi?.items, contextTopN, {
-      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+      maxSummaryChars: insightSummaryMaxChars,
+      maxSuggestionChars: insightSuggestionMaxChars,
+      maxEvidenceItems: insightEvidenceMaxItems,
     });
     const compactTrendItems = compactInsightItems(trend?.items, modeExtraTopN, {
-      maxSummaryChars: 120,
-      maxSuggestionChars: 120,
-      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+      maxSummaryChars: insightSummaryMaxChars,
+      maxSuggestionChars: insightSuggestionMaxChars,
+      maxEvidenceItems: insightEvidenceMaxItems,
     });
     const compactProductItems = compactInsightItems(product?.items, modeExtraTopN, {
-      maxSummaryChars: 120,
-      maxSuggestionChars: 120,
-      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+      maxSummaryChars: insightSummaryMaxChars,
+      maxSuggestionChars: insightSuggestionMaxChars,
+      maxEvidenceItems: insightEvidenceMaxItems,
     });
     const compactHospitalItems = compactInsightItems(hospital?.items, modeExtraTopN, {
-      maxSummaryChars: 120,
-      maxSuggestionChars: 120,
-      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+      maxSummaryChars: insightSummaryMaxChars,
+      maxSuggestionChars: insightSuggestionMaxChars,
+      maxEvidenceItems: insightEvidenceMaxItems,
     });
     const compactRiskItems = compactInsightItems(risk?.items, contextTopN, {
-      maxSummaryChars: 120,
-      maxSuggestionChars: 120,
-      maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
+      maxSummaryChars: insightSummaryMaxChars,
+      maxSuggestionChars: insightSuggestionMaxChars,
+      maxEvidenceItems: insightEvidenceMaxItems,
     });
     const overviewMetric = pickOverviewMetric(kpi?.metrics);
     const keyEvidence =

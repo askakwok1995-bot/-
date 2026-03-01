@@ -642,11 +642,19 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 - 为了手测“全量输入层”效果，`main.js` 新增实验档位：`inputProfile=full`。
 - 当前实验版默认开启：`AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED = true`（`main.js` 内常量）。
 - 该档位会放宽上下文裁剪（趋势/产品/医院/风险条目与 `naturalMini` 明细显著增加），用于观察模型在高信息密度下的表现。
+- `full` 档额外放开 insight 裁剪（仅 `full` 生效）：
+  - `summary` 不截断（`insightSummaryMaxChars=0`）
+  - `suggestion` 不截断（`insightSuggestionMaxChars=0`）
+  - `evidence` 扩大到 `30` 条（并有安全上限 `50` 条，防止极端超长 payload）
+- `baseline/plus/rich` 保持原口径：`summary=120`、`suggestion=120`、`evidence=1`。
 
 回退方式（建议保留这三步）：
 1. 将 `main.js` 中 `AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED` 改回 `false`。
 2. 保持默认档位回到 `plus`（无需改其它业务逻辑）。
 3. 重新部署后，用 `questionSet=natural` 跑一次 baseline/plus 回归，确认时延与质量恢复到常规区间。
+
+硬回退（未提交前）：
+- `git restore main.js README.md`
 
 ```bash
 # natural 题集（mode=auto）对比 baseline
