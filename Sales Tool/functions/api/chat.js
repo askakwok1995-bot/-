@@ -1193,6 +1193,159 @@ function replaceLeadingSentence(text, nextSentence) {
   return remaining ? `${safeNextSentence} ${remaining}` : safeNextSentence;
 }
 
+function sanitizeNaturalSentence(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return "";
+  }
+  return trimString(
+    safeText
+      .replace(/^[-*•]\s+/, "")
+      .replace(/^\d+[.)、]\s+/, "")
+      .replace(/^(结论|依据|建议)\s*[:：]\s*/i, "")
+      .replace(/^(先说结论|先给结论)\s*[:：]\s*/i, ""),
+  );
+}
+
+function splitSentencesNatural(text, maxItems = 16) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return [];
+  }
+  const normalized = safeText
+    .replace(/\r\n/g, "\n")
+    .replace(/(结论|依据|建议)\s*[:：]/g, "\n")
+    .replace(/\n{2,}/g, "\n");
+  const chunks = normalized
+    .split(/[\n。！？；]/)
+    .map((item) => sanitizeNaturalSentence(item))
+    .filter((item) => item);
+  return dedupeStringList(chunks, maxItems);
+}
+
+function hasBulletList(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return false;
+  }
+  return /(^|\n)\s*[-*•]\s+/.test(safeText);
+}
+
+function hasRigidTripletTemplate(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return false;
+  }
+  return /(结论)\s*[:：][\s\S]{0,400}(依据)\s*[:：][\s\S]{0,400}(建议)\s*[:：]/.test(safeText);
+}
+
+function getNaturalSeedNumber(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return 0;
+  }
+  let seed = 0;
+  for (let i = 0; i < safeText.length; i += 1) {
+    seed = (seed + safeText.charCodeAt(i) * (i + 1)) % 2147483647;
+  }
+  return seed;
+}
+
+function pickPhraseBySeed(pool, seed, fallback = "") {
+  if (!Array.isArray(pool) || pool.length === 0) {
+    return fallback;
+  }
+  const safeSeed = Number(seed);
+  const index =
+    Number.isFinite(safeSeed) && safeSeed >= 0 ? Math.floor(safeSeed) % pool.length : 0;
+  return trimString(pool[index]) || fallback || trimString(pool[0]) || "";
+}
+
+function buildEvidenceLead(posture, seedText = "") {
+  const pool =
+    posture === NATURAL_POSTURES.EXPLAIN
+      ? ["从成因上看，关键点主要在：", "结合现有数据，核心原因有：", "从数据拆解看，主要体现在："]
+      : ["从数据上看，主要有这几点：", "综合当前口径，重点信号是：", "结合现有证据，可以看到："];
+  return pickPhraseBySeed(pool, getNaturalSeedNumber(seedText), "从数据上看，主要有这几点：");
+}
+
+function buildAdviceLead(seedText = "") {
+  const pool = [
+    "更稳妥的推进顺序是：",
+    "下一步建议优先做这几件事：",
+    "如果要尽快落地，建议先从这里推进：",
+  ];
+  return pickPhraseBySeed(pool, getNaturalSeedNumber(seedText), "下一步建议优先做这几件事：");
+}
+
+function collectContextEvidenceBullets(contextV1, maxItems = 3) {
+  const refs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, maxItems);
+  const items = refs
+    .map((item) => {
+      const label = trimString(item?.label);
+      const value = trimString(item?.value);
+      if (!label || !value) {
+        return "";
+      }
+      return `${label}${value}`;
+    })
+    .filter((item) => item);
+  return dedupeStringList(items, maxItems);
+}
+
+function buildDefaultAdviceBullets(posture) {
+  if (posture === NATURAL_POSTURES.ADVISE) {
+    return [
+      "先聚焦贡献高且波动大的环节，按周跟进执行结果。",
+      "同步核对关键客户与重点产品的推进节奏，避免动作分散。",
+    ];
+  }
+  return ["建议持续跟踪下一周期数据，必要时再做更细拆解。"];
+}
+
+function formatNaturalByPosture(text, posture, message, contextV1) {
+  const safePosture =
+    posture === NATURAL_POSTURES.EXPLAIN || posture === NATURAL_POSTURES.ADVISE
+      ? posture
+      : NATURAL_POSTURES.JUDGE;
+  const normalized = trimString(text).replace(/\r\n/g, "\n");
+  const cleaned = normalized.replace(/(^|\n)\s*(结论|依据|建议)\s*[:：]\s*/g, "\n");
+  const allSentences = splitSentencesNatural(cleaned, 18);
+  const leadingRaw = sanitizeNaturalSentence(extractLeadingSentence(cleaned));
+  const conclusionText =
+    leadingRaw || allSentences[0] || sanitizeNaturalSentence(buildNaturalDirectLead(message, contextV1, safePosture));
+  const detailSentences = allSentences.filter((item) => item && item !== conclusionText);
+  const suggestionRegex = /(建议|下一步|优先|先做|先从|执行|推进|跟进|复盘|补齐|调整|优化|聚焦|完善)/;
+  const suggestionSentences = detailSentences.filter((item) => suggestionRegex.test(item));
+  const evidenceSentences = detailSentences.filter((item) => !suggestionRegex.test(item));
+
+  let lead = "";
+  let bulletItems = [];
+  if (safePosture === NATURAL_POSTURES.ADVISE) {
+    lead = buildAdviceLead(`${message}|${conclusionText}`);
+    bulletItems = dedupeStringList(
+      [...suggestionSentences, ...detailSentences, ...buildDefaultAdviceBullets(safePosture)],
+      4,
+    ).slice(0, 4);
+  } else {
+    lead = buildEvidenceLead(safePosture, `${message}|${conclusionText}`);
+    bulletItems = dedupeStringList(
+      [...evidenceSentences, ...detailSentences, ...collectContextEvidenceBullets(contextV1, 3)],
+      3,
+    ).slice(0, 3);
+    if (bulletItems.length === 0) {
+      bulletItems = ["当前可用证据有限，建议结合后续周期数据继续验证判断。"];
+    }
+  }
+
+  const safeBullets = bulletItems.map((item) => sanitizeNaturalSentence(item)).filter((item) => item);
+  if (safeBullets.length === 0) {
+    return trimString(conclusionText);
+  }
+
+  return [`${conclusionText}`, `${lead}`, ...safeBullets.map((item) => `- ${item}`)].join("\n");
+}
+
 function normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile) {
   const rawText = trimString(modelReply);
   if (!rawText) {
@@ -1230,6 +1383,16 @@ function normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfil
       buildNaturalDirectLead(message, contextV1, toneProfile?.posture),
     );
   }
+  const hasRigidTemplate = hasRigidTripletTemplate(normalizedText);
+  const hasNaturalBullets = hasBulletList(normalizedText);
+  if (hasRigidTemplate || !hasNaturalBullets) {
+    normalizedText = formatNaturalByPosture(normalizedText, toneProfile?.posture, message, contextV1);
+    if (hasRigidTemplate) {
+      appliedRuleHits.push("anti_rigid_triplet_template");
+    } else {
+      appliedRuleHits.push("natural_bullet_fallback");
+    }
+  }
 
   return {
     text: trimString(normalizedText),
@@ -1265,7 +1428,12 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
   }
   const disclaimerText = disclaimerList.length > 0 ? `${disclaimerList[0]}` : "";
   const questionHint = trimString(message) ? "" : "你可以先告诉我你关心的时间范围或指标。";
-  const fallbackReply = [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" ");
+  const fallbackReply = formatNaturalByPosture(
+    [fallbackSummary, evidenceText, disclaimerText, questionHint].filter((item) => item).join(" "),
+    safePosture,
+    message,
+    contextV1,
+  );
   const normalizedModel = normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile);
   const modelText = trimString(normalizedModel.text);
   const surfaceReply = modelText || fallbackReply;
@@ -1899,7 +2067,10 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "输出语言：简体中文。",
     "回答形态：自然问答（非结构化模板）。",
     "首句必须直接回答用户问题，禁止先讲流程或系统状态。",
-    "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
+    "输出结构：先用1-2句自然语言给出结论，再按姿态引出一个重点分点块。",
+    "judge/explain：使用自然过渡句引出2-3条依据分点（每条以“- ”开头）。",
+    "advise：使用自然过渡句引出2-4条建议分点（每条以“- ”开头）。",
+    "避免固定模板词连发，尤其不要机械重复“结论：/依据：/建议：”。",
     longAnswerPreferred
       ? "证据要求：优先嵌入2-3条关键数据点，写成自然句，不做字段播报。"
       : "证据要求：优先嵌入2条关键数据点，必要时可到3条，写成自然句，不做字段播报。",

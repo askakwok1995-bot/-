@@ -688,6 +688,22 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 2. 将 `buildNaturalPrompt()` 中 posture 句数区间改回原值（explain `3-5/4-6`，advise `4-6/5-7`，judge `2-4/3-5`）。
 3. 重新部署并跑一轮 natural + structured 回归。
 
+#### natural_answer 自然分点输出（按姿态选择）
+
+- 当前自然问答改为“自然结论 + 单一重点分点块”，避免固定三段模板。
+- 判定口径：
+  - `judge / explain`：以依据分点为主（2-3 条）
+  - `advise`：以建议分点为主（2-4 条）
+- 展示要求：
+  - 不强制输出“依据：/建议：”硬标题
+  - 允许使用自然过渡句（如“从数据上看，主要有这几点：”）
+  - 分点仍使用 `- `，便于阅读
+
+回退方式：
+1. 在 `functions/api/chat.js` 中移除 `formatNaturalByPosture(...)` 的兜底调用（`normalizeNaturalSurfaceReply`）。
+2. 在 `buildNaturalPrompt()` 中恢复旧版纯自然段约束（去掉按姿态分点要求）。
+3. 重新部署并跑一轮 natural + structured 回归。
+
 ```bash
 # natural 题集（mode=auto）对比 baseline
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
