@@ -287,11 +287,10 @@ body.ai-chat-open .container {
 
 .ai-chat-head {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: block;
+  min-height: 30px;
   padding-top: 32px;
-  margin-bottom: 8px;
+  margin-bottom: 3px;
 }
 
 .ai-chat-head-btn {
@@ -2073,7 +2072,9 @@ tr.selected-row td {
   }
 
   .ai-chat-head {
+    min-height: 28px;
     padding-top: 30px;
+    margin-bottom: 2px;
   }
 
   .ai-chat-head-btn {

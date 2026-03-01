@@ -26,6 +26,9 @@ const CHAT_HISTORY_MAX_ROUNDS = 6;
 const CHAT_HISTORY_MAX_ITEMS = CHAT_HISTORY_MAX_ROUNDS * 2;
 const CHAT_FAILURE_COOLDOWN_SHORT_SEC = 3;
 const CHAT_FAILURE_COOLDOWN_LONG_SEC = 5;
+const CHAT_SYSTEM_INTRO_ATTR = "data-chat-system-intro";
+const REPORT_START_MONTH_INPUT_ID = "report-start-month";
+const REPORT_END_MONTH_INPUT_ID = "report-end-month";
 
 let initialized = false;
 
@@ -329,10 +332,12 @@ export function initAiChatUi(options = {}) {
   }
 
   function openCompact() {
+    refreshSystemIntroIfPristine();
     applyState(CHAT_STATES.COMPACT);
   }
 
   function openExpanded() {
+    refreshSystemIntroIfPristine();
     applyState(CHAT_STATES.EXPANDED);
   }
 
@@ -473,6 +478,56 @@ export function initAiChatUi(options = {}) {
     const hasHandler = typeof sendHandler === "function";
     dom.statusEl.classList.toggle("ai-chat-status-ready", hasHandler);
     dom.statusEl.textContent = "会话记忆已清空。";
+  }
+
+  function getCurrentReportRange() {
+    const startInput = document.getElementById(REPORT_START_MONTH_INPUT_ID);
+    const endInput = document.getElementById(REPORT_END_MONTH_INPUT_ID);
+    const startYm = startInput instanceof HTMLInputElement ? toText(startInput.value) : "";
+    const endYm = endInput instanceof HTMLInputElement ? toText(endInput.value) : "";
+    return { startYm, endYm };
+  }
+
+  function buildSystemIntroText() {
+    const { startYm, endYm } = getCurrentReportRange();
+    const periodText =
+      startYm && endYm
+        ? `当前分析时间范围：${startYm} ~ ${endYm}。`
+        : "当前分析时间范围：当前尚未设置，请先在报表区选择起始月和结束月。";
+    return [
+      "我是销售分析助手。",
+      "我仅基于你当前账号内已录入的数据进行分析（销售记录、产品主数据、目标配置），不访问外部数据源。",
+      periodText,
+      "你可以先在报表区调整起止月，再继续提问。",
+    ].join("");
+  }
+
+  function hasUserMessages() {
+    return Boolean(dom.messages.querySelector(".ai-chat-message--user"));
+  }
+
+  function isPristineSession() {
+    return !hasUserMessages();
+  }
+
+  function upsertSystemIntro(text) {
+    const message = toText(text);
+    if (!message) return;
+    let article = dom.messages.querySelector(`article[${CHAT_SYSTEM_INTRO_ATTR}="true"]`);
+    if (!(article instanceof HTMLElement)) {
+      article = document.createElement("article");
+      article.className = "ai-chat-message ai-chat-message--assistant ai-chat-message--system-intro";
+      article.setAttribute(CHAT_SYSTEM_INTRO_ATTR, "true");
+      dom.messages.prepend(article);
+    }
+    article.textContent = message;
+  }
+
+  function refreshSystemIntroIfPristine() {
+    if (!isPristineSession()) {
+      return;
+    }
+    upsertSystemIntro(buildSystemIntroText());
   }
 
   function scrollMessagesToBottom() {
@@ -924,6 +979,7 @@ export function initAiChatUi(options = {}) {
   initialized = true;
   updateComposerState();
   updateModeControls();
+  refreshSystemIntroIfPristine();
 
   if (isValidState(options.initialState) && options.initialState !== CHAT_STATES.CLOSED) {
     applyState(options.initialState);

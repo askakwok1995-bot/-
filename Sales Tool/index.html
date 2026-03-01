@@ -571,7 +571,7 @@
       AI
     </button>
     <div id="ai-chat-backdrop" class="ai-chat-backdrop" hidden></div>
-    <section id="ai-chat-sheet" class="ai-chat-sheet" role="dialog" aria-labelledby="ai-chat-title" aria-hidden="true">
+    <section id="ai-chat-sheet" class="ai-chat-sheet" role="dialog" aria-label="AI 对话窗口" aria-hidden="true">
       <header class="ai-chat-head">
         <button
           id="ai-chat-resize-btn"
@@ -599,14 +599,8 @@
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>
         </button>
-        <h2 id="ai-chat-title" class="ai-chat-title">AI 助手</h2>
-        <p class="ai-chat-subtitle">自由提问即可；系统将自动选择回答形态与分析模式。</p>
       </header>
-      <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite">
-        <article class="ai-chat-message ai-chat-message--assistant">
-          你好，AI 聊天接口已接线。若无法回复，请先检查登录状态与服务端 Gemini 配置。
-        </article>
-      </div>
+      <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"></div>
       <form id="ai-chat-form" class="ai-chat-composer" novalidate>
         <input
           id="ai-chat-input"

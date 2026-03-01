@@ -563,6 +563,11 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - 或控制台设置 `window.__SALES_TOOL_CHAT_DEBUG__ = true`
 - 本地 `npm run dev` 不提供 `/api/chat`，需部署到 Cloudflare Pages Functions 才能联通 Gemini。
 - AI 聊天默认自由提问，不再要求用户手动切换 `简报/诊断/行动`。
+- 聊天窗口顶部已收口：移除“AI 助手”标题与副标题，把空间优先给对话区。
+- 首条欢迎语为系统注入文案，固定说明：
+  - 角色：销售分析助手
+  - 数据范围：仅当前账号已录入的销售记录、产品主数据、目标配置（不访问外部数据源）
+  - 时间范围：读取报表筛选起止月（`report-start-month ~ report-end-month`）；若未设置会提示先选择起始月和结束月
 - 调试桥接：
   - `window.__SALES_TOOL_AI_CHAT__.getSessionHistory()`
   - `window.__SALES_TOOL_AI_CHAT__.clearSessionHistory()`
