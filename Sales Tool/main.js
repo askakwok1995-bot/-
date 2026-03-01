@@ -1105,6 +1105,15 @@ async function initializeApp() {
   });
   // 全量输入实验开关（用于线上手测；关闭后回退到 plus 默认）
   const AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED = true;
+  // full 档 raw snapshot 实验开关（仅 full + auto 生效）
+  const AI_CHAT_FULL_RAW_SNAPSHOT_ENABLED = true;
+  const AI_CHAT_FULL_RAW_SNAPSHOT_MAX_CHARS = 120000;
+  const AI_CHAT_FULL_RAW_MONTH_ROWS_MAX = 36;
+  const AI_CHAT_FULL_RAW_QUARTER_ROWS_MAX = 16;
+  const AI_CHAT_FULL_RAW_PRODUCT_ROWS_MAX = 500;
+  const AI_CHAT_FULL_RAW_HOSPITAL_ROWS_MAX = 20;
+  const AI_CHAT_FULL_RAW_PRODUCT_SERIES_MAX = 120;
+  const AI_CHAT_FULL_RAW_HOSPITAL_SERIES_MAX = 20;
   const AI_CHAT_DEFAULT_INPUT_PROFILE = AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED
     ? AI_CHAT_INPUT_PROFILES.FULL
     : AI_CHAT_INPUT_PROFILES.PLUS;
@@ -1126,6 +1135,7 @@ async function initializeApp() {
       insightSuggestionMaxChars: 120,
       insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
+      includeRawSnapshot: false,
     }),
     [AI_CHAT_INPUT_PROFILES.PLUS]: Object.freeze({
       monthlyDefaultCount: 3,
@@ -1144,6 +1154,7 @@ async function initializeApp() {
       insightSuggestionMaxChars: 120,
       insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
+      includeRawSnapshot: false,
     }),
     [AI_CHAT_INPUT_PROFILES.RICH]: Object.freeze({
       monthlyDefaultCount: 4,
@@ -1162,6 +1173,7 @@ async function initializeApp() {
       insightSuggestionMaxChars: 120,
       insightEvidenceMaxItems: 1,
       disableNaturalMiniTrim: false,
+      includeRawSnapshot: false,
     }),
     [AI_CHAT_INPUT_PROFILES.FULL]: Object.freeze({
       monthlyDefaultCount: 12,
@@ -1180,6 +1192,7 @@ async function initializeApp() {
       insightSuggestionMaxChars: 0,
       insightEvidenceMaxItems: 30,
       disableNaturalMiniTrim: true,
+      includeRawSnapshot: true,
     }),
   });
 
@@ -1523,6 +1536,199 @@ async function initializeApp() {
     return naturalMini;
   }
 
+  function getJsonLengthSafe(value) {
+    try {
+      return JSON.stringify(value).length;
+    } catch (_error) {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
+
+  function copySnapshotRows(rows, maxItems) {
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    const limitRaw = Number(maxItems);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : rows.length;
+    return rows.slice(0, limit).map((row) => {
+      if (row && typeof row === "object" && !Array.isArray(row)) {
+        return { ...row };
+      }
+      return row;
+    });
+  }
+
+  function copySnapshotSeries(series, maxKeys) {
+    if (!series || typeof series !== "object" || Array.isArray(series)) {
+      return {};
+    }
+    const keys = Object.keys(series);
+    const limitRaw = Number(maxKeys);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : keys.length;
+    const copied = {};
+    for (const key of keys.slice(0, limit)) {
+      const item = series[key];
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        copied[key] = { ...item };
+      }
+    }
+    return copied;
+  }
+
+  function buildChatRawReportSnapshot(analysisContext, profileConfig) {
+    const snapshot =
+      analysisContext?.snapshot && typeof analysisContext.snapshot === "object" ? analysisContext.snapshot : {};
+    const maxCharsRaw = Number(profileConfig?.rawSnapshotMaxChars);
+    const maxChars =
+      Number.isFinite(maxCharsRaw) && maxCharsRaw > 0
+        ? Math.floor(maxCharsRaw)
+        : AI_CHAT_FULL_RAW_SNAPSHOT_MAX_CHARS;
+
+    const monthRowsMaxRaw = Number(profileConfig?.rawMonthRowsMax);
+    const monthRowsMax =
+      Number.isFinite(monthRowsMaxRaw) && monthRowsMaxRaw > 0
+        ? Math.floor(monthRowsMaxRaw)
+        : AI_CHAT_FULL_RAW_MONTH_ROWS_MAX;
+    const quarterRowsMaxRaw = Number(profileConfig?.rawQuarterRowsMax);
+    const quarterRowsMax =
+      Number.isFinite(quarterRowsMaxRaw) && quarterRowsMaxRaw > 0
+        ? Math.floor(quarterRowsMaxRaw)
+        : AI_CHAT_FULL_RAW_QUARTER_ROWS_MAX;
+    const productRowsMaxRaw = Number(profileConfig?.rawProductRowsMax);
+    const productRowsMax =
+      Number.isFinite(productRowsMaxRaw) && productRowsMaxRaw > 0
+        ? Math.floor(productRowsMaxRaw)
+        : AI_CHAT_FULL_RAW_PRODUCT_ROWS_MAX;
+    const hospitalRowsMaxRaw = Number(profileConfig?.rawHospitalRowsMax);
+    const hospitalRowsMax =
+      Number.isFinite(hospitalRowsMaxRaw) && hospitalRowsMaxRaw > 0
+        ? Math.floor(hospitalRowsMaxRaw)
+        : AI_CHAT_FULL_RAW_HOSPITAL_ROWS_MAX;
+    const productSeriesMaxRaw = Number(profileConfig?.rawProductSeriesMax);
+    const productSeriesMax =
+      Number.isFinite(productSeriesMaxRaw) && productSeriesMaxRaw > 0
+        ? Math.floor(productSeriesMaxRaw)
+        : AI_CHAT_FULL_RAW_PRODUCT_SERIES_MAX;
+    const hospitalSeriesMaxRaw = Number(profileConfig?.rawHospitalSeriesMax);
+    const hospitalSeriesMax =
+      Number.isFinite(hospitalSeriesMaxRaw) && hospitalSeriesMaxRaw > 0
+        ? Math.floor(hospitalSeriesMaxRaw)
+        : AI_CHAT_FULL_RAW_HOSPITAL_SERIES_MAX;
+
+    const originalCounts = {
+      monthRows: Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0,
+      quarterRows: Array.isArray(snapshot.quarterRows) ? snapshot.quarterRows.length : 0,
+      productRows: Array.isArray(snapshot.productRows) ? snapshot.productRows.length : 0,
+      hospitalRows: Array.isArray(snapshot.hospitalRows) ? snapshot.hospitalRows.length : 0,
+      productMonthlySeries:
+        snapshot.productMonthlySeries && typeof snapshot.productMonthlySeries === "object"
+          ? Object.keys(snapshot.productMonthlySeries).length
+          : 0,
+      hospitalMonthlySeries:
+        snapshot.hospitalMonthlySeries && typeof snapshot.hospitalMonthlySeries === "object"
+          ? Object.keys(snapshot.hospitalMonthlySeries).length
+          : 0,
+    };
+
+    const compact = {
+      monthRows: copySnapshotRows(snapshot.monthRows, monthRowsMax),
+      quarterRows: copySnapshotRows(snapshot.quarterRows, quarterRowsMax),
+      productRows: copySnapshotRows(snapshot.productRows, productRowsMax),
+      hospitalRows: copySnapshotRows(snapshot.hospitalRows, hospitalRowsMax),
+      productMonthlySeries: copySnapshotSeries(snapshot.productMonthlySeries, productSeriesMax),
+      hospitalMonthlySeries: copySnapshotSeries(snapshot.hospitalMonthlySeries, hospitalSeriesMax),
+      hospitalTotalCount: Number.isFinite(Number(snapshot.hospitalTotalCount))
+        ? Math.floor(Number(snapshot.hospitalTotalCount))
+        : 0,
+      hasRangeRecords: Boolean(snapshot.hasRangeRecords),
+      hasTargetGap: Boolean(snapshot.hasTargetGap),
+      targetGapYears: Array.isArray(snapshot.targetGapYears)
+        ? snapshot.targetGapYears
+            .map((year) => Number(year))
+            .filter((year) => Number.isFinite(year))
+            .map((year) => Math.floor(year))
+        : [],
+    };
+
+    const getDeliveredCounts = () => ({
+      monthRows: Array.isArray(compact.monthRows) ? compact.monthRows.length : 0,
+      quarterRows: Array.isArray(compact.quarterRows) ? compact.quarterRows.length : 0,
+      productRows: Array.isArray(compact.productRows) ? compact.productRows.length : 0,
+      hospitalRows: Array.isArray(compact.hospitalRows) ? compact.hospitalRows.length : 0,
+      productMonthlySeries:
+        compact.productMonthlySeries && typeof compact.productMonthlySeries === "object"
+          ? Object.keys(compact.productMonthlySeries).length
+          : 0,
+      hospitalMonthlySeries:
+        compact.hospitalMonthlySeries && typeof compact.hospitalMonthlySeries === "object"
+          ? Object.keys(compact.hospitalMonthlySeries).length
+          : 0,
+    });
+
+    let fallbackLevel = "full";
+    let sizeChars = getJsonLengthSafe(compact);
+
+    if (sizeChars > maxChars) {
+      delete compact.productMonthlySeries;
+      fallbackLevel = "drop_product_series";
+      sizeChars = getJsonLengthSafe(compact);
+    }
+    if (sizeChars > maxChars) {
+      delete compact.hospitalMonthlySeries;
+      fallbackLevel = "drop_hospital_series";
+      sizeChars = getJsonLengthSafe(compact);
+    }
+    if (sizeChars > maxChars && Array.isArray(compact.productRows) && compact.productRows.length > 200) {
+      compact.productRows = compact.productRows.slice(0, 200);
+      fallbackLevel = "shrink_product_rows";
+      sizeChars = getJsonLengthSafe(compact);
+    }
+    if (sizeChars > maxChars) {
+      if (Array.isArray(compact.monthRows) && compact.monthRows.length > 24) {
+        compact.monthRows = compact.monthRows.slice(-24);
+      }
+      if (Array.isArray(compact.quarterRows) && compact.quarterRows.length > 8) {
+        compact.quarterRows = compact.quarterRows.slice(-8);
+      }
+      fallbackLevel = "shrink_time_rows";
+      sizeChars = getJsonLengthSafe(compact);
+    }
+    if (sizeChars > maxChars) {
+      delete compact.monthRows;
+      delete compact.quarterRows;
+      delete compact.productRows;
+      delete compact.hospitalRows;
+      delete compact.productMonthlySeries;
+      delete compact.hospitalMonthlySeries;
+      fallbackLevel = "meta_only";
+      sizeChars = getJsonLengthSafe(compact);
+    }
+
+    const deliveredCounts = getDeliveredCounts();
+    const truncated = {
+      monthRows: deliveredCounts.monthRows < originalCounts.monthRows,
+      quarterRows: deliveredCounts.quarterRows < originalCounts.quarterRows,
+      productRows: deliveredCounts.productRows < originalCounts.productRows,
+      hospitalRows: deliveredCounts.hospitalRows < originalCounts.hospitalRows,
+      productMonthlySeries: deliveredCounts.productMonthlySeries < originalCounts.productMonthlySeries,
+      hospitalMonthlySeries: deliveredCounts.hospitalMonthlySeries < originalCounts.hospitalMonthlySeries,
+      metaOnly: fallbackLevel === "meta_only",
+    };
+
+    return {
+      ...compact,
+      meta: {
+        enabled: true,
+        sizeChars,
+        maxChars,
+        fallbackLevel,
+        originalCounts,
+        deliveredCounts,
+        truncated,
+      },
+    };
+  }
+
   function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_DEFAULT_INPUT_PROFILE) {
     const requestMode = sanitizeChatRequestMode(mode);
     const safeMode = requestMode === CHAT_MODES.AUTO ? CHAT_MODES.BRIEFING : sanitizeChatMode(requestMode);
@@ -1739,6 +1945,15 @@ async function initializeApp() {
       missingFields.push("scope.period");
     }
 
+    const shouldAttachRawSnapshot =
+      AI_CHAT_FULL_RAW_SNAPSHOT_ENABLED &&
+      requestMode === CHAT_MODES.AUTO &&
+      safeInputProfile === AI_CHAT_INPUT_PROFILES.FULL &&
+      profileConfig.includeRawSnapshot === true;
+    const rawReportSnapshot = shouldAttachRawSnapshot
+      ? buildChatRawReportSnapshot(analysisContext, profileConfig)
+      : null;
+
     return {
       query: {
         text: String(message || "").trim(),
@@ -1774,6 +1989,7 @@ async function initializeApp() {
           trendOverview: legacyPayload.trendOverview,
           overviewMetric: legacyPayload.overviewMetric,
           keyEvidence: legacyPayload.keyEvidence,
+          ...(rawReportSnapshot ? { reportSnapshot: rawReportSnapshot } : {}),
         },
         trend: {
           summary: String(trend?.summary || "").trim(),

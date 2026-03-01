@@ -652,20 +652,27 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 
 - 为了手测“全量输入层”效果，`main.js` 新增实验档位：`inputProfile=full`。
 - 当前实验版默认开启：`AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED = true`（`main.js` 内常量）。
-- 该档位会放宽上下文裁剪（趋势/产品/医院/风险条目与 `naturalMini` 明细显著增加），用于观察模型在高信息密度下的表现。
+- `full + mode=auto` 额外开启 raw snapshot 注入：`context.business.overview.reportSnapshot`（仅 `full` 生效，`baseline/plus/rich` 不注入）。
+- 该档位会放宽上下文裁剪（趋势/产品/医院/风险条目与 `naturalMini` 明细显著增加），并向自然问答提供报表明细快照，用于观察模型在高信息密度下的表现。
 - `full` 档额外放开 insight 裁剪（仅 `full` 生效）：
   - `summary` 不截断（`insightSummaryMaxChars=0`）
   - `suggestion` 不截断（`insightSuggestionMaxChars=0`）
   - `evidence` 扩大到 `30` 条（并有安全上限 `50` 条，防止极端超长 payload）
+- raw snapshot 安全机制（防极端超长）：
+  - 字符上限：`AI_CHAT_FULL_RAW_SNAPSHOT_MAX_CHARS=120000`
+  - 条目上限：`monthRows<=36`、`quarterRows<=16`、`productRows<=500`、`hospitalRows<=20`
+  - 序列上限：`productMonthlySeries<=120`、`hospitalMonthlySeries<=20`
+  - 超长降级顺序：删 `productMonthlySeries` -> 删 `hospitalMonthlySeries` -> `productRows` 降到 200 -> `month/quarter` 收敛到 `24/8` -> `meta_only`
 - `baseline/plus/rich` 保持原口径：`summary=120`、`suggestion=120`、`evidence=1`。
+- 后端自然问答上下文专用上限同步放宽：`NATURAL_MAX_CONTEXT_CHARS=120000`（结构化链路仍用 `MAX_CONTEXT_CHARS=18000`）。
 
 回退方式（建议保留这三步）：
-1. 将 `main.js` 中 `AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED` 改回 `false`。
-2. 保持默认档位回到 `plus`（无需改其它业务逻辑）。
+1. 软回退 1：将 `main.js` 中 `AI_CHAT_FULL_RAW_SNAPSHOT_ENABLED` 改回 `false`（保留 full 档但关闭 raw snapshot）。
+2. 软回退 2：将 `main.js` 中 `AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED` 改回 `false`（默认档位回到 `plus`）。
 3. 重新部署后，用 `questionSet=natural` 跑一次 baseline/plus 回归，确认时延与质量恢复到常规区间。
 
 硬回退（未提交前）：
-- `git restore main.js README.md`
+- `git restore main.js functions/api/chat.js README.md`
 
 #### natural_answer 长度微调（仅自然问答链路）
 

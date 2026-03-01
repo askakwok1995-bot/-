@@ -2,6 +2,7 @@ const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONTEXT_CHARS = 18000;
+const NATURAL_MAX_CONTEXT_CHARS = 120000;
 const MAX_HISTORY_ITEMS = 12;
 const MAX_HISTORY_CHARS = 4000;
 const MAX_REPAIR_SOURCE_CHARS = 8000;
@@ -1768,17 +1769,20 @@ function buildGeminiEndpoint(model, streaming = false) {
   return `${base}:generateContent`;
 }
 
-function safeContextText(context) {
+function safeContextText(context, maxChars = MAX_CONTEXT_CHARS) {
   if (!context || typeof context !== "object") {
     return "{}";
   }
+  const maxCharsRaw = Number(maxChars);
+  const safeMaxChars =
+    Number.isFinite(maxCharsRaw) && maxCharsRaw > 0 ? Math.floor(maxCharsRaw) : MAX_CONTEXT_CHARS;
 
   try {
     const json = JSON.stringify(context);
-    if (json.length <= MAX_CONTEXT_CHARS) {
+    if (json.length <= safeMaxChars) {
       return json;
     }
-    return `${json.slice(0, MAX_CONTEXT_CHARS)}...(truncated)`;
+    return `${json.slice(0, safeMaxChars)}...(truncated)`;
   } catch (_error) {
     return "{}";
   }
@@ -1888,7 +1892,7 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     },
     quality: contextV1?.quality || {},
   };
-  const contextText = safeContextText(naturalContext);
+  const contextText = safeContextText(naturalContext, NATURAL_MAX_CONTEXT_CHARS);
 
   return [
     "你是销售分析助手，请严格基于给定上下文回答，不要编造数据。",
@@ -1902,6 +1906,7 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "naturalMini.monthlyFluctuation.amountMom 为比例小数语义（例如 0.08 = 环比 +8%）。",
     "naturalMini.monthlyFluctuation.quantityMom 同样是比例小数语义（例如 0.08 = 销量环比 +8%）。",
     "不要机械播报 naturalMini 字段名；优先用它支撑判断，不强制逐项朗读。",
+    "若 business.overview.reportSnapshot 存在，优先使用其中月份/产品/医院明细作为证据，不要编造。",
     "缺失信息表达：用业务语言说明，不要出现 scope.period、missingFields 等内部术语。",
     "去模板要求：避免重复固定开场句；若与上一轮开场重复，主动换一种直答句式。",
     postureRequirement,
