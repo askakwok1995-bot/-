@@ -453,7 +453,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 回答形态说明：
 - `responseAction = natural_answer`：用户侧显示自然文本，`internalStructured` 为轻量内部结构（证据追踪/质量验收）。
 - `responseAction = structured_answer`：继续走 `briefing/diagnosis/action-plan` 结构化链路。
-- `responseAction = clarify`：先追问关键缺失信息（第一版仅高置信触发：无数据、明确需要 period 但缺失）。
+- `responseAction = clarify`：先追问关键缺失信息（第一版仅高置信触发：无数据，或明确要求时间对比明细且无法从 `scope/session/message/legacy.analysis.range` 继承 period）。
 
 自然回答语气层（v1，仅作用于 `natural_answer`）：
 - 目标：更像专业业务助手，保持“首句直答 + 结论先行 + 数据依据”，避免模板腔。
@@ -630,16 +630,42 @@ CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
 npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --matrix baseline,plus,rich --outputJson scripts/fixtures/chat-input-profile-matrix.result.json
 ```
 
+#### natural_answer 档位对比（baseline vs plus）
+
+```bash
+# natural 题集（mode=auto）对比 baseline
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --inputProfile baseline --questionSet natural --casesFile scripts/fixtures/chat-tone-v1-cases.json
+
+# natural 题集（mode=auto）对比 plus
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --inputProfile plus --questionSet natural --casesFile scripts/fixtures/chat-tone-v1-cases.json
+
+# matrix（baseline,plus），输出自然问答质量对比
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --questionSet natural --casesFile scripts/fixtures/chat-tone-v1-cases.json --matrix baseline,plus --outputJson scripts/fixtures/chat-input-profile-matrix.result.json
+```
+
+说明：
+- `mode=auto` 现为 **natural 默认**：仅在“产物动词 + 产物名词”同时命中时路由到 `structured_answer`（如“请输出 + 简报/报告/执行清单/负责人里程碑”）。
+- natural 题集中若出现 `401 UNAUTHORIZED`，脚本会提前中断当前 profile 并标记该档位为无效（`executionValid=false`，`abortReason=unauthorized`）。
+
 可选参数：
 - `--delayMs 4000`：请求间隔（默认 4000ms）
 - `--stream false`：默认走非流式稳态路径
 - `--contextMode short|real`：上下文模式（默认 `short`）
 - `--contextFile <path>`：`contextMode=real` 时必填（也可用 `CHAT_CONTEXT_FILE`）
 - `--inputProfile baseline|plus|rich`：输入层档位（默认 `baseline`）
+- `--questionSet structured|natural|mixed`：题集模式（默认 `structured`）
+- `--casesFile <path>`：`questionSet=natural/mixed` 时可覆盖默认题集（默认 `scripts/fixtures/chat-tone-v1-cases.json`）
 - `--matrix baseline,plus,rich`：按档位矩阵依次执行 10 次压测并输出对比表
 - `--outputJson <path>`：导出机器可读对比结果（含每档明细与汇总）
+- `--maxShortCircuitRate <0~1>`：`real` 模式有效性门禁阈值（默认 `0.2`）
 
-脚本会自动执行固定 10 次请求（`briefing*4 / diagnosis*3 / action-plan*3`），输出：
+脚本会按 `questionSet` 自动选择题集（`structured` 默认 10 题；`natural`/`mixed` 取自 `casesFile`），输出：
 1. Markdown 明细表（含 `requestId/HTTP/error.code/stage/upstreamStatus/durationMs/format/attemptCount/repairApplied/finalStage/firstTxAttempts/firstTxRetry/firstTxRecovered/elapsedMs`）
 2. `finalStage` 总体占比（`first/retry/repair`）
 3. 按 mode 统计（`attemptCount=3` 占比、`text_fallback` 占比、`finalStage=first/retry/repair` 占比、`p95 elapsedMs`）
@@ -666,9 +692,19 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
    - `shortCircuitRate`（命中 `meta.shortCircuitReason=empty_context` 占比）
    - `realContextRate`（未命中 short-circuit 占比）
 14. 矩阵模式附加输出（`--matrix`）：
-   - 输入档位对比表：失败率、超时率、`structured`、`finalStage=first`、`first output_truncated`、`p50/p95`
+   - 输入档位对比表：`executionValid`、`abortReason`、`validRealContext`、`shortCircuitRate`、失败率、超时率、`structured`、`finalStage=first`、`first output_truncated`、`p50/p95`
    - `contextChars p50/p95`（若响应 meta 提供）
    - 按档位的 `text_fallback by mode` 对比
+15. 实验有效性区块：
+   - `valid`、`reason`
+   - `shortCircuitRate`、`threshold`
+   - `real` 模式下会新增判定项：`real-context 有效性（shortCircuitRate <= 阈值）`
+16. natural 题集专属统计（仅 `questionSet` 含 natural）：
+   - `naturalRouteRate`（`responseAction=natural_answer` 占比）
+   - `postureMatchRate`（`meta.tone.posture` 与预期姿态匹配率）
+   - `gapHintOverfireRate`（judge 类问题误触发缺口提示率）
+   - `evidenceMentionRate`（回答中自然引用证据占比）
+   - matrix 时附加 `natural 质量对比` 表
 
 注意：
 - `short` 全绿仅代表短路兜底健康，不代表 Gemini 模型链路质量。
@@ -676,10 +712,17 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 - 该脚本是接口压测，不依赖浏览器 UI；不会覆盖“前端冷却按钮”的人工体验检查。
 - 当 `p95` 落在 `15000~18000ms` 区间时，脚本会输出详细耗时分布，默认进入“温和优化”而非激进降质。
 - 若命令返回 exit code `2`，代表压测完成但至少一个阈值未达标。
+- 若 `contextMode=real` 且 `shortCircuitRate=100%`（同时 `contextChars` 异常稳定），优先检查压测脚本是否把 legacy context 误注入为 v1（`quality.inputProfile` 注入条件）。
+- `real` 模式下若 `shortCircuitRate` 超过阈值（默认 20%），本轮实验视为**无效**：
+  - 可用于排障（查看 requestId、context 文件与组装路径）
+  - 不可用于 `baseline/plus/rich` 档位决策
+- 任一 profile 若被 `401` 中断（`executionValid=false`），该档位同样视为无效，不得参与 baseline/plus 决策。
+- natural 矩阵判定顺序：先看 `executionValid` 与 `validRealContext`，通过后再看 `naturalRouteRate`、`responseAction=clarify` 占比与 `postureMatchRate`。
 - 三档输入层定义：
   - `baseline`：当前线上口径（对照组）
   - `plus`：中档增强（推荐候选）
   - `rich`：高档增强（压力测试，不建议直接作为默认）
+- `natural` 题集下请求统一以 `mode=auto` 发送，用于评估默认自由问答链路；`structured` 题集仍保留三模式回归验证价值。
 - 默认上线决策建议：
   - `plus` 仅在稳定性不回退且质量有实质提升时替代 `baseline`
   - `rich` 通常只做压力档保留，不作为默认配置

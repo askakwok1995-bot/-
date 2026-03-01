@@ -651,12 +651,33 @@ function normalizeContextV1(rawContext, message) {
   };
 }
 
-function hasPeriodSignal(message) {
+function hasStrongPeriodDemand(message) {
   const text = trimString(message);
   if (!text) {
     return false;
   }
-  return /(同比|环比|本月|上月|季度|q[1-4]|趋势|变化|增长|下降|今年|去年|月度|季度)/i.test(text);
+  return /(同比|环比|各月|每月|月度明细|季度对比|增幅|具体数值|百分比|波动值|波动数值|近两月明细|近两个月明细)/i.test(
+    text,
+  );
+}
+
+function hasExplicitPeriodInMessage(message) {
+  const text = trimString(message);
+  if (!text) {
+    return false;
+  }
+  return /(20\d{2}\s*[-年]?\s*(0?[1-9]|1[0-2])(?:月)?|20\d{2}\s*Q[1-4]|Q[1-4]|本月|上月|本季度|上季度|近两个月|近2个月|最近两个月|最近2个月)/i.test(
+    text,
+  );
+}
+
+function hasLegacyPeriodRange(contextV1) {
+  const range = contextV1?.legacyContext?.analysis?.range;
+  return (
+    Boolean(trimString(range?.startYm)) ||
+    Boolean(trimString(range?.endYm)) ||
+    Boolean(trimString(range?.label))
+  );
 }
 
 function resolveResponseAction(requestedMode, message, contextV1) {
@@ -684,12 +705,18 @@ function resolveResponseAction(requestedMode, message, contextV1) {
     };
   }
 
-  const periodExplicit = Boolean(contextV1?.scope?.period?.isExplicit);
+  const hasScopePeriod =
+    Boolean(contextV1?.scope?.period?.isExplicit) ||
+    Boolean(trimString(contextV1?.scope?.period?.startYm)) ||
+    Boolean(trimString(contextV1?.scope?.period?.endYm)) ||
+    Boolean(trimString(contextV1?.scope?.period?.label));
   const hasSessionPeriod =
     Boolean(trimString(contextV1?.session?.lastScope?.period?.startYm)) ||
     Boolean(trimString(contextV1?.session?.lastScope?.period?.endYm)) ||
     Boolean(trimString(contextV1?.session?.lastScope?.period?.label));
-  if (hasPeriodSignal(message) && !periodExplicit && !hasSessionPeriod) {
+  const hasMessagePeriod = hasExplicitPeriodInMessage(message);
+  const hasLegacyPeriod = hasLegacyPeriodRange(contextV1);
+  if (hasStrongPeriodDemand(message) && !hasScopePeriod && !hasSessionPeriod && !hasMessagePeriod && !hasLegacyPeriod) {
     return {
       responseAction: RESPONSE_ACTIONS.CLARIFY,
       businessIntent: BUSINESS_INTENTS.CHAT,
@@ -702,19 +729,30 @@ function resolveResponseAction(requestedMode, message, contextV1) {
   }
 
   const safeMessage = trimString(message);
-  if (
-    /(简报|汇报|周报|月报|总结|概览|诊断|分析|原因|为什么|根因|瓶颈|异常|行动|计划|执行|落地|负责人|步骤|清单)/i.test(
-      safeMessage,
-    )
-  ) {
+  const artifactVerbSignal = /(请输出|输出|生成|写一份|整理成|按模板|按结构|表格化|清单化|形成|给我一份|给我一个)/i.test(
+    safeMessage,
+  );
+  const artifactNounSignal = /(简报|周报|月报|汇报|报告|诊断报告|行动计划清单|执行清单|负责人|里程碑|验收指标|表格)/i.test(
+    safeMessage,
+  );
+  const structuredDemandSignal = artifactVerbSignal && artifactNounSignal;
+  const actionPlanStrongSignal =
+    /(行动计划清单|执行清单|负责人|里程碑|验收指标|行动项清单|执行项清单)/i.test(safeMessage);
+  const diagnosisStrongSignal = /(诊断报告|根因分析报告|异常诊断报告)/i.test(safeMessage);
+  const briefingStrongSignal = /(简报|周报|月报|阶段汇报|业务汇报|汇报摘要|报告)/i.test(safeMessage);
+
+  if (structuredDemandSignal) {
     let structuredMode = CHAT_MODES.BRIEFING;
-    let ruleId = "structured_briefing";
-    if (/(行动|计划|执行|落地|负责人|步骤|清单|里程碑)/i.test(safeMessage)) {
+    let ruleId = "structured_artifact_briefing";
+    if (actionPlanStrongSignal) {
       structuredMode = CHAT_MODES.ACTION_PLAN;
-      ruleId = "structured_action_plan";
-    } else if (/(诊断|分析|原因|为什么|根因|瓶颈|异常|下滑|波动)/i.test(safeMessage)) {
+      ruleId = "structured_artifact_action_plan";
+    } else if (diagnosisStrongSignal) {
       structuredMode = CHAT_MODES.DIAGNOSIS;
-      ruleId = "structured_diagnosis";
+      ruleId = "structured_artifact_diagnosis";
+    } else if (briefingStrongSignal) {
+      structuredMode = CHAT_MODES.BRIEFING;
+      ruleId = "structured_artifact_briefing";
     }
     return {
       responseAction: RESPONSE_ACTIONS.STRUCTURED,

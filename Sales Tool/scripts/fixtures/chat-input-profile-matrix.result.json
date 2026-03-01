@@ -1,0 +1,1595 @@
+{
+  "generatedAt": "2026-03-01T02:21:00.870Z",
+  "endpoint": "https://pharmasalesdashboard.pages.dev/api/chat",
+  "stream": false,
+  "delayMs": 4000,
+  "contextMode": "real",
+  "questionSet": "natural",
+  "casesSource": "file_natural",
+  "casesFile": "/Users/askakwok/Documents/Vibe Coding/Sales Tool/scripts/fixtures/chat-tone-v1-cases.json",
+  "caseCount": 15,
+  "maxShortCircuitRate": 0.2,
+  "contextFile": "/Users/askakwok/Documents/Vibe Coding/Sales Tool/scripts/fixtures/chat-context.sample.json",
+  "profiles": [
+    {
+      "inputProfile": "baseline",
+      "metrics": {
+        "failureRate": 0,
+        "timeoutRate": 0,
+        "attempt3Rate": 0,
+        "structuredRate": 1,
+        "finalStageFirstRate": 1,
+        "finalStageRetryRate": 0,
+        "finalStageRepairRate": 0,
+        "p50ElapsedMs": 2562,
+        "p95ElapsedMs": 3682
+      },
+      "checks": [
+        {
+          "label": "总失败率 <= 20%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "UPSTREAM_TIMEOUT 占比 <= 10%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "attemptCount=3 占比 <= 30%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "structured 占比 >= 60%",
+          "value": "100.0%",
+          "pass": true
+        },
+        {
+          "label": "structured 相对 baseline 下滑 <= 10pp",
+          "value": "+50.0pp",
+          "pass": true
+        },
+        {
+          "label": "p95 elapsedMs <= 15000ms",
+          "value": "3682ms",
+          "pass": true
+        },
+        {
+          "label": "profile 未被鉴权中断",
+          "value": "ok",
+          "pass": true
+        },
+        {
+          "label": "real-context 有效性（shortCircuitRate <= 20.0%）",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "naturalRouteRate >= 80%",
+          "value": "53.3%",
+          "pass": false
+        },
+        {
+          "label": "postureMatchRate >= 85%",
+          "value": "100.0%",
+          "pass": true
+        },
+        {
+          "label": "gapHintOverfireRate <= 10%",
+          "value": "0.0%",
+          "pass": true
+        }
+      ],
+      "experimentValidity": {
+        "valid": true,
+        "reason": "ok",
+        "shortCircuitRate": 0,
+        "threshold": 0.2
+      },
+      "execution": {
+        "plannedCount": 15,
+        "executedCount": 15,
+        "aborted": false,
+        "abortReason": "",
+        "valid": true
+      },
+      "naturalQuality": {
+        "enabled": true,
+        "total": 15,
+        "naturalRouteRate": 0.5333333333333333,
+        "postureMatchRate": 1,
+        "gapHintOverfireRate": 0,
+        "evidenceMentionRate": 1,
+        "counts": {
+          "naturalRouteCount": 8,
+          "postureEligibleCount": 8,
+          "postureMatchCount": 8,
+          "judgeCaseCount": 4,
+          "gapHintOverfireCount": 0,
+          "evidenceMentionCount": 8
+        },
+        "byPosture": [
+          {
+            "posture": "judge",
+            "total": 4,
+            "matchRate": 1
+          },
+          {
+            "posture": "explain",
+            "total": 1,
+            "matchRate": 1
+          },
+          {
+            "posture": "advise",
+            "total": 3,
+            "matchRate": 1
+          }
+        ]
+      },
+      "modeStats": [
+        {
+          "mode": "auto",
+          "total": 15,
+          "attempt3Rate": 0,
+          "textFallbackRate": 0,
+          "finalStageFirstRate": 1,
+          "finalStageRetryRate": 0,
+          "finalStageRepairRate": 0,
+          "firstTransportRetryAppliedRate": 0,
+          "firstTransportRetryRecoveredRate": 0,
+          "upstream503Rate": 0,
+          "p95ElapsedMs": 3682
+        }
+      ],
+      "firstHitQuality": {
+        "overall": {
+          "firstStructuredOkRate": 1,
+          "firstOutputTruncatedRate": 0
+        },
+        "byMode": [
+          {
+            "mode": "auto",
+            "total": 15,
+            "firstStructuredOkRate": 1,
+            "firstOutputTruncatedRate": 0
+          }
+        ]
+      },
+      "contextCharStats": {
+        "count": 15,
+        "p50": 923,
+        "p95": 923
+      },
+      "results": [
+        {
+          "row": 1,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "17a6ad82-7d24-4c42-b4c3-9af4e45e82d0",
+          "waitFeeling": "快",
+          "elapsedMs": 2841,
+          "totalDurationMs": 1949,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "本月销售表现呈现微增态势，但整体进度滞后于预期目标。虽然 581.6 万的销售额实现了 2.7% 的同比小幅增长，但目前 88.1% 的达成率意味着仍存在约 12% 的业绩缺口。\n\n目前的分析范围主要覆盖 2026 年第一季度，由于缺乏具体的环比波动细节，尚无法判断本月较上月的动态变化趋势。\n\n建议我们接下来重点复盘产品 B 以及医院 D、F 的近期动向，您需要查看这几项核心业务的具体失分原因吗？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 2,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "670b1b7d-e3c0-443c-af44-41708bda30aa",
+          "waitFeeling": "快",
+          "elapsedMs": 2291,
+          "totalDurationMs": 1828,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "当前的业绩表现并不算稳定，整体处于增长乏力且目标达成受阻的状态。\n\n虽然 581.6 万的销售额实现了 2.7% 的同比微增，但 88.1% 的达成率显示出明显的业绩缺口，且目前数据仅覆盖 2026 年第一季度，缺乏具体的月度环比波动细节来支撑“稳定性”的判断。\n\n由于现有信息无法对比最近两个月之间的动态变化，您是否需要我调取 1 月和 2 月的具体月报数据，以便为您分析月度间的波动幅度？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 3,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "6b7df6dd-d3ab-4548-97fa-aa0c3d01a413",
+          "waitFeeling": "快",
+          "elapsedMs": 2489,
+          "totalDurationMs": 1861,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "目前的达成率情况并不理想，整体进度明显滞后于既定目标。\n\n虽然 581.6 万的销售额实现了同比微增，但 88.1% 的达成率意味着目前仍存在约 80 万的业绩缺口，尚未达到季度考核的及格线。目前的分析仅能覆盖到 2026 年第一季度的整体情况，由于缺乏各月份具体的达成率走势，还无法确定这种缺口是在逐月收窄还是持续扩大。\n\n您是否需要深入了解一下导致达成率偏低的核心产品或重点医院的具体明细？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 4,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "e8a56692-004c-46e8-afcd-a1e936d24184",
+          "waitFeeling": "快",
+          "elapsedMs": 2578,
+          "totalDurationMs": 1910,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "当前的业务风险确实较大，主要面临目标无法按期兑现的压力。\n\n虽然 581.6 万的销售额实现了同比微增，但 88.1% 的达成率意味着目前仍有约 80 万的业绩缺口，且核心产品 B 的达成率仅为 76%，严重拖累了整体进度。目前的风险评估主要基于 2026 年第一季度的汇总数据，由于缺乏各月份具体的环比波动细节，尚无法判断风险是在持续积聚还是已有所缓解。\n\n为了更精准地锁定风险点，您是否需要查看医院 D 和医院 F 这两家重点客户的具体回款或进院进度？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 5,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "02e9ce23-0f0c-46ee-bbfc-ab9c266916ac",
+          "waitFeeling": "快",
+          "elapsedMs": 765,
+          "totalDurationMs": 0,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "judge",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 6,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "dbb5ee74-7591-4bdd-8741-576d57f55b15",
+          "waitFeeling": "快",
+          "elapsedMs": 728,
+          "totalDurationMs": 0,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 7,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7ccec063-055d-4702-88f3-cabc16f6b6a4",
+          "waitFeeling": "快",
+          "elapsedMs": 567,
+          "totalDurationMs": 0,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 8,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "db3c2e4b-73bf-4704-afc5-dcc23341ce18",
+          "waitFeeling": "中",
+          "elapsedMs": 3682,
+          "totalDurationMs": 3221,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "diagnosis",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "2026年Q1核心产品B贡献受限，主要受制于其76%的低达成率。由于该产品在整体销售中占比高达34%，其增长停滞直接导致了约80万的业绩缺口。核心原因在于医院D与医院F等重点渠道的推进效率低于预期，未能形成规模化增量。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 9,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "64cf1ecf-c5d6-4343-ad9f-060887302cd4",
+          "waitFeeling": "快",
+          "elapsedMs": 2486,
+          "totalDurationMs": 1979,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "explain",
+          "expectedPosture": "explain",
+          "surfaceReply": "2026年Q1业绩波动的核心症结在于高权重产品与重点渠道的协同失速，导致整体达成率仅为88.13%。虽然销售额同比微增至581.6万，但占据34%份额的核心产品B达成率仅有76%，加之医院D与医院F两大重点渠道的推进效率均低于80%，直接造成了约80万的业绩缺口。目前数据尚未覆盖具体的月度环比波动细节，如果您需要了解各月份间的动态走势，可以进一步查看具体的月度分解数据。下一步建议您关注下周针对Top医院关键决策人的专项跟进计划。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 10,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "d4e5c759-51f8-4947-9917-0656888169aa",
+          "waitFeeling": "快",
+          "elapsedMs": 567,
+          "totalDurationMs": 0,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 11,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "2611f958-d41b-4cec-bf5b-4db5bf6a4a41",
+          "waitFeeling": "快",
+          "elapsedMs": 2773,
+          "totalDurationMs": 2006,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "你应该优先在下周五前完成对医院D和医院F关键决策人的专项拜访，以扭转重点渠道推进滞后的局面。目前2026年Q1的业绩缺口约为80万，主要受制于贡献占比达18%的医院D达成率仅为72%，以及核心产品B在这些重点医院的渗透不足。由于当前数据尚未细化到本月具体的周度进度，建议你先确认这两家医院目前的采购流程节点，以便我们在下周的会谈中精准解决准入或上量障碍。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 12,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7a9b35a3-6dc9-4456-867a-713f780afb90",
+          "waitFeeling": "中",
+          "elapsedMs": 3307,
+          "totalDurationMs": 2734,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "action-plan",
+          "tonePosture": "-",
+          "expectedPosture": "advise",
+          "surfaceReply": "2026年Q1业绩达成率为88.13%，存在约80万缺口。核心症结在于高权重产品B及重点医院D、F的推进效率偏低。本周应聚焦核心渠道突破，通过高频次决策人拜访，解决准入与上量障碍，确保缺口在后续周期内得到有效回补。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 13,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7a1a700a-06a7-4a37-bddf-f1c157c57b50",
+          "waitFeeling": "快",
+          "elapsedMs": 2562,
+          "totalDurationMs": 2048,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "建议你本周立即启动针对医院D和医院F的“高频次决策人专项会谈”，这是目前挽回80万业绩缺口最有效的切入点。从Q1数据看，贡献占比达18%的医院D达成率仅为72%，这种重点渠道的失速是导致整体达成率徘徊在88.13%的主因。通过在下周五前完成90%以上的关键客户拜访，你可以直接解决核心产品B在这些高权重医院的准入障碍。由于目前数据未显示具体的周度库存消耗，建议你在拜访时同步核实医院的实际库存水位，以便精准制定补货计划。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 14,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "6dbbe3d9-43c0-4aac-9e1c-1ed5dde75f07",
+          "waitFeeling": "快",
+          "elapsedMs": 2810,
+          "totalDurationMs": 2131,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "你应该立即针对医院F开展“存量挖潜”行动，通过优化现有订单的执行效率来快速回补业绩。目前医院F的贡献占比高达15%，但达成率仅为79%，这种高权重、中等达成率的渠道最容易通过非商务谈判手段（如加快配送频率或优化科室领用流程）在短期内释放增量。由于当前数据未覆盖具体的科室级消耗明细，建议你本周先与该院药剂科确认产品B的实时库存，若库存偏低则可直接申请补货，这是目前成本最低且见效最快的补缺方式。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 15,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "812b9093-84d0-40d4-a7f1-8514c6a80e45",
+          "waitFeeling": "快",
+          "elapsedMs": 2859,
+          "totalDurationMs": 2251,
+          "contextChars": "923",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "action-plan",
+          "tonePosture": "-",
+          "expectedPosture": "advise",
+          "surfaceReply": "当前2026年Q1达成率为88.13%，存在约80万业绩缺口。核心问题在于高权重医院D和F的达成率偏低，且主力产品B渗透不足。本周应聚焦高贡献渠道的决策人专项拜访，通过解决准入与库存问题实现快速回补，确保季度目标达成。",
+          "isNaturalCase": true,
+          "isFailure": false
+        }
+      ]
+    },
+    {
+      "inputProfile": "plus",
+      "metrics": {
+        "failureRate": 0,
+        "timeoutRate": 0,
+        "attempt3Rate": 0,
+        "structuredRate": 1,
+        "finalStageFirstRate": 1,
+        "finalStageRetryRate": 0,
+        "finalStageRepairRate": 0,
+        "p50ElapsedMs": 2554,
+        "p95ElapsedMs": 4803
+      },
+      "checks": [
+        {
+          "label": "总失败率 <= 20%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "UPSTREAM_TIMEOUT 占比 <= 10%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "attemptCount=3 占比 <= 30%",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "structured 占比 >= 60%",
+          "value": "100.0%",
+          "pass": true
+        },
+        {
+          "label": "structured 相对 baseline 下滑 <= 10pp",
+          "value": "+50.0pp",
+          "pass": true
+        },
+        {
+          "label": "p95 elapsedMs <= 15000ms",
+          "value": "4803ms",
+          "pass": true
+        },
+        {
+          "label": "profile 未被鉴权中断",
+          "value": "ok",
+          "pass": true
+        },
+        {
+          "label": "real-context 有效性（shortCircuitRate <= 20.0%）",
+          "value": "0.0%",
+          "pass": true
+        },
+        {
+          "label": "naturalRouteRate >= 80%",
+          "value": "53.3%",
+          "pass": false
+        },
+        {
+          "label": "postureMatchRate >= 85%",
+          "value": "100.0%",
+          "pass": true
+        },
+        {
+          "label": "gapHintOverfireRate <= 10%",
+          "value": "0.0%",
+          "pass": true
+        }
+      ],
+      "experimentValidity": {
+        "valid": true,
+        "reason": "ok",
+        "shortCircuitRate": 0,
+        "threshold": 0.2
+      },
+      "execution": {
+        "plannedCount": 15,
+        "executedCount": 15,
+        "aborted": false,
+        "abortReason": "",
+        "valid": true
+      },
+      "naturalQuality": {
+        "enabled": true,
+        "total": 15,
+        "naturalRouteRate": 0.5333333333333333,
+        "postureMatchRate": 1,
+        "gapHintOverfireRate": 0,
+        "evidenceMentionRate": 1,
+        "counts": {
+          "naturalRouteCount": 8,
+          "postureEligibleCount": 8,
+          "postureMatchCount": 8,
+          "judgeCaseCount": 4,
+          "gapHintOverfireCount": 0,
+          "evidenceMentionCount": 8
+        },
+        "byPosture": [
+          {
+            "posture": "judge",
+            "total": 4,
+            "matchRate": 1
+          },
+          {
+            "posture": "explain",
+            "total": 1,
+            "matchRate": 1
+          },
+          {
+            "posture": "advise",
+            "total": 3,
+            "matchRate": 1
+          }
+        ]
+      },
+      "modeStats": [
+        {
+          "mode": "auto",
+          "total": 15,
+          "attempt3Rate": 0,
+          "textFallbackRate": 0,
+          "finalStageFirstRate": 1,
+          "finalStageRetryRate": 0,
+          "finalStageRepairRate": 0,
+          "firstTransportRetryAppliedRate": 0,
+          "firstTransportRetryRecoveredRate": 0,
+          "upstream503Rate": 0,
+          "p95ElapsedMs": 4803
+        }
+      ],
+      "firstHitQuality": {
+        "overall": {
+          "firstStructuredOkRate": 1,
+          "firstOutputTruncatedRate": 0
+        },
+        "byMode": [
+          {
+            "mode": "auto",
+            "total": 15,
+            "firstStructuredOkRate": 1,
+            "firstOutputTruncatedRate": 0
+          }
+        ]
+      },
+      "contextCharStats": {
+        "count": 15,
+        "p50": 1201,
+        "p95": 1201
+      },
+      "results": [
+        {
+          "row": 1,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "666d2881-3e89-4b23-9131-462da2f0bf34",
+          "waitFeeling": "快",
+          "elapsedMs": 2159,
+          "totalDurationMs": 1659,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "本月销售表现呈现出小幅回升态势，但整体进度仍未达到预期目标。\n\n虽然 2 月份销售额环比增长了 6.2%，展现出明显的恢复迹象，但目前 88.13% 的达成率距离季度目标仍有约 12% 的缺口。\n\n目前的分析主要基于 2026 年第一季度的阶段性汇总数据，重点反映了产品 B 等核心品类的表现。\n\n您是否需要深入了解导致达成率偏低的具体产品或重点医院的明细情况？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 2,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "dce81aeb-c63d-4243-b805-3c5be003f730",
+          "waitFeeling": "快",
+          "elapsedMs": 2554,
+          "totalDurationMs": 2018,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "目前的业绩表现尚不能称之为稳定，虽然处于回升通道，但增速正在放缓且未达预期。\n\n尽管 2 月份销售额环比增长了 6.2%，展现出较强的恢复势头，但进入 3 月后环比增速已回落至 2.1%，增长动力出现减弱迹象。\n\n目前的评估主要基于 2026 年前三个月的环比波动数据，尚未结合更长周期的季节性因素进行深度对标。\n\n您是否需要对比去年同期的增长曲线，以判断当前的增速放缓是市场常规波动还是竞争压力所致？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 3,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7fe0a6e3-e6d0-44dd-a060-215b2228902c",
+          "waitFeeling": "快",
+          "elapsedMs": 2547,
+          "totalDurationMs": 2024,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "当前的达成率表现并不理想，仍处于追赶目标的压力区间。\n\n虽然 2026 年第一季度的销售额达到了 581.6 万元，但 88.13% 的达成率意味着我们距离季度目标还存在约 12% 的业绩缺口。\n\n这一判断主要基于第一季度的阶段性汇总数据，目前压力主要集中在产品 B 以及医院 D 等核心渠道的推进效率上。\n\n您是否需要查看产品 B 的具体销售明细，以确定导致该核心品类达成率仅为 76% 的主要原因？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 4,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "35b18024-ad13-4947-ab3c-95596c034248",
+          "waitFeeling": "快",
+          "elapsedMs": 2847,
+          "totalDurationMs": 2267,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "judge",
+          "expectedPosture": "judge",
+          "surfaceReply": "目前的业务风险处于较高水平，主要面临季度目标无法如期达成的实质性压力。\n\n虽然第一季度销售额已达到 581.6 万元，但 88.13% 的达成率意味着我们仍面临约 12% 的业绩缺口，且核心产品 B 的达成率仅为 76%，严重拖累了整体进度。\n\n该风险评估主要聚焦于 2026 年第一季度的执行情况，重点反映了产品 B 及医院 D 等高贡献度渠道的推进滞后问题。\n\n您是否需要针对达成率仅为 72% 的医院 D 制定专项跟进计划，以缓解季度末的冲刺压力？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 5,
+          "mode": "auto",
+          "questionType": "judge",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "bc1f7979-40fd-455d-805a-55363521314b",
+          "waitFeeling": "快",
+          "elapsedMs": 705,
+          "totalDurationMs": 0,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "judge",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 6,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7747d614-8e57-4edf-8a6e-0ce75dd1af08",
+          "waitFeeling": "快",
+          "elapsedMs": 519,
+          "totalDurationMs": 0,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 7,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "f733e423-264d-441c-af80-c6af0d27fcad",
+          "waitFeeling": "快",
+          "elapsedMs": 535,
+          "totalDurationMs": 0,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 8,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "7c7bd62b-b482-4ead-b9c3-fc06cc177d84",
+          "waitFeeling": "中",
+          "elapsedMs": 3194,
+          "totalDurationMs": 2689,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "diagnosis",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "2026年Q1核心产品贡献受阻，主要受产品B达成率仅76%拖累。尽管2月环比恢复6.2%，但3月增速放缓至2.1%，且医院D等核心渠道达成率偏低，导致整体业绩存在12%的结构性缺口，增长动能未能持续释放。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 9,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "1a91852e-a0e1-4d38-8b4b-c6bbe5d0b532",
+          "waitFeeling": "快",
+          "elapsedMs": 2374,
+          "totalDurationMs": 1716,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "explain",
+          "expectedPosture": "explain",
+          "surfaceReply": "第一季度业绩波动的核心症结在于重点渠道的推进效率未达预期，导致整体销售额存在约12%的结构性缺口。虽然2月销售额环比回升了6.2%，但由于核心支柱医院D的达成率仅为72%，加之主力产品B的贡献率未能突破76%，直接削弱了季度末的增长动能。目前分析范围仅覆盖2026年Q1的整体表现，若需深入了解特定区域或具体月份的波动细节，请告知我您关注的维度。下一步建议您关注下周针对Top医院关键决策人的专项跟进计划。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 10,
+          "mode": "auto",
+          "questionType": "explain",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "2ada8314-e005-4ce4-9409-8aa1f71e90c2",
+          "waitFeeling": "快",
+          "elapsedMs": 566,
+          "totalDurationMs": 0,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "clarify",
+          "businessIntent": "chat",
+          "tonePosture": "-",
+          "expectedPosture": "explain",
+          "surfaceReply": "你想看的时间范围是哪个？例如“本月 / 上月 / 2026Q1”。确认后我再继续回答。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 11,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "6ff6b0fc-35f7-44d3-af80-97cf047cb655",
+          "waitFeeling": "快",
+          "elapsedMs": 2592,
+          "totalDurationMs": 1995,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "建议您下周将核心精力投入到 Top 医院关键决策人的专项会谈中，以扭转目前重点渠道推进效率偏低的局面。从第一季度数据看，尽管 2 月销售额环比回升了 6.2%，但核心支柱医院 D 的达成率仅为 72%，直接导致整体业绩产生了约 12% 的结构性缺口。目前分析主要基于 2026 年 Q1 的整体表现，若能针对低达成、高贡献的产品 B 同步执行专项推进，将更有利于快速填补缺口。您是否需要我为您列出这几家重点医院的具体负责人及当前的沟通进展？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 12,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "abc95f10-310b-4da2-b85d-76a0282d2378",
+          "waitFeeling": "中",
+          "elapsedMs": 3372,
+          "totalDurationMs": 2850,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "action-plan",
+          "tonePosture": "-",
+          "expectedPosture": "advise",
+          "surfaceReply": "2026年Q1业绩达成率为88.13%，存在约12%的结构性缺口。核心症结在于产品B达成率仅76%以及医院D等重点渠道推进效率偏低。本周应聚焦高贡献、低达成的核心客户与产品，通过专项会谈快速扭转增长动能不足的局面，确保缺口收窄。",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 13,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "5996089e-7034-494f-8061-8785439164bb",
+          "waitFeeling": "快",
+          "elapsedMs": 2960,
+          "totalDurationMs": 2361,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "您应当优先针对贡献度最高但达成率偏低的“产品B”和“医院D”实施专项攻坚，这是目前收窄12%业绩缺口最有效的路径。\n\n从第一季度数据来看，核心产品B虽然占据了34%的份额，但达成率仅为76%，同时支柱渠道医院D的达成率也低至72%，这两项关键指标的滞后是导致整体达成率未能突破90%的主因。目前的分析主要聚焦于2026年Q1的存量表现，尚未涵盖4月后的最新市场反馈。建议您下周五前由区域经理牵头，确保针对这些重点客户的关键决策人拜访完成率达到90%以上。\n\n您是否需要我为您梳理出医院D和产品B在不同区域的具体缺口分布，以便更精准地分配资源？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 14,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "8ead24de-e537-4150-9af8-927fea00d723",
+          "waitFeeling": "中",
+          "elapsedMs": 3065,
+          "totalDurationMs": 2288,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "natural_answer",
+          "businessIntent": "chat",
+          "tonePosture": "advise",
+          "expectedPosture": "advise",
+          "surfaceReply": "建议您本周立即启动针对“产品B”在“医院D”的存量补货专项行动，这是目前无需额外投入、见效最快的补齐缺口方式。\n\n从第一季度数据看，虽然2月销售额环比回升了6.2%，但核心产品B的达成率仅为76%，且支柱渠道医院D的达成率更是低至72%，这表明现有高价值渠道的潜力远未释放。目前的建议主要基于2026年Q1的存量数据分析，尚未计入4月后的新准入项目。建议您下周五前由区域经理牵头，确保针对这些重点客户的关键决策人拜访完成率达到90%以上，以快速激活存量订单。\n\n您是否需要我为您调取医院D近两个月的库存波动数据，以便更精准地确定补货规模？",
+          "isNaturalCase": true,
+          "isFailure": false
+        },
+        {
+          "row": 15,
+          "mode": "auto",
+          "questionType": "advise",
+          "http": 200,
+          "errorCode": "-",
+          "stage": "-",
+          "upstreamStatus": "-",
+          "durationMs": "-",
+          "format": "structured",
+          "attemptCount": "1",
+          "repairApplied": "false",
+          "requestId": "5ac3e14a-5726-47f3-9ae5-60c9abf561fc",
+          "waitFeeling": "中",
+          "elapsedMs": 4803,
+          "totalDurationMs": 4289,
+          "contextChars": "1201",
+          "finalStage": "first",
+          "metaFormatReason": "structured_ok",
+          "attemptDiagnostics": [
+            {
+              "stage": "first",
+              "formatReason": "structured_ok",
+              "qualityIssues": []
+            }
+          ],
+          "firstTransportAttempts": "1",
+          "firstTransportRetryApplied": "false",
+          "firstTransportRetryRecovered": "false",
+          "firstTransportStatuses": [
+            200
+          ],
+          "hasUpstream503": false,
+          "shortCircuitReason": "-",
+          "isShortCircuit": false,
+          "responseAction": "structured_answer",
+          "businessIntent": "action-plan",
+          "tonePosture": "-",
+          "expectedPosture": "advise",
+          "surfaceReply": "2026年Q1业绩达成率为88.13%，存在约12%的结构性缺口。核心症结在于产品B达成率仅76%以及医院D等重点渠道推进效率偏低。本周应聚焦高贡献、低达成的核心客户与产品，通过专项会谈快速扭转增长动能不足的局面，确保缺口收窄。",
+          "isNaturalCase": true,
+          "isFailure": false
+        }
+      ]
+    }
+  ]
+}

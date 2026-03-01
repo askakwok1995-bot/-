@@ -3,7 +3,8 @@
     "analysis": {
       "range": {
         "startYm": "2026-01",
-        "endYm": "2026-03"
+        "endYm": "2026-03",
+        "label": "2026年Q1"
       },
       "metricPriority": "amount",
       "generatedAt": "2026-02-28T00:00:00.000Z"

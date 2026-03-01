@@ -10,6 +10,7 @@ const DEFAULT_THRESHOLD = Object.freeze({
   maxAttempt3Rate: 0.3,
   minStructuredRate: 0.6,
   maxP95Ms: 15000,
+  maxShortCircuitRate: 0.2,
 });
 const UNKNOWN_SOURCE_SUFFIX = "(unknown_source)";
 const CONTEXT_MODE_SHORT = "short";
@@ -19,6 +20,12 @@ const INPUT_PROFILE_BASELINE = "baseline";
 const INPUT_PROFILE_PLUS = "plus";
 const INPUT_PROFILE_RICH = "rich";
 const INPUT_PROFILES = Object.freeze([INPUT_PROFILE_BASELINE, INPUT_PROFILE_PLUS, INPUT_PROFILE_RICH]);
+const QUESTION_SET_STRUCTURED = "structured";
+const QUESTION_SET_NATURAL = "natural";
+const QUESTION_SET_MIXED = "mixed";
+const QUESTION_SETS = Object.freeze([QUESTION_SET_STRUCTURED, QUESTION_SET_NATURAL, QUESTION_SET_MIXED]);
+const DEFAULT_QUESTION_SET = QUESTION_SET_STRUCTURED;
+const DEFAULT_NATURAL_CASES_FILE = "scripts/fixtures/chat-tone-v1-cases.json";
 
 const BASELINE_METRICS = Object.freeze({
   p50ElapsedMs: 30815,
@@ -32,7 +39,7 @@ const BASELINE_METRICS = Object.freeze({
   }),
 });
 
-const TEST_CASES = Object.freeze([
+const STRUCTURED_TEST_CASES = Object.freeze([
   { mode: "briefing", type: "short", message: "请给我一段本月简报。" },
   { mode: "briefing", type: "short", message: "总结Q1达成情况。" },
   { mode: "briefing", type: "short", message: "列出主要风险点。" },
@@ -89,13 +96,17 @@ function printHelp() {
       "  --contextMode short|real，默认 short",
       "  --contextFile real 模式下的上下文 JSON 文件路径（也可用 CHAT_CONTEXT_FILE）",
       "  --inputProfile baseline|plus|rich，默认 baseline",
+      "  --questionSet structured|natural|mixed，默认 structured",
+      "  --casesFile natural/mixed 模式下的题集 JSON 文件路径（默认 scripts/fixtures/chat-tone-v1-cases.json）",
       "  --matrix     逗号分隔的输入档位矩阵，例如 baseline,plus,rich",
+      "  --maxShortCircuitRate <0~1>，仅 real 模式生效，默认 0.2",
       "  --outputJson 输出结果 JSON 文件路径（可选）",
       "  --help       显示帮助",
       "",
       "示例:",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json",
+      "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --questionSet natural --casesFile scripts/fixtures/chat-tone-v1-cases.json",
       "  CHAT_API_ENDPOINT=https://<domain>/api/chat CHAT_AUTH_TOKEN=<token> npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --matrix baseline,plus,rich --outputJson scripts/fixtures/chat-input-profile-matrix.result.json",
     ].join("\n"),
   );
@@ -150,6 +161,14 @@ function normalizeInputProfile(value, fallback = INPUT_PROFILE_BASELINE) {
   return fallback;
 }
 
+function normalizeQuestionSet(value, fallback = DEFAULT_QUESTION_SET) {
+  const normalized = trim(value).toLowerCase();
+  if (QUESTION_SETS.includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
 function parseMatrixProfiles(value) {
   const safe = trim(value);
   if (!safe) {
@@ -162,8 +181,32 @@ function parseMatrixProfiles(value) {
   return Array.from(new Set(profiles));
 }
 
+function normalizeRateThreshold(value, fallback = DEFAULT_THRESHOLD.maxShortCircuitRate) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed < 0 || parsed > 1) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isContextV1Shape(context) {
+  if (!isPlainObject(context)) {
+    return false;
+  }
+  return (
+    Object.prototype.hasOwnProperty.call(context, "query") ||
+    Object.prototype.hasOwnProperty.call(context, "scope") ||
+    Object.prototype.hasOwnProperty.call(context, "session") ||
+    Object.prototype.hasOwnProperty.call(context, "business") ||
+    Object.prototype.hasOwnProperty.call(context, "quality")
+  );
 }
 
 function cloneObject(value) {
@@ -175,6 +218,58 @@ function cloneObject(value) {
   } catch (_error) {
     return { ...value };
   }
+}
+
+function loadNaturalCases(casesFileArg) {
+  const targetPath = trim(casesFileArg) || DEFAULT_NATURAL_CASES_FILE;
+  const resolvedPath = path.resolve(process.cwd(), targetPath);
+  let rawText = "";
+  try {
+    rawText = fs.readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    throw new Error(`无法读取自然问答题集: ${resolvedPath} (${error instanceof Error ? error.message : "unknown error"})`);
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (error) {
+    throw new Error(`自然问答题集不是合法 JSON: ${resolvedPath} (${error instanceof Error ? error.message : "unknown error"})`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`自然问答案例文件顶层必须是数组: ${resolvedPath}`);
+  }
+
+  const normalized = parsed
+    .map((item, index) => {
+      if (!isPlainObject(item)) return null;
+      const question = trim(item.question || item.message);
+      if (!question) return null;
+      const expectedPosture = trim(item.expectedPosture || item.posture).toLowerCase();
+      const safeExpectedPosture =
+        expectedPosture === "judge" || expectedPosture === "explain" || expectedPosture === "advise"
+          ? expectedPosture
+          : null;
+      return {
+        id: trim(item.id) || `natural_${String(index + 1).padStart(2, "0")}`,
+        mode: "auto",
+        type: safeExpectedPosture || "natural",
+        message: question,
+        expectedPosture: safeExpectedPosture,
+        questionSet: QUESTION_SET_NATURAL,
+      };
+    })
+    .filter((item) => item !== null);
+
+  if (normalized.length === 0) {
+    throw new Error(`自然问答案例为空: ${resolvedPath}`);
+  }
+
+  return {
+    resolvedPath,
+    cases: normalized,
+  };
 }
 
 function deepMerge(target, source) {
@@ -241,7 +336,17 @@ function resolveContextBlockByMode(contextData, mode) {
   if (isPlainObject(contextData.shared)) Object.assign(basePart, cloneObject(contextData.shared));
 
   let modePart = {};
-  if (isPlainObject(contextData.byMode) && isPlainObject(contextData.byMode[mode])) {
+  if (mode === "auto" && isPlainObject(contextData.byMode)) {
+    // natural/mixed 题集会走 mode=auto。为了避免 legacy fixture 丢失按 mode 编排的数据，
+    // 这里按固定顺序汇总三类能力上下文，保持实验对 baseline/plus/rich 的可比性。
+    const mergedAutoPart = {};
+    for (const modeKey of ["briefing", "diagnosis", "action-plan"]) {
+      if (isPlainObject(contextData.byMode[modeKey])) {
+        Object.assign(mergedAutoPart, deepMerge(mergedAutoPart, cloneObject(contextData.byMode[modeKey])));
+      }
+    }
+    modePart = mergedAutoPart;
+  } else if (isPlainObject(contextData.byMode) && isPlainObject(contextData.byMode[mode])) {
     modePart = cloneObject(contextData.byMode[mode]);
   } else if (isPlainObject(contextData[mode])) {
     modePart = cloneObject(contextData[mode]);
@@ -276,11 +381,47 @@ function buildRequestContext(contextMode, testCase, options = {}) {
     context = deepMerge(context, profileContext);
   }
 
-  if (!isPlainObject(context.quality)) {
-    context.quality = {};
+  // 仅在 v1 契约下才注入 quality.inputProfile。
+  // legacy context（base/byMode）若误注入 quality，会被服务端误判为 v1 并触发 empty_context 短路。
+  if (isContextV1Shape(context)) {
+    if (!isPlainObject(context.quality)) {
+      context.quality = {};
+    }
+    context.quality.inputProfile = inputProfile;
   }
-  context.quality.inputProfile = inputProfile;
   return context;
+}
+
+function resolveTestCases(questionSet, options = {}) {
+  const safeSet = normalizeQuestionSet(questionSet, DEFAULT_QUESTION_SET);
+  if (safeSet === QUESTION_SET_STRUCTURED) {
+    return {
+      cases: STRUCTURED_TEST_CASES.map((item) => ({ ...item, questionSet: QUESTION_SET_STRUCTURED })),
+      casesSource: "builtin_structured",
+      casesFilePath: "",
+      questionSet: safeSet,
+    };
+  }
+
+  const naturalCases = loadNaturalCases(options.casesFileArg);
+  if (safeSet === QUESTION_SET_NATURAL) {
+    return {
+      cases: naturalCases.cases,
+      casesSource: "file_natural",
+      casesFilePath: naturalCases.resolvedPath,
+      questionSet: safeSet,
+    };
+  }
+
+  return {
+    cases: [
+      ...STRUCTURED_TEST_CASES.map((item) => ({ ...item, questionSet: QUESTION_SET_STRUCTURED })),
+      ...naturalCases.cases,
+    ],
+    casesSource: "mixed_builtin_plus_file",
+    casesFilePath: naturalCases.resolvedPath,
+    questionSet: safeSet,
+  };
 }
 
 function sleep(ms) {
@@ -423,6 +564,12 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
   const hasUpstream503 = mergedStatuses.includes(503);
   const shortCircuitReason = trim(meta?.shortCircuitReason);
   const isShortCircuit = shortCircuitReason === SHORT_CIRCUIT_REASON_EMPTY_CONTEXT;
+  const responseAction = trim(payload?.responseAction).toLowerCase();
+  const businessIntent = trim(payload?.businessIntent).toLowerCase();
+  const tonePosture = trim(meta?.tone?.posture).toLowerCase();
+  const surfaceReply = trim(payload?.surfaceReply) || trim(payload?.reply);
+  const expectedPosture = trim(testCase?.expectedPosture).toLowerCase();
+  const isNaturalCase = testCase?.questionSet === QUESTION_SET_NATURAL;
 
   return {
     row: index + 1,
@@ -466,6 +613,12 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     hasUpstream503,
     shortCircuitReason: shortCircuitReason || "-",
     isShortCircuit,
+    responseAction: responseAction || "-",
+    businessIntent: businessIntent || "-",
+    tonePosture: tonePosture || "-",
+    expectedPosture: expectedPosture || "-",
+    surfaceReply: surfaceReply || "",
+    isNaturalCase,
     isFailure: response.status >= 400 || Boolean(code),
   };
 }
@@ -740,7 +893,15 @@ function pickTopReason(stageStats) {
   return `${first.reason} (${first.count})`;
 }
 
-function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats) {
+function printFocusMetrics(
+  summary,
+  modeStats,
+  reasonStats,
+  firstTransportStats,
+  firstHitQualityStats,
+  chainPathStats,
+  naturalQualityStats = null,
+) {
   console.log("\n=== 重点指标 ===");
   console.log(`- structured 占比: ${toPercent(summary.metrics.structuredRate)}`);
   console.log(`- finalStage=first 占比: ${toPercent(summary.metrics.finalStageFirstRate)}`);
@@ -761,8 +922,26 @@ function printFocusMetrics(summary, modeStats, reasonStats, firstTransportStats,
     console.log(`- shortCircuitRate: ${toPercent(chainPathStats.overall.shortCircuitRate)}`);
     console.log(`- realContextRate: ${toPercent(chainPathStats.overall.realContextRate)}`);
   }
+  if (naturalQualityStats && naturalQualityStats.enabled) {
+    console.log(`- naturalRouteRate: ${toPercent(naturalQualityStats.naturalRouteRate)}`);
+    console.log(`- postureMatchRate: ${toPercent(naturalQualityStats.postureMatchRate)}`);
+    console.log(`- gapHintOverfireRate: ${toPercent(naturalQualityStats.gapHintOverfireRate)}`);
+    console.log(`- evidenceMentionRate: ${toPercent(naturalQualityStats.evidenceMentionRate)}`);
+  }
   console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
   console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
+}
+
+function printExperimentValidity(summary) {
+  const validity = summary?.experimentValidity && typeof summary.experimentValidity === "object" ? summary.experimentValidity : null;
+  if (!validity) {
+    return;
+  }
+  console.log("\n=== 实验有效性 ===");
+  console.log(`- valid: ${validity.valid ? "true" : "false"}`);
+  console.log(`- reason: ${validity.reason || "-"}`);
+  console.log(`- shortCircuitRate: ${toPercent(validity.shortCircuitRate)}`);
+  console.log(`- threshold: ${toPercent(validity.threshold)}`);
 }
 
 function toPercent(value) {
@@ -894,6 +1073,142 @@ function buildChainPathStats(results) {
   };
 }
 
+function normalizeExecutionState(execution, plannedCount, executedCount) {
+  const safePlanned = Number.isFinite(Number(plannedCount)) && Number(plannedCount) > 0 ? Math.floor(Number(plannedCount)) : 0;
+  const safeExecuted =
+    Number.isFinite(Number(executedCount)) && Number(executedCount) >= 0 ? Math.floor(Number(executedCount)) : 0;
+  const aborted = Boolean(execution?.aborted);
+  const abortReason = trim(execution?.abortReason);
+  return {
+    plannedCount: safePlanned,
+    executedCount: safeExecuted,
+    aborted,
+    abortReason: aborted ? abortReason || "unknown" : "",
+    valid: !aborted,
+  };
+}
+
+function hasGapHintText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(数据不足|口径不足|缺少|缺失|未提供|暂无.*数据|明细不足|暂未拿到)/.test(safe);
+}
+
+function hasEvidenceMentionText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(\d+(\.\d+)?%|\d+(\.\d+)?万|\d+(\.\d+)?亿|同比|环比|达成率|销售额|盒数|销量|目标)/.test(safe);
+}
+
+function buildNaturalQualityStats(results) {
+  const naturalRows = (Array.isArray(results) ? results : []).filter((row) => Boolean(row?.isNaturalCase));
+  const total = naturalRows.length;
+  if (total === 0) {
+    return {
+      enabled: false,
+      total: 0,
+      naturalRouteRate: 0,
+      postureMatchRate: 0,
+      gapHintOverfireRate: 0,
+      evidenceMentionRate: 0,
+      counts: {
+        naturalRouteCount: 0,
+        postureEligibleCount: 0,
+        postureMatchCount: 0,
+        judgeCaseCount: 0,
+        gapHintOverfireCount: 0,
+        evidenceMentionCount: 0,
+      },
+      byPosture: [],
+    };
+  }
+
+  const naturalRoutedRows = naturalRows.filter((row) => row.responseAction === "natural_answer");
+  const postureEligibleRows = naturalRoutedRows.filter((row) => row.expectedPosture && row.expectedPosture !== "-");
+  const postureMatchCount = postureEligibleRows.filter((row) => row.tonePosture === row.expectedPosture).length;
+  const judgeRows = naturalRoutedRows.filter((row) => row.expectedPosture === "judge");
+  const gapHintOverfireCount = judgeRows.filter((row) => hasGapHintText(row.surfaceReply)).length;
+  const evidenceMentionCount = naturalRoutedRows.filter((row) => hasEvidenceMentionText(row.surfaceReply)).length;
+
+  const postureGroups = ["judge", "explain", "advise"].map((posture) => {
+    const rows = naturalRoutedRows.filter((row) => row.expectedPosture === posture);
+    const matched = rows.filter((row) => row.tonePosture === posture).length;
+    return {
+      posture,
+      total: rows.length,
+      matchRate: rows.length > 0 ? matched / rows.length : 0,
+    };
+  });
+
+  return {
+    enabled: true,
+    total,
+    naturalRouteRate: naturalRoutedRows.length / total,
+    postureMatchRate: postureEligibleRows.length > 0 ? postureMatchCount / postureEligibleRows.length : 0,
+    gapHintOverfireRate: judgeRows.length > 0 ? gapHintOverfireCount / judgeRows.length : 0,
+    evidenceMentionRate: naturalRoutedRows.length > 0 ? evidenceMentionCount / naturalRoutedRows.length : 0,
+    counts: {
+      naturalRouteCount: naturalRoutedRows.length,
+      postureEligibleCount: postureEligibleRows.length,
+      postureMatchCount,
+      judgeCaseCount: judgeRows.length,
+      gapHintOverfireCount,
+      evidenceMentionCount,
+    },
+    byPosture: postureGroups,
+  };
+}
+
+function printNaturalQualityStats(stats) {
+  if (!stats || !stats.enabled) {
+    return;
+  }
+  console.log("\n=== 自然问答质量（overall）===");
+  console.log("| naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate |");
+  console.log("|------------------|------------------|---------------------|---------------------|");
+  console.log(
+    `| ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} |`,
+  );
+  console.log("\n=== 自然问答质量（by posture）===");
+  console.log("| posture | 样本数 | matchRate |");
+  console.log("|---------|--------|-----------|");
+  for (const item of stats.byPosture) {
+    console.log(`| ${item.posture} | ${item.total} | ${toPercent(item.matchRate)} |`);
+  }
+}
+
+function evaluateExperimentValidity(contextMode, chainPathStats, maxShortCircuitRate) {
+  const safeMode = normalizeContextMode(contextMode, CONTEXT_MODE_SHORT);
+  const threshold = normalizeRateThreshold(maxShortCircuitRate, DEFAULT_THRESHOLD.maxShortCircuitRate);
+  const shortCircuitRate = Number(chainPathStats?.overall?.shortCircuitRate);
+  const safeShortCircuitRate = Number.isFinite(shortCircuitRate) ? shortCircuitRate : 0;
+
+  if (safeMode !== CONTEXT_MODE_REAL) {
+    return {
+      valid: true,
+      reason: "not_applicable_short_mode",
+      shortCircuitRate: safeShortCircuitRate,
+      threshold,
+    };
+  }
+
+  if (safeShortCircuitRate > threshold) {
+    return {
+      valid: false,
+      reason: "real_context_short_circuit_too_high",
+      shortCircuitRate: safeShortCircuitRate,
+      threshold,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "ok",
+    shortCircuitRate: safeShortCircuitRate,
+    threshold,
+  };
+}
+
 function printChainPathStats(results) {
   const stats = buildChainPathStats(results);
   console.log("\n=== 链路占比（overall）===");
@@ -909,7 +1224,29 @@ function printChainPathStats(results) {
   return stats;
 }
 
-function evaluateThresholds(results) {
+function evaluateThresholds(results, options = {}) {
+  const contextMode = normalizeContextMode(options.contextMode, CONTEXT_MODE_SHORT);
+  const naturalQualityStats =
+    options.naturalQualityStats && typeof options.naturalQualityStats === "object" ? options.naturalQualityStats : null;
+  const execution =
+    options.execution && typeof options.execution === "object"
+      ? options.execution
+      : {
+          plannedCount: Number.isFinite(results.length) ? results.length : 0,
+          executedCount: Number.isFinite(results.length) ? results.length : 0,
+          aborted: false,
+          abortReason: "",
+          valid: true,
+        };
+  const experimentValidity =
+    options.experimentValidity && typeof options.experimentValidity === "object"
+      ? options.experimentValidity
+      : {
+          valid: true,
+          reason: "not_provided",
+          shortCircuitRate: 0,
+          threshold: DEFAULT_THRESHOLD.maxShortCircuitRate,
+        };
   const total = results.length || 1;
   const failureCount = results.filter((row) => row.isFailure).length;
   const timeoutCount = results.filter((row) => row.errorCode === "UPSTREAM_TIMEOUT").length;
@@ -934,7 +1271,7 @@ function evaluateThresholds(results) {
     p95ElapsedMs,
   };
 
-  return {
+  const summary = {
     counts: {
       total,
       failureCount,
@@ -978,14 +1315,60 @@ function evaluateThresholds(results) {
         value: `${metrics.p95ElapsedMs}ms`,
         pass: metrics.p95ElapsedMs <= DEFAULT_THRESHOLD.maxP95Ms,
       },
+      {
+        label: "profile 未被鉴权中断",
+        value: execution.aborted ? `aborted(${execution.abortReason || "unknown"})` : "ok",
+        pass: execution.valid,
+      },
     ],
+    experimentValidity,
+    execution,
   };
+
+  if (contextMode === CONTEXT_MODE_REAL) {
+    summary.checks.push({
+      label: `real-context 有效性（shortCircuitRate <= ${toPercent(experimentValidity.threshold)}）`,
+      value: toPercent(experimentValidity.shortCircuitRate),
+      pass: Boolean(experimentValidity.valid),
+    });
+  }
+
+  if (naturalQualityStats && naturalQualityStats.enabled) {
+    summary.checks.push({
+      label: "naturalRouteRate >= 80%",
+      value: toPercent(naturalQualityStats.naturalRouteRate),
+      pass: naturalQualityStats.naturalRouteRate >= 0.8,
+    });
+    summary.checks.push({
+      label: "postureMatchRate >= 85%",
+      value: toPercent(naturalQualityStats.postureMatchRate),
+      pass: naturalQualityStats.postureMatchRate >= 0.85,
+    });
+    summary.checks.push({
+      label: "gapHintOverfireRate <= 10%",
+      value: toPercent(naturalQualityStats.gapHintOverfireRate),
+      pass: naturalQualityStats.gapHintOverfireRate <= 0.1,
+    });
+  }
+
+  return summary;
 }
 
 function buildDiagnosis(results, summary = null) {
+  const notes = [];
+  const execution = summary?.execution && typeof summary.execution === "object" ? summary.execution : null;
+  if (execution && execution.valid === false && execution.abortReason === "unauthorized") {
+    notes.push("当前档位压测在鉴权阶段中断（UNAUTHORIZED），token 可能过期/失效；该档位结果不可用于 baseline/plus 对比决策。");
+  }
+  const experimentValidity = summary?.experimentValidity && typeof summary.experimentValidity === "object" ? summary.experimentValidity : null;
+  if (experimentValidity && experimentValidity.valid === false) {
+    notes.push("本轮 real-context 被 short-circuit 主导，结果不具备 A/B 档位比较意义。请先排查 context 文件与请求组装。");
+  }
+
   const failures = results.filter((item) => item.isFailure);
   if (failures.length === 0) {
-    return ["未观测到失败请求，可进入下一阶段质量增强。"];
+    notes.push("未观测到失败请求，可进入下一阶段质量增强。");
+    return notes;
   }
 
   const timeoutFirstCount = failures.filter((item) => item.errorCode === "UPSTREAM_TIMEOUT" && item.stage === "first").length;
@@ -996,7 +1379,6 @@ function buildDiagnosis(results, summary = null) {
   const authErrorCount = failures.filter((item) => item.errorCode === "UPSTREAM_AUTH_ERROR").length;
   const textFallbackCount = results.filter((item) => item.format === "text_fallback").length;
 
-  const notes = [];
   if (timeoutFirstCount >= 2) {
     notes.push("高频 `UPSTREAM_TIMEOUT + stage=first`：首轮请求偏慢，优先继续瘦身上下文或降低输出复杂度。");
   }
@@ -1152,13 +1534,23 @@ function printElapsedDistribution(results) {
   console.log(`- elapsedMs 升序: ${values.join(", ")}`);
 }
 
-function buildScenarioBundle(inputProfile, results) {
-  const summary = evaluateThresholds(results);
+function buildScenarioBundle(inputProfile, results, options = {}) {
+  const contextMode = normalizeContextMode(options.contextMode, CONTEXT_MODE_SHORT);
+  const maxShortCircuitRate = normalizeRateThreshold(options.maxShortCircuitRate, DEFAULT_THRESHOLD.maxShortCircuitRate);
+  const execution = normalizeExecutionState(options.execution, options.plannedCount, results.length);
+  const chainPathStats = buildChainPathStats(results);
+  const naturalQualityStats = buildNaturalQualityStats(results);
+  const experimentValidity = evaluateExperimentValidity(contextMode, chainPathStats, maxShortCircuitRate);
+  const summary = evaluateThresholds(results, {
+    contextMode,
+    experimentValidity,
+    naturalQualityStats,
+    execution,
+  });
   const modeStats = buildModeStats(results);
   const reasonStats = buildAttemptReasonStats(results);
   const firstHitQualityStats = buildFirstHitQualityStats(reasonStats, results.length);
   const firstTransportStats = buildFirstTransportStats(results);
-  const chainPathStats = buildChainPathStats(results);
   const contextCharStats = buildContextCharStats(results);
   return {
     inputProfile,
@@ -1170,6 +1562,9 @@ function buildScenarioBundle(inputProfile, results) {
     firstTransportStats,
     chainPathStats,
     contextCharStats,
+    naturalQualityStats,
+    execution,
+    experimentValidity,
   };
 }
 
@@ -1180,16 +1575,18 @@ function printMatrixSummary(matrixBundles) {
   }
   console.log("\n=== 输入档位对比（overall）===");
   console.log(
-    "| inputProfile | 失败率 | 超时率 | structured | finalStage=first | first output_truncated | p50 | p95 | contextChars p50 | contextChars p95 |",
+    "| inputProfile | executionValid | abortReason | validRealContext | shortCircuitRate | 失败率 | 超时率 | structured | finalStage=first | first output_truncated | p50 | p95 | contextChars p50 | contextChars p95 |",
   );
   console.log(
-    "|--------------|--------|--------|------------|------------------|------------------------|-----|-----|-----------------|-----------------|",
+    "|--------------|----------------|------------|------------------|------------------|--------|--------|------------|------------------|------------------------|-----|-----|-----------------|-----------------|",
   );
   for (const bundle of bundles) {
     const metrics = bundle.summary.metrics;
     const contextStats = bundle.contextCharStats;
+    const validity = bundle.experimentValidity || bundle.summary?.experimentValidity || {};
+    const execution = bundle.execution || bundle.summary?.execution || {};
     console.log(
-      `| ${bundle.inputProfile} | ${toPercent(metrics.failureRate)} | ${toPercent(metrics.timeoutRate)} | ${toPercent(metrics.structuredRate)} | ${toPercent(metrics.finalStageFirstRate)} | ${toPercent(bundle.firstHitQualityStats.overall.firstOutputTruncatedRate)} | ${metrics.p50ElapsedMs}ms | ${metrics.p95ElapsedMs}ms | ${contextStats.p50 || 0} | ${contextStats.p95 || 0} |`,
+      `| ${bundle.inputProfile} | ${execution.valid ? "true" : "false"} | ${execution.abortReason || "-"} | ${validity.valid ? "true" : "false"} | ${toPercent(validity.shortCircuitRate)} | ${toPercent(metrics.failureRate)} | ${toPercent(metrics.timeoutRate)} | ${toPercent(metrics.structuredRate)} | ${toPercent(metrics.finalStageFirstRate)} | ${toPercent(bundle.firstHitQualityStats.overall.firstOutputTruncatedRate)} | ${metrics.p50ElapsedMs}ms | ${metrics.p95ElapsedMs}ms | ${contextStats.p50 || 0} | ${contextStats.p95 || 0} |`,
     );
   }
 
@@ -1203,6 +1600,23 @@ function printMatrixSummary(matrixBundles) {
     const actionPlan = statMap["action-plan"] ? toPercent(statMap["action-plan"].textFallbackRate) : "-";
     console.log(`| ${bundle.inputProfile} | ${briefing} | ${diagnosis} | ${actionPlan} |`);
   }
+
+  const hasNatural = bundles.some((bundle) => bundle.naturalQualityStats && bundle.naturalQualityStats.enabled);
+  if (hasNatural) {
+    console.log("\n=== 输入档位对比（natural 质量）===");
+    console.log("| inputProfile | naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate |");
+    console.log("|--------------|------------------|------------------|---------------------|---------------------|");
+    for (const bundle of bundles) {
+      const stats = bundle.naturalQualityStats || {};
+      if (!stats.enabled) {
+        console.log(`| ${bundle.inputProfile} | - | - | - | - |`);
+        continue;
+      }
+      console.log(
+        `| ${bundle.inputProfile} | ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} |`,
+      );
+    }
+  }
 }
 
 async function executeScenario(options) {
@@ -1213,21 +1627,31 @@ async function executeScenario(options) {
   const contextMode = options.contextMode;
   const contextOptions = options.contextOptions;
   const inputProfile = normalizeInputProfile(options.inputProfile, INPUT_PROFILE_BASELINE);
+  const questionSet = normalizeQuestionSet(options.questionSet, DEFAULT_QUESTION_SET);
+  const testCases = Array.isArray(options.testCases) ? options.testCases : STRUCTURED_TEST_CASES;
+  const totalCases = testCases.length;
   const logPrefix = options.logPrefix ? `[${options.logPrefix}] ` : "";
+  const casesFilePath = trim(options.casesFilePath);
   const results = [];
+  const execution = {
+    plannedCount: totalCases,
+    executedCount: 0,
+    aborted: false,
+    abortReason: "",
+  };
   let history = [];
   console.log(
-    `${logPrefix}开始执行 10 次稳态验证，endpoint: ${endpoint}`,
+    `${logPrefix}开始执行 ${totalCases} 次稳态验证，endpoint: ${endpoint}`,
   );
   console.log(
-    `${logPrefix}配置: stream=${stream}, delayMs=${delayMs}, contextMode=${contextMode}${contextMode === CONTEXT_MODE_REAL ? `, contextFile=${contextOptions.contextFilePath}` : ""}, inputProfile=${inputProfile}`,
+    `${logPrefix}配置: stream=${stream}, delayMs=${delayMs}, contextMode=${contextMode}${contextMode === CONTEXT_MODE_REAL ? `, contextFile=${contextOptions.contextFilePath}` : ""}, inputProfile=${inputProfile}, questionSet=${questionSet}${casesFilePath ? `, casesFile=${casesFilePath}` : ""}`,
   );
 
-  for (let index = 0; index < TEST_CASES.length; index += 1) {
-    const testCase = TEST_CASES[index];
+  for (let index = 0; index < testCases.length; index += 1) {
+    const testCase = testCases[index];
     const requestBody = {
       message: testCase.message,
-      mode: testCase.mode,
+      mode: trim(testCase.mode) || "auto",
       stream,
       context: buildRequestContext(contextMode, testCase, {
         ...contextOptions,
@@ -1272,6 +1696,12 @@ async function executeScenario(options) {
         hasUpstream503: false,
         shortCircuitReason: "-",
         isShortCircuit: false,
+        responseAction: "-",
+        businessIntent: "-",
+        tonePosture: "-",
+        expectedPosture: trim(testCase?.expectedPosture).toLowerCase() || "-",
+        surfaceReply: "",
+        isNaturalCase: testCase?.questionSet === QUESTION_SET_NATURAL,
         elapsedMs: toInt(Date.now() - startedAt, 0),
         totalDurationMs: toInt(Date.now() - startedAt, 0),
         contextChars: "-",
@@ -1280,28 +1710,39 @@ async function executeScenario(options) {
         isFailure: true,
       };
       results.push(pseudoResult);
-      console.error(`${logPrefix}[${index + 1}/10] 请求失败: ${error instanceof Error ? error.message : "unknown error"}`);
+      execution.executedCount = results.length;
+      console.error(`${logPrefix}[${index + 1}/${totalCases}] 请求失败: ${error instanceof Error ? error.message : "unknown error"}`);
       await sleep(delayMs);
       continue;
     }
 
     const row = normalizeResult(index, testCase, response, payload, Date.now() - startedAt);
     results.push(row);
+    execution.executedCount = results.length;
     history.push({ role: "user", content: testCase.message });
-    const assistantText = trim(payload?.reply) || trim(payload?.structured?.summary);
+    const assistantText = trim(payload?.surfaceReply) || trim(payload?.reply) || trim(payload?.structured?.summary);
     if (!row.isFailure && assistantText) {
       history.push({ role: "assistant", content: assistantText });
     }
     history = sanitizeHistory(history);
     console.log(
-      `${logPrefix}[${index + 1}/10] mode=${row.mode}, http=${row.http}, code=${row.errorCode}, format=${row.format}, elapsed=${row.elapsedMs}ms, requestId=${row.requestId}`,
+      `${logPrefix}[${index + 1}/${totalCases}] mode=${row.mode}, http=${row.http}, code=${row.errorCode}, format=${row.format}, elapsed=${row.elapsedMs}ms, requestId=${row.requestId}`,
     );
-    if (index < TEST_CASES.length - 1) {
+    if (row.http === 401 || row.errorCode === "UNAUTHORIZED") {
+      execution.aborted = true;
+      execution.abortReason = "unauthorized";
+      console.log(`${logPrefix}检测到 UNAUTHORIZED，当前 profile 提前中断并标记为无效（invalid_auth_expired）。`);
+      break;
+    }
+    if (index < testCases.length - 1) {
       await sleep(delayMs);
     }
   }
 
-  return results;
+  return {
+    results,
+    execution,
+  };
 }
 
 async function run() {
@@ -1317,17 +1758,27 @@ async function run() {
   const stream = toBool(args.stream, false);
   const contextMode = normalizeContextMode(args.contextMode || process.env.CHAT_CONTEXT_MODE, CONTEXT_MODE_SHORT);
   const contextFileArg = trim(args.contextFile || process.env.CHAT_CONTEXT_FILE);
+  const questionSet = normalizeQuestionSet(args.questionSet || process.env.CHAT_QUESTION_SET, DEFAULT_QUESTION_SET);
+  const casesFileArg = trim(args.casesFile || process.env.CHAT_CASES_FILE);
   const inputProfile = normalizeInputProfile(
     args.inputProfile || process.env.CHAT_INPUT_PROFILE,
     INPUT_PROFILE_BASELINE,
   );
   const matrixProfiles = parseMatrixProfiles(args.matrix || process.env.CHAT_INPUT_MATRIX);
   const outputJsonPathArg = trim(args.outputJson || process.env.CHAT_OUTPUT_JSON);
+  const maxShortCircuitRate = normalizeRateThreshold(
+    args.maxShortCircuitRate || process.env.CHAT_MAX_SHORT_CIRCUIT_RATE,
+    DEFAULT_THRESHOLD.maxShortCircuitRate,
+  );
 
   if (!endpoint || !token) {
     printHelp();
     throw new Error("缺少 endpoint 或 token。请使用 --endpoint/--token 或环境变量 CHAT_API_ENDPOINT/CHAT_AUTH_TOKEN。");
   }
+
+  const resolvedCases = resolveTestCases(questionSet, {
+    casesFileArg,
+  });
 
   let contextOptions = {
     contextMode,
@@ -1349,7 +1800,7 @@ async function run() {
 
   for (let index = 0; index < scenarioProfiles.length; index += 1) {
     const profile = scenarioProfiles[index];
-    const results = await executeScenario({
+    const scenarioRun = await executeScenario({
       endpoint,
       token,
       delayMs,
@@ -1357,10 +1808,20 @@ async function run() {
       contextMode,
       contextOptions,
       inputProfile: profile,
+      questionSet: resolvedCases.questionSet,
+      testCases: resolvedCases.cases,
+      casesFilePath: resolvedCases.casesFilePath,
       logPrefix: scenarioProfiles.length > 1 ? `profile:${profile}` : "",
     });
-    const bundle = buildScenarioBundle(profile, results);
-    matrixBundles.push(bundle);
+    const results = Array.isArray(scenarioRun?.results) ? scenarioRun.results : [];
+    const execution = scenarioRun?.execution || null;
+    const bundleWithValidity = buildScenarioBundle(profile, results, {
+      contextMode,
+      maxShortCircuitRate,
+      execution,
+      plannedCount: resolvedCases.cases.length,
+    });
+    matrixBundles.push(bundleWithValidity);
 
     console.log("\n=== 明细记录表 ===");
     printTable(results);
@@ -1372,34 +1833,40 @@ async function run() {
     const firstTransportStats = printFirstTransportStats(results);
     const chainPathStats = printChainPathStats(results);
 
-    printFocusMetrics(bundle.summary, printedModeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
+    printFocusMetrics(bundleWithValidity.summary, printedModeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
+    printNaturalQualityStats(bundleWithValidity.naturalQualityStats);
+    printExperimentValidity(bundleWithValidity.summary);
     console.log("\n=== FinalStage 总体占比 ===");
-    printFinalStageSummary(bundle.summary);
+    printFinalStageSummary(bundleWithValidity.summary);
     console.log("\n=== 判定结果 ===");
-    for (const check of bundle.summary.checks) {
+    for (const check of bundleWithValidity.summary.checks) {
       console.log(`- [${check.pass ? "PASS" : "FAIL"}] ${check.label} -> ${check.value}`);
     }
 
     console.log("\n=== 核心计数 ===");
-    console.log(`- 总请求: ${bundle.summary.counts.total}`);
-    console.log(`- 失败数: ${bundle.summary.counts.failureCount}`);
-    console.log(`- 超时数: ${bundle.summary.counts.timeoutCount}`);
-    console.log(`- attemptCount=3 数: ${bundle.summary.counts.attempt3Count}`);
-    console.log(`- structured 数: ${bundle.summary.counts.structuredCount}`);
-    console.log(`- finalStage=first 数: ${bundle.summary.counts.finalStageFirstCount}`);
-    console.log(`- finalStage=retry 数: ${bundle.summary.counts.finalStageRetryCount}`);
-    console.log(`- finalStage=repair 数: ${bundle.summary.counts.finalStageRepairCount}`);
-    console.log(`- p50 elapsedMs: ${bundle.summary.metrics.p50ElapsedMs}ms`);
-    console.log(`- p95 elapsedMs: ${bundle.summary.metrics.p95ElapsedMs}ms`);
+    console.log(`- 计划请求: ${bundleWithValidity.summary.execution?.plannedCount ?? resolvedCases.cases.length}`);
+    console.log(`- 实际执行: ${bundleWithValidity.summary.execution?.executedCount ?? bundleWithValidity.summary.counts.total}`);
+    console.log(`- 执行中断: ${bundleWithValidity.summary.execution?.aborted ? "true" : "false"}`);
+    console.log(`- 中断原因: ${bundleWithValidity.summary.execution?.abortReason || "-"}`);
+    console.log(`- 总请求: ${bundleWithValidity.summary.counts.total}`);
+    console.log(`- 失败数: ${bundleWithValidity.summary.counts.failureCount}`);
+    console.log(`- 超时数: ${bundleWithValidity.summary.counts.timeoutCount}`);
+    console.log(`- attemptCount=3 数: ${bundleWithValidity.summary.counts.attempt3Count}`);
+    console.log(`- structured 数: ${bundleWithValidity.summary.counts.structuredCount}`);
+    console.log(`- finalStage=first 数: ${bundleWithValidity.summary.counts.finalStageFirstCount}`);
+    console.log(`- finalStage=retry 数: ${bundleWithValidity.summary.counts.finalStageRetryCount}`);
+    console.log(`- finalStage=repair 数: ${bundleWithValidity.summary.counts.finalStageRepairCount}`);
+    console.log(`- p50 elapsedMs: ${bundleWithValidity.summary.metrics.p50ElapsedMs}ms`);
+    console.log(`- p95 elapsedMs: ${bundleWithValidity.summary.metrics.p95ElapsedMs}ms`);
     console.log("\n=== 与 baseline 对比 ===");
-    printBaselineComparison(results, bundle.summary);
-    if (bundle.summary.metrics.p95ElapsedMs > 15000 && bundle.summary.metrics.p95ElapsedMs <= 18000) {
+    printBaselineComparison(results, bundleWithValidity.summary);
+    if (bundleWithValidity.summary.metrics.p95ElapsedMs > 15000 && bundleWithValidity.summary.metrics.p95ElapsedMs <= 18000) {
       console.log("\n=== 耗时分布观察（15000~18000ms 区间）===");
       printElapsedDistribution(results);
     }
 
     console.log("\n=== 日志判读建议 ===");
-    for (const note of buildDiagnosis(results, bundle.summary)) {
+    for (const note of buildDiagnosis(results, bundleWithValidity.summary)) {
       console.log(`- ${note}`);
     }
     const topSchemaFirstIssue =
@@ -1413,7 +1880,7 @@ async function run() {
     console.log(`- schema_invalid first top issue: ${topSchemaFirstIssue}`);
     console.log(`- schema_invalid retry top issue: ${topSchemaRetryIssue}`);
 
-    const allPass = bundle.summary.checks.every((item) => item.pass);
+    const allPass = bundleWithValidity.summary.checks.every((item) => item.pass);
     if (!allPass) {
       finalExitCode = 2;
     }
@@ -1435,11 +1902,19 @@ async function run() {
       stream,
       delayMs,
       contextMode,
+      questionSet: resolvedCases.questionSet,
+      casesSource: resolvedCases.casesSource,
+      casesFile: resolvedCases.casesFilePath,
+      caseCount: resolvedCases.cases.length,
+      maxShortCircuitRate,
       contextFile: contextOptions.contextFilePath || "",
       profiles: matrixBundles.map((bundle) => ({
         inputProfile: bundle.inputProfile,
         metrics: bundle.summary.metrics,
         checks: bundle.summary.checks,
+        experimentValidity: bundle.experimentValidity || bundle.summary?.experimentValidity || null,
+        execution: bundle.execution || bundle.summary?.execution || null,
+        naturalQuality: bundle.naturalQualityStats || null,
         modeStats: bundle.modeStats,
         firstHitQuality: bundle.firstHitQualityStats,
         contextCharStats: bundle.contextCharStats,
