@@ -637,6 +637,17 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 - 决策依据：最新 v2 natural matrix 显示 `plus` 在稳定性不回退前提下，深度质量显著优于 `baseline`（`detailNumericAnswerRate` 与 `detailEvidenceCoverageRate` 均提升，且 `baseline` 的 `gapHintOverfireRate` 超阈值）。
 - 回退条件：仅当后续观测到 `plus` 在稳定性显著恶化（失败率/超时率高于 baseline +5pp，或 `p95` 恶化 >15%）且质量优势消失时，才回退 `baseline`。
 
+#### 全量输入实验开关（临时）
+
+- 为了手测“全量输入层”效果，`main.js` 新增实验档位：`inputProfile=full`。
+- 当前实验版默认开启：`AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED = true`（`main.js` 内常量）。
+- 该档位会放宽上下文裁剪（趋势/产品/医院/风险条目与 `naturalMini` 明细显著增加），用于观察模型在高信息密度下的表现。
+
+回退方式（建议保留这三步）：
+1. 将 `main.js` 中 `AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED` 改回 `false`。
+2. 保持默认档位回到 `plus`（无需改其它业务逻辑）。
+3. 重新部署后，用 `questionSet=natural` 跑一次 baseline/plus 回归，确认时延与质量恢复到常规区间。
+
 ```bash
 # natural 题集（mode=auto）对比 baseline
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \

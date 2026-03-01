@@ -1087,7 +1087,13 @@ async function initializeApp() {
     BASELINE: "baseline",
     PLUS: "plus",
     RICH: "rich",
+    FULL: "full",
   });
+  // 全量输入实验开关（用于线上手测；关闭后回退到 plus 默认）
+  const AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED = true;
+  const AI_CHAT_DEFAULT_INPUT_PROFILE = AI_CHAT_FULL_CONTEXT_EXPERIMENT_ENABLED
+    ? AI_CHAT_INPUT_PROFILES.FULL
+    : AI_CHAT_INPUT_PROFILES.PLUS;
   const AI_CHAT_INPUT_PROFILE_CONFIGS = Object.freeze({
     [AI_CHAT_INPUT_PROFILES.BASELINE]: Object.freeze({
       monthlyDefaultCount: 2,
@@ -1097,6 +1103,12 @@ async function initializeApp() {
       naturalMiniMaxChars: 800,
       includeOtherProductsSummary: false,
       includeProductBandSummary: false,
+      contextTopN: AI_CHAT_CONTEXT_TOP_N,
+      modeExtraTopN: AI_CHAT_MODE_EXTRA_TOP_N,
+      trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
+      entityLabelMaxCount: 3,
+      riskTopMaxCount: 3,
+      disableNaturalMiniTrim: false,
     }),
     [AI_CHAT_INPUT_PROFILES.PLUS]: Object.freeze({
       monthlyDefaultCount: 3,
@@ -1106,6 +1118,12 @@ async function initializeApp() {
       naturalMiniMaxChars: 1200,
       includeOtherProductsSummary: true,
       includeProductBandSummary: false,
+      contextTopN: AI_CHAT_CONTEXT_TOP_N,
+      modeExtraTopN: AI_CHAT_MODE_EXTRA_TOP_N,
+      trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
+      entityLabelMaxCount: 3,
+      riskTopMaxCount: 3,
+      disableNaturalMiniTrim: false,
     }),
     [AI_CHAT_INPUT_PROFILES.RICH]: Object.freeze({
       monthlyDefaultCount: 4,
@@ -1115,8 +1133,33 @@ async function initializeApp() {
       naturalMiniMaxChars: 1600,
       includeOtherProductsSummary: true,
       includeProductBandSummary: true,
+      contextTopN: AI_CHAT_CONTEXT_TOP_N,
+      modeExtraTopN: AI_CHAT_MODE_EXTRA_TOP_N,
+      trendMinCount: AI_CHAT_MIN_CONTEXT_TREND_ITEMS,
+      entityLabelMaxCount: 3,
+      riskTopMaxCount: 3,
+      disableNaturalMiniTrim: false,
+    }),
+    [AI_CHAT_INPUT_PROFILES.FULL]: Object.freeze({
+      monthlyDefaultCount: 12,
+      monthlyMaxCount: 24,
+      topProductCount: 999,
+      evidenceTopMaxCount: 20,
+      naturalMiniMaxChars: 24000,
+      includeOtherProductsSummary: true,
+      includeProductBandSummary: true,
+      contextTopN: 999,
+      modeExtraTopN: 999,
+      trendMinCount: 6,
+      entityLabelMaxCount: 20,
+      riskTopMaxCount: 20,
+      disableNaturalMiniTrim: true,
     }),
   });
+
+  if (!window.__SALES_TOOL_AI_INPUT_PROFILE__) {
+    window.__SALES_TOOL_AI_INPUT_PROFILE__ = AI_CHAT_DEFAULT_INPUT_PROFILE;
+  }
 
   function clampText(value, maxChars = 0) {
     const text = String(value || "").trim();
@@ -1261,16 +1304,17 @@ async function initializeApp() {
     if (
       candidate === AI_CHAT_INPUT_PROFILES.BASELINE ||
       candidate === AI_CHAT_INPUT_PROFILES.PLUS ||
-      candidate === AI_CHAT_INPUT_PROFILES.RICH
+      candidate === AI_CHAT_INPUT_PROFILES.RICH ||
+      candidate === AI_CHAT_INPUT_PROFILES.FULL
     ) {
       return candidate;
     }
-    return AI_CHAT_INPUT_PROFILES.PLUS;
+    return AI_CHAT_DEFAULT_INPUT_PROFILE;
   }
 
   function getChatInputProfileConfig(profile) {
     const safeProfile = normalizeChatInputProfile(profile);
-    return AI_CHAT_INPUT_PROFILE_CONFIGS[safeProfile] || AI_CHAT_INPUT_PROFILE_CONFIGS[AI_CHAT_INPUT_PROFILES.PLUS];
+    return AI_CHAT_INPUT_PROFILE_CONFIGS[safeProfile] || AI_CHAT_INPUT_PROFILE_CONFIGS[AI_CHAT_DEFAULT_INPUT_PROFILE];
   }
 
   function pickNaturalMonthlyCount(message, profileConfig) {
@@ -1410,6 +1454,9 @@ async function initializeApp() {
     });
 
     let naturalMini = buildMini();
+    if (profileConfig.disableNaturalMiniTrim === true) {
+      return naturalMini;
+    }
     try {
       const naturalMiniMaxCharsRaw = Number(profileConfig.naturalMiniMaxChars);
       const naturalMiniMaxChars =
@@ -1444,37 +1491,57 @@ async function initializeApp() {
     return naturalMini;
   }
 
-  function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_INPUT_PROFILES.PLUS) {
+  function buildAiChatContextPayload(mode, message, rangeOverride, inputProfile = AI_CHAT_DEFAULT_INPUT_PROFILE) {
     const requestMode = sanitizeChatRequestMode(mode);
     const safeMode = requestMode === CHAT_MODES.AUTO ? CHAT_MODES.BRIEFING : sanitizeChatMode(requestMode);
     const safeInputProfile = normalizeChatInputProfile(inputProfile);
     const profileConfig = getChatInputProfileConfig(safeInputProfile);
+    const contextTopNRaw = Number(profileConfig.contextTopN);
+    const contextTopN = Number.isFinite(contextTopNRaw) && contextTopNRaw > 0 ? Math.floor(contextTopNRaw) : AI_CHAT_CONTEXT_TOP_N;
+    const modeExtraTopNRaw = Number(profileConfig.modeExtraTopN);
+    const modeExtraTopN =
+      Number.isFinite(modeExtraTopNRaw) && modeExtraTopNRaw > 0 ? Math.floor(modeExtraTopNRaw) : AI_CHAT_MODE_EXTRA_TOP_N;
+    const trendMinCountRaw = Number(profileConfig.trendMinCount);
+    const trendMinCount =
+      Number.isFinite(trendMinCountRaw) && trendMinCountRaw > 0
+        ? Math.floor(trendMinCountRaw)
+        : AI_CHAT_MIN_CONTEXT_TREND_ITEMS;
+    const entityLabelMaxCountRaw = Number(profileConfig.entityLabelMaxCount);
+    const entityLabelMaxCount =
+      Number.isFinite(entityLabelMaxCountRaw) && entityLabelMaxCountRaw > 0
+        ? Math.floor(entityLabelMaxCountRaw)
+        : 3;
+    const riskTopMaxCountRaw = Number(profileConfig.riskTopMaxCount);
+    const riskTopMaxCount =
+      Number.isFinite(riskTopMaxCountRaw) && riskTopMaxCountRaw > 0
+        ? Math.floor(riskTopMaxCountRaw)
+        : 3;
     const analysisContext = buildAnalyticsContext(rangeOverride);
     const kpi = getKpiOverview(analysisContext);
     const trend = getTrendInsights(analysisContext);
-    const product = getProductInsights(analysisContext, { topN: AI_CHAT_CONTEXT_TOP_N });
-    const hospital = getHospitalInsights(analysisContext, { topN: AI_CHAT_CONTEXT_TOP_N });
+    const product = getProductInsights(analysisContext, { topN: contextTopN });
+    const hospital = getHospitalInsights(analysisContext, { topN: contextTopN });
     const risk = getRiskAlerts(analysisContext);
     const outline = buildBriefingOutline(analysisContext);
-    const compactKpiItems = compactInsightItems(kpi?.items, AI_CHAT_CONTEXT_TOP_N, {
+    const compactKpiItems = compactInsightItems(kpi?.items, contextTopN, {
       maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
     });
-    const compactTrendItems = compactInsightItems(trend?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+    const compactTrendItems = compactInsightItems(trend?.items, modeExtraTopN, {
       maxSummaryChars: 120,
       maxSuggestionChars: 120,
       maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
     });
-    const compactProductItems = compactInsightItems(product?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+    const compactProductItems = compactInsightItems(product?.items, modeExtraTopN, {
       maxSummaryChars: 120,
       maxSuggestionChars: 120,
       maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
     });
-    const compactHospitalItems = compactInsightItems(hospital?.items, AI_CHAT_MODE_EXTRA_TOP_N, {
+    const compactHospitalItems = compactInsightItems(hospital?.items, modeExtraTopN, {
       maxSummaryChars: 120,
       maxSuggestionChars: 120,
       maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
     });
-    const compactRiskItems = compactInsightItems(risk?.items, AI_CHAT_CONTEXT_TOP_N, {
+    const compactRiskItems = compactInsightItems(risk?.items, contextTopN, {
       maxSummaryChars: 120,
       maxSuggestionChars: 120,
       maxEvidenceItems: AI_CHAT_MIN_CONTEXT_EVIDENCE_ITEMS,
@@ -1531,13 +1598,13 @@ async function initializeApp() {
       legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
-        items: compactTrendItems.slice(0, Math.max(AI_CHAT_MODE_EXTRA_TOP_N, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
+        items: compactTrendItems.slice(0, Math.max(modeExtraTopN, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
       };
     } else if (safeMode === CHAT_MODES.ACTION_PLAN) {
       legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
-        items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
+        items: compactTrendItems.slice(0, Math.max(trendMinCount, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
       };
       legacyPayload.product = {
         ok: Boolean(product?.ok),
@@ -1553,7 +1620,7 @@ async function initializeApp() {
       legacyPayload.trend = {
         ok: Boolean(trend?.ok),
         summary: String(trend?.summary || "").trim(),
-        items: compactTrendItems.slice(0, AI_CHAT_MIN_CONTEXT_TREND_ITEMS),
+        items: compactTrendItems.slice(0, Math.max(trendMinCount, AI_CHAT_MIN_CONTEXT_TREND_ITEMS)),
       };
     }
 
@@ -1561,11 +1628,14 @@ async function initializeApp() {
     const startYm = String(range.startYm || "").trim();
     const endYm = String(range.endYm || "").trim();
     const periodLabel = String(range.label || "").trim() || `${startYm || "未知"}~${endYm || "未知"}`;
-    const products = compactProductItems.map((item) => String(item.title || "").trim()).filter((item) => item).slice(0, 3);
+    const products = compactProductItems
+      .map((item) => String(item.title || "").trim())
+      .filter((item) => item)
+      .slice(0, entityLabelMaxCount);
     const hospitals = compactHospitalItems
       .map((item) => String(item.title || "").trim())
       .filter((item) => item)
-      .slice(0, 3);
+      .slice(0, entityLabelMaxCount);
     let level = "overall";
     if (products.length > 0 && hospitals.length > 0) {
       level = "mixed";
@@ -1609,7 +1679,7 @@ async function initializeApp() {
     const riskTop = compactRiskItems
       .map((item) => String(item.summary || item.title || "").trim())
       .filter((item) => item)
-      .slice(0, 3);
+      .slice(0, riskTopMaxCount);
     const naturalMini = buildNaturalMiniContext(analysisContext, message, safeInputProfile);
     const hasData = Boolean(analysisContext?.meta?.hasData);
     const missingFields = [];
