@@ -332,12 +332,12 @@ export function initAiChatUi(options = {}) {
   }
 
   function openCompact() {
-    refreshSystemIntroIfPristine();
+    refreshSystemIntro();
     applyState(CHAT_STATES.COMPACT);
   }
 
   function openExpanded() {
-    refreshSystemIntroIfPristine();
+    refreshSystemIntro();
     applyState(CHAT_STATES.EXPANDED);
   }
 
@@ -493,21 +493,12 @@ export function initAiChatUi(options = {}) {
     const periodText =
       startYm && endYm
         ? `当前分析时间范围：${startYm} ~ ${endYm}。`
-        : "当前分析时间范围：当前尚未设置，请先在报表区选择起始月和结束月。";
+        : "当前分析时间范围：尚未设置，请先在报表区选择起始月和结束月。";
     return [
-      "我是销售分析助手。",
-      "我仅基于你当前账号内已录入的数据进行分析（销售记录、产品主数据、目标配置），不访问外部数据源。",
+      "我是销售分析助手，仅基于当前账号已录入的销售记录、产品主数据和目标配置进行分析。",
       periodText,
-      "你可以先在报表区调整起止月，再继续提问。",
+      "可在报表区调整起止月后继续提问。",
     ].join("");
-  }
-
-  function hasUserMessages() {
-    return Boolean(dom.messages.querySelector(".ai-chat-message--user"));
-  }
-
-  function isPristineSession() {
-    return !hasUserMessages();
   }
 
   function upsertSystemIntro(text) {
@@ -523,10 +514,7 @@ export function initAiChatUi(options = {}) {
     article.textContent = message;
   }
 
-  function refreshSystemIntroIfPristine() {
-    if (!isPristineSession()) {
-      return;
-    }
+  function refreshSystemIntro() {
     upsertSystemIntro(buildSystemIntroText());
   }
 
@@ -950,6 +938,16 @@ export function initAiChatUi(options = {}) {
     void handleSubmit(event);
   });
 
+  const reportStartInput = document.getElementById(REPORT_START_MONTH_INPUT_ID);
+  const reportEndInput = document.getElementById(REPORT_END_MONTH_INPUT_ID);
+  const bindReportRangeListener = (element) => {
+    if (!(element instanceof HTMLInputElement)) return;
+    element.addEventListener("input", refreshSystemIntro);
+    element.addEventListener("change", refreshSystemIntro);
+  };
+  bindReportRangeListener(reportStartInput);
+  bindReportRangeListener(reportEndInput);
+
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state !== CHAT_STATES.CLOSED) {
       close();
@@ -979,7 +977,7 @@ export function initAiChatUi(options = {}) {
   initialized = true;
   updateComposerState();
   updateModeControls();
-  refreshSystemIntroIfPristine();
+  refreshSystemIntro();
 
   if (isValidState(options.initialState) && options.initialState !== CHAT_STATES.CLOSED) {
     applyState(options.initialState);

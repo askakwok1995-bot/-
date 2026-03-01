@@ -568,6 +568,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - 角色：销售分析助手
   - 数据范围：仅当前账号已录入的销售记录、产品主数据、目标配置（不访问外部数据源）
   - 时间范围：读取报表筛选起止月（`report-start-month ~ report-end-month`）；若未设置会提示先选择起始月和结束月
+- 欢迎语时间范围会动态更新：监听报表起止月输入（`input/change`），并在每次打开聊天窗口时同步刷新。
 - 调试桥接：
   - `window.__SALES_TOOL_AI_CHAT__.getSessionHistory()`
   - `window.__SALES_TOOL_AI_CHAT__.clearSessionHistory()`
