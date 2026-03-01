@@ -1,0 +1,28 @@
+[
+  { "id": "judge_01", "posture": "judge", "question": "本月整体销售表现怎么样？", "expectedEvidenceType": "none" },
+  { "id": "judge_02", "posture": "judge", "question": "最近整体趋势更像回升还是承压？", "expectedEvidenceType": "none" },
+  { "id": "judge_03", "posture": "judge", "question": "当前达成率状态算健康吗？", "expectedEvidenceType": "none" },
+  { "id": "judge_04", "posture": "judge", "question": "现在的核心风险大不大？", "expectedEvidenceType": "none" },
+  { "id": "judge_05", "posture": "judge", "question": "最近两个月环比数值大概多少，波动算不算大？", "expectedEvidenceType": "month" },
+  { "id": "judge_06", "posture": "judge", "question": "本季度销量盒数是上升还是下降，幅度大概多少？", "expectedEvidenceType": "quantity" },
+  { "id": "judge_07", "posture": "judge", "question": "当前金额和盒数是否同向变化？", "expectedEvidenceType": "amount_quantity" },
+  { "id": "judge_08", "posture": "judge", "question": "现在哪个产品和哪个月份最拖后腿？", "expectedEvidenceType": "product_month" },
+
+  { "id": "explain_01", "posture": "explain", "question": "为什么这季度没有达成目标？", "expectedEvidenceType": "none" },
+  { "id": "explain_02", "posture": "explain", "question": "最近增长放缓的主要原因是什么？", "expectedEvidenceType": "none" },
+  { "id": "explain_03", "posture": "explain", "question": "为什么风险还没有明显下降？", "expectedEvidenceType": "none" },
+  { "id": "explain_04", "posture": "explain", "question": "为什么当前趋势看起来回升但压力还在？", "expectedEvidenceType": "none" },
+  { "id": "explain_05", "posture": "explain", "question": "为什么2月到3月的环比增幅变小，具体差了多少？", "expectedEvidenceType": "month" },
+  { "id": "explain_06", "posture": "explain", "question": "为什么销量盒数增长了，但金额增速一般？", "expectedEvidenceType": "amount_quantity" },
+  { "id": "explain_07", "posture": "explain", "question": "为什么某些产品在3月掉量更明显？", "expectedEvidenceType": "product_month" },
+  { "id": "explain_08", "posture": "explain", "question": "为什么核心产品贡献没有继续抬升？", "expectedEvidenceType": "product" },
+
+  { "id": "advise_01", "posture": "advise", "question": "接下来我最该优先做什么动作？", "expectedEvidenceType": "none" },
+  { "id": "advise_02", "posture": "advise", "question": "给我一个本周最可执行的改进建议。", "expectedEvidenceType": "none" },
+  { "id": "advise_03", "posture": "advise", "question": "如果要提升达成率，下一步先抓什么？", "expectedEvidenceType": "none" },
+  { "id": "advise_04", "posture": "advise", "question": "请给我一条低成本且见效快的策略。", "expectedEvidenceType": "none" },
+  { "id": "advise_05", "posture": "advise", "question": "如果3月环比只小幅增长，我该优先盯哪些月份和产品？", "expectedEvidenceType": "product_month" },
+  { "id": "advise_06", "posture": "advise", "question": "要同时提升金额和盒数，应该先抓哪两个杠杆？", "expectedEvidenceType": "amount_quantity" },
+  { "id": "advise_07", "posture": "advise", "question": "如果我要把盒数环比提升5%，第一步做什么最有效？", "expectedEvidenceType": "quantity" },
+  { "id": "advise_08", "posture": "advise", "question": "针对最近两个月的波动，按月度数据给我动作优先级。", "expectedEvidenceType": "month" }
+]

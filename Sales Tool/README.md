@@ -632,6 +632,11 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 
 #### natural_answer 档位对比（baseline vs plus）
 
+当前决策快照（2026-03-01）：
+- 默认档位：`baseline`（用于 `natural_answer`）
+- 决策依据：最新 natural matrix 中 `baseline/plus` 在路由与姿态指标表现一致（`naturalRouteRate=100%`、`postureMatchRate=100%`、`gapHintOverfireRate=0%`），且 `plus` 未体现稳定的质量增益。
+- 切换条件：仅当 `plus` 在“深度质量指标”（明细数值回答/证据覆盖）相对 `baseline` 至少一项提升 `>=10pp`，且稳定性不回退（失败率/超时率不高于 baseline +5pp，`p95` 不恶化超过 +15%）时，才考虑切默认。
+
 ```bash
 # natural 题集（mode=auto）对比 baseline
 CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
@@ -649,6 +654,14 @@ CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
 npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --questionSet natural --casesFile scripts/fixtures/chat-tone-v1-cases.json --matrix baseline,plus --outputJson scripts/fixtures/chat-input-profile-matrix.result.json
 ```
 
+#### natural 深度质量对比（v2 题集，推荐）
+
+```bash
+CHAT_API_ENDPOINT="https://<你的-pages-域名>/api/chat" \
+CHAT_AUTH_TOKEN="<SUPABASE_ACCESS_TOKEN>" \
+npm run check:chat-stability -- --contextMode real --contextFile scripts/fixtures/chat-context.sample.json --questionSet natural --casesFile scripts/fixtures/chat-tone-v2-cases.json --matrix baseline,plus --maxShortCircuitRate 0.2 --outputJson scripts/fixtures/chat-input-profile-matrix.result.json
+```
+
 说明：
 - `mode=auto` 现为 **natural 默认**：仅在“产物动词 + 产物名词”同时命中时路由到 `structured_answer`（如“请输出 + 简报/报告/执行清单/负责人里程碑”）。
 - natural 题集中若出现 `401 UNAUTHORIZED`，脚本会提前中断当前 profile 并标记该档位为无效（`executionValid=false`，`abortReason=unauthorized`）。
@@ -660,7 +673,7 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 - `--contextFile <path>`：`contextMode=real` 时必填（也可用 `CHAT_CONTEXT_FILE`）
 - `--inputProfile baseline|plus|rich`：输入层档位（默认 `baseline`）
 - `--questionSet structured|natural|mixed`：题集模式（默认 `structured`）
-- `--casesFile <path>`：`questionSet=natural/mixed` 时可覆盖默认题集（默认 `scripts/fixtures/chat-tone-v1-cases.json`）
+- `--casesFile <path>`：`questionSet=natural/mixed` 时可覆盖默认题集（默认 `scripts/fixtures/chat-tone-v1-cases.json`，推荐深度评测用 `scripts/fixtures/chat-tone-v2-cases.json`）
 - `--matrix baseline,plus,rich`：按档位矩阵依次执行 10 次压测并输出对比表
 - `--outputJson <path>`：导出机器可读对比结果（含每档明细与汇总）
 - `--maxShortCircuitRate <0~1>`：`real` 模式有效性门禁阈值（默认 `0.2`）
@@ -704,7 +717,11 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
    - `postureMatchRate`（`meta.tone.posture` 与预期姿态匹配率）
    - `gapHintOverfireRate`（judge 类问题误触发缺口提示率）
    - `evidenceMentionRate`（回答中自然引用证据占比）
+   - `detailNumericAnswerRate`（强明细问题中，回答包含可用数值证据占比）
+   - `detailClarifyRate`（强明细问题被 clarify 的占比）
+   - `detailEvidenceCoverageRate`（强明细问题中，按题型要求同时引用关键证据的占比）
    - matrix 时附加 `natural 质量对比` 表
+   - 若题集未标记强明细样本（`expectedEvidenceType=none`），上述 `detail*` 指标会显示 `-`
 
 注意：
 - `short` 全绿仅代表短路兜底健康，不代表 Gemini 模型链路质量。

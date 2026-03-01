@@ -26,6 +26,7 @@ const QUESTION_SET_MIXED = "mixed";
 const QUESTION_SETS = Object.freeze([QUESTION_SET_STRUCTURED, QUESTION_SET_NATURAL, QUESTION_SET_MIXED]);
 const DEFAULT_QUESTION_SET = QUESTION_SET_STRUCTURED;
 const DEFAULT_NATURAL_CASES_FILE = "scripts/fixtures/chat-tone-v1-cases.json";
+const NATURAL_EVIDENCE_TYPES = Object.freeze(["none", "month", "product", "quantity", "amount_quantity", "product_month"]);
 
 const BASELINE_METRICS = Object.freeze({
   p50ElapsedMs: 30815,
@@ -169,6 +170,14 @@ function normalizeQuestionSet(value, fallback = DEFAULT_QUESTION_SET) {
   return fallback;
 }
 
+function normalizeNaturalEvidenceType(value, fallback = "none") {
+  const normalized = trim(value).toLowerCase();
+  if (NATURAL_EVIDENCE_TYPES.includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
 function parseMatrixProfiles(value) {
   const safe = trim(value);
   if (!safe) {
@@ -251,12 +260,15 @@ function loadNaturalCases(casesFileArg) {
         expectedPosture === "judge" || expectedPosture === "explain" || expectedPosture === "advise"
           ? expectedPosture
           : null;
+      const expectedEvidenceType = normalizeNaturalEvidenceType(item.expectedEvidenceType || item.evidenceType, "none");
       return {
         id: trim(item.id) || `natural_${String(index + 1).padStart(2, "0")}`,
         mode: "auto",
         type: safeExpectedPosture || "natural",
         message: question,
         expectedPosture: safeExpectedPosture,
+        expectedEvidenceType,
+        isStrongDetailCase: expectedEvidenceType !== "none",
         questionSet: QUESTION_SET_NATURAL,
       };
     })
@@ -569,7 +581,9 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
   const tonePosture = trim(meta?.tone?.posture).toLowerCase();
   const surfaceReply = trim(payload?.surfaceReply) || trim(payload?.reply);
   const expectedPosture = trim(testCase?.expectedPosture).toLowerCase();
+  const expectedEvidenceType = normalizeNaturalEvidenceType(testCase?.expectedEvidenceType, "none");
   const isNaturalCase = testCase?.questionSet === QUESTION_SET_NATURAL;
+  const isStrongDetailCase = Boolean(testCase?.isStrongDetailCase || expectedEvidenceType !== "none");
 
   return {
     row: index + 1,
@@ -617,6 +631,8 @@ function normalizeResult(index, testCase, response, payload, durationMs) {
     businessIntent: businessIntent || "-",
     tonePosture: tonePosture || "-",
     expectedPosture: expectedPosture || "-",
+    expectedEvidenceType,
+    isStrongDetailCase,
     surfaceReply: surfaceReply || "",
     isNaturalCase,
     isFailure: response.status >= 400 || Boolean(code),
@@ -927,6 +943,9 @@ function printFocusMetrics(
     console.log(`- postureMatchRate: ${toPercent(naturalQualityStats.postureMatchRate)}`);
     console.log(`- gapHintOverfireRate: ${toPercent(naturalQualityStats.gapHintOverfireRate)}`);
     console.log(`- evidenceMentionRate: ${toPercent(naturalQualityStats.evidenceMentionRate)}`);
+    console.log(`- detailNumericAnswerRate: ${toPercentOrDash(naturalQualityStats.detailNumericAnswerRate)}`);
+    console.log(`- detailClarifyRate: ${toPercentOrDash(naturalQualityStats.detailClarifyRate)}`);
+    console.log(`- detailEvidenceCoverageRate: ${toPercentOrDash(naturalQualityStats.detailEvidenceCoverageRate)}`);
   }
   console.log(`- first top formatReason: ${pickTopReason(reasonStats?.overall?.first)}`);
   console.log(`- retry top formatReason: ${pickTopReason(reasonStats?.overall?.retry)}`);
@@ -948,6 +967,13 @@ function toPercent(value) {
   const safe = Number(value);
   if (!Number.isFinite(safe)) return "0.0%";
   return `${(safe * 100).toFixed(1)}%`;
+}
+
+function toPercentOrDash(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  return toPercent(value);
 }
 
 function calcPercentile(values, percentile) {
@@ -1100,6 +1126,60 @@ function hasEvidenceMentionText(text) {
   return /(\d+(\.\d+)?%|\d+(\.\d+)?万|\d+(\.\d+)?亿|同比|环比|达成率|销售额|盒数|销量|目标)/.test(safe);
 }
 
+function hasNumericSignalText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(\d+(\.\d+)?%|\d+(\.\d+)?万|\d+(\.\d+)?亿|\d+(\.\d+)?盒|\d+(\.\d+)?元)/.test(safe);
+}
+
+function hasMonthEvidenceText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(1月|2月|3月|4月|5月|6月|7月|8月|9月|10月|11月|12月|20\d{2}-\d{2}|Q[1-4]|季度|本月|上月|近两个月|最近两个月|月度)/i.test(
+    safe,
+  );
+}
+
+function hasProductEvidenceText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(产品|单品|SKU|品种|Top\s*\d|TOP\s*\d)/i.test(safe);
+}
+
+function hasQuantityEvidenceText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(盒数|销量|销售量|出货量|数量)/i.test(safe);
+}
+
+function hasAmountEvidenceText(text) {
+  const safe = trim(text);
+  if (!safe) return false;
+  return /(金额|销售额|业绩|达成率|万元|万|元|目标)/i.test(safe);
+}
+
+function hasDetailEvidenceCoverage(row) {
+  const expectedEvidenceType = normalizeNaturalEvidenceType(row?.expectedEvidenceType, "none");
+  const text = trim(row?.surfaceReply);
+  if (!text || !hasNumericSignalText(text)) return false;
+  if (expectedEvidenceType === "month") {
+    return hasMonthEvidenceText(text);
+  }
+  if (expectedEvidenceType === "product") {
+    return hasProductEvidenceText(text);
+  }
+  if (expectedEvidenceType === "quantity") {
+    return hasQuantityEvidenceText(text);
+  }
+  if (expectedEvidenceType === "amount_quantity") {
+    return hasAmountEvidenceText(text) && hasQuantityEvidenceText(text);
+  }
+  if (expectedEvidenceType === "product_month") {
+    return hasProductEvidenceText(text) && hasMonthEvidenceText(text);
+  }
+  return false;
+}
+
 function buildNaturalQualityStats(results) {
   const naturalRows = (Array.isArray(results) ? results : []).filter((row) => Boolean(row?.isNaturalCase));
   const total = naturalRows.length;
@@ -1111,6 +1191,9 @@ function buildNaturalQualityStats(results) {
       postureMatchRate: 0,
       gapHintOverfireRate: 0,
       evidenceMentionRate: 0,
+      detailNumericAnswerRate: null,
+      detailClarifyRate: null,
+      detailEvidenceCoverageRate: null,
       counts: {
         naturalRouteCount: 0,
         postureEligibleCount: 0,
@@ -1118,6 +1201,10 @@ function buildNaturalQualityStats(results) {
         judgeCaseCount: 0,
         gapHintOverfireCount: 0,
         evidenceMentionCount: 0,
+        detailCaseCount: 0,
+        detailClarifyCount: 0,
+        detailNumericAnswerCount: 0,
+        detailEvidenceCoverageCount: 0,
       },
       byPosture: [],
     };
@@ -1129,6 +1216,11 @@ function buildNaturalQualityStats(results) {
   const judgeRows = naturalRoutedRows.filter((row) => row.expectedPosture === "judge");
   const gapHintOverfireCount = judgeRows.filter((row) => hasGapHintText(row.surfaceReply)).length;
   const evidenceMentionCount = naturalRoutedRows.filter((row) => hasEvidenceMentionText(row.surfaceReply)).length;
+  const detailRows = naturalRows.filter((row) => row.isStrongDetailCase);
+  const detailClarifyCount = detailRows.filter((row) => row.responseAction === "clarify").length;
+  const detailNaturalRows = detailRows.filter((row) => row.responseAction === "natural_answer");
+  const detailNumericAnswerCount = detailNaturalRows.filter((row) => hasNumericSignalText(row.surfaceReply)).length;
+  const detailEvidenceCoverageCount = detailNaturalRows.filter((row) => hasDetailEvidenceCoverage(row)).length;
 
   const postureGroups = ["judge", "explain", "advise"].map((posture) => {
     const rows = naturalRoutedRows.filter((row) => row.expectedPosture === posture);
@@ -1147,6 +1239,9 @@ function buildNaturalQualityStats(results) {
     postureMatchRate: postureEligibleRows.length > 0 ? postureMatchCount / postureEligibleRows.length : 0,
     gapHintOverfireRate: judgeRows.length > 0 ? gapHintOverfireCount / judgeRows.length : 0,
     evidenceMentionRate: naturalRoutedRows.length > 0 ? evidenceMentionCount / naturalRoutedRows.length : 0,
+    detailNumericAnswerRate: detailRows.length > 0 ? detailNumericAnswerCount / detailRows.length : null,
+    detailClarifyRate: detailRows.length > 0 ? detailClarifyCount / detailRows.length : null,
+    detailEvidenceCoverageRate: detailRows.length > 0 ? detailEvidenceCoverageCount / detailRows.length : null,
     counts: {
       naturalRouteCount: naturalRoutedRows.length,
       postureEligibleCount: postureEligibleRows.length,
@@ -1154,6 +1249,10 @@ function buildNaturalQualityStats(results) {
       judgeCaseCount: judgeRows.length,
       gapHintOverfireCount,
       evidenceMentionCount,
+      detailCaseCount: detailRows.length,
+      detailClarifyCount,
+      detailNumericAnswerCount,
+      detailEvidenceCoverageCount,
     },
     byPosture: postureGroups,
   };
@@ -1164,10 +1263,14 @@ function printNaturalQualityStats(stats) {
     return;
   }
   console.log("\n=== 自然问答质量（overall）===");
-  console.log("| naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate |");
-  console.log("|------------------|------------------|---------------------|---------------------|");
   console.log(
-    `| ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} |`,
+    "| naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate | detailNumericAnswerRate | detailClarifyRate | detailEvidenceCoverageRate |",
+  );
+  console.log(
+    "|------------------|------------------|---------------------|---------------------|-------------------------|-------------------|----------------------------|",
+  );
+  console.log(
+    `| ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} | ${toPercentOrDash(stats.detailNumericAnswerRate)} | ${toPercentOrDash(stats.detailClarifyRate)} | ${toPercentOrDash(stats.detailEvidenceCoverageRate)} |`,
   );
   console.log("\n=== 自然问答质量（by posture）===");
   console.log("| posture | 样本数 | matchRate |");
@@ -1604,16 +1707,20 @@ function printMatrixSummary(matrixBundles) {
   const hasNatural = bundles.some((bundle) => bundle.naturalQualityStats && bundle.naturalQualityStats.enabled);
   if (hasNatural) {
     console.log("\n=== 输入档位对比（natural 质量）===");
-    console.log("| inputProfile | naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate |");
-    console.log("|--------------|------------------|------------------|---------------------|---------------------|");
+    console.log(
+      "| inputProfile | naturalRouteRate | postureMatchRate | gapHintOverfireRate | evidenceMentionRate | detailNumericAnswerRate | detailClarifyRate | detailEvidenceCoverageRate |",
+    );
+    console.log(
+      "|--------------|------------------|------------------|---------------------|---------------------|-------------------------|-------------------|----------------------------|",
+    );
     for (const bundle of bundles) {
       const stats = bundle.naturalQualityStats || {};
       if (!stats.enabled) {
-        console.log(`| ${bundle.inputProfile} | - | - | - | - |`);
+        console.log(`| ${bundle.inputProfile} | - | - | - | - | - | - | - |`);
         continue;
       }
       console.log(
-        `| ${bundle.inputProfile} | ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} |`,
+        `| ${bundle.inputProfile} | ${toPercent(stats.naturalRouteRate)} | ${toPercent(stats.postureMatchRate)} | ${toPercent(stats.gapHintOverfireRate)} | ${toPercent(stats.evidenceMentionRate)} | ${toPercentOrDash(stats.detailNumericAnswerRate)} | ${toPercentOrDash(stats.detailClarifyRate)} | ${toPercentOrDash(stats.detailEvidenceCoverageRate)} |`,
       );
     }
   }
@@ -1833,7 +1940,15 @@ async function run() {
     const firstTransportStats = printFirstTransportStats(results);
     const chainPathStats = printChainPathStats(results);
 
-    printFocusMetrics(bundleWithValidity.summary, printedModeStats, reasonStats, firstTransportStats, firstHitQualityStats, chainPathStats);
+    printFocusMetrics(
+      bundleWithValidity.summary,
+      printedModeStats,
+      reasonStats,
+      firstTransportStats,
+      firstHitQualityStats,
+      chainPathStats,
+      bundleWithValidity.naturalQualityStats,
+    );
     printNaturalQualityStats(bundleWithValidity.naturalQualityStats);
     printExperimentValidity(bundleWithValidity.summary);
     console.log("\n=== FinalStage 总体占比 ===");
