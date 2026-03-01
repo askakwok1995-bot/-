@@ -22,7 +22,7 @@ const FIRST_TRANSPORT_TIMEOUT_RETRY_BUDGET_BUFFER_MS = 1000;
 const FETCH_TIMEOUT_CODE = "FETCH_TIMEOUT";
 const DEFAULT_MAX_OUTPUT_TOKENS = 1536;
 const RETRY_MAX_OUTPUT_TOKENS = 2048;
-const NATURAL_MAX_OUTPUT_TOKENS = 768;
+const NATURAL_MAX_OUTPUT_TOKENS = 896;
 const MIN_SUMMARY_CHARS = 70;
 const MIN_HIGHLIGHTS_COUNT = 1;
 const MIN_EVIDENCE_COUNT = 1;
@@ -980,7 +980,17 @@ function formatQuantityBoxes(value) {
   return `${parsed.toFixed(1)}盒`;
 }
 
-function describeNaturalMiniEvidence(contextV1, detailDemand) {
+function hasNaturalLongAnswerSignal(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  return /(详细一点|更详细|展开说|展开讲|具体讲讲|具体说说|说细一点|完整一点|全面一点|深入一点|详细分析|详细说明|多给点细节)/i.test(
+    safeMessage,
+  );
+}
+
+function describeNaturalMiniEvidence(contextV1, detailDemand, maxItems = 2) {
   const monthlyFluctuation = Array.isArray(contextV1?.business?.naturalMini?.monthlyFluctuation)
     ? contextV1.business.naturalMini.monthlyFluctuation
     : [];
@@ -1065,7 +1075,9 @@ function describeNaturalMiniEvidence(contextV1, detailDemand) {
       }
     }
   }
-  return evidenceParts.slice(0, 2);
+  const safeMaxItemsRaw = Number(maxItems);
+  const safeMaxItems = Number.isFinite(safeMaxItemsRaw) && safeMaxItemsRaw > 0 ? Math.floor(safeMaxItemsRaw) : 2;
+  return evidenceParts.slice(0, safeMaxItems);
 }
 
 function classifyNaturalDetailDemand(message) {
@@ -1232,10 +1244,12 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
         ? NATURAL_POSTURES.ADVISE
         : NATURAL_POSTURES.JUDGE;
   const baseRuleHits = dedupeStringList(toneProfile?.ruleHits, 10);
-  const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, 2);
+  const longAnswerPreferred = hasNaturalLongAnswerSignal(message);
+  const evidenceLimit = longAnswerPreferred ? 3 : 2;
+  const evidenceRefs = sanitizeEvidenceRefs(contextV1?.business?.evidenceTop, evidenceLimit);
   const detailDemand = classifyNaturalDetailDemand(message);
   const gapHint = shouldAddNaturalGapHint(contextV1, detailDemand);
-  const naturalMiniEvidenceParts = describeNaturalMiniEvidence(contextV1, detailDemand);
+  const naturalMiniEvidenceParts = describeNaturalMiniEvidence(contextV1, detailDemand, evidenceLimit);
   const trendSummary =
     trimString(contextV1?.business?.trend?.summary) || trimString(contextV1?.business?.overview?.trendOverview?.summary);
   const overviewSummary =
@@ -1265,6 +1279,7 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
       detailDemand.monthly !== "none" ? `detail_monthly_${detailDemand.monthly}` : "",
       detailDemand.product !== "none" ? `detail_product_${detailDemand.product}` : "",
       detailDemand.quantity !== "none" ? `detail_quantity_${detailDemand.quantity}` : "",
+      longAnswerPreferred ? "long_answer_preferred" : "",
       gapHint.ruleHit || "",
       ...normalizedModel.ruleHits,
       actionSuggested ? "light_action_suggested" : "",
@@ -1837,6 +1852,7 @@ function getModeResponseSchema(mode) {
 
 function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
   const safeMessage = trimString(message);
+  const longAnswerPreferred = hasNaturalLongAnswerSignal(safeMessage);
   const safeHistory = sanitizeHistoryList(history);
   const historyText = formatHistoryText(safeHistory);
   const safePosture =
@@ -1851,10 +1867,16 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
   const lastAssistantOpening = extractLeadingSentence(lastAssistantTurn?.content);
   const postureRequirement =
     safePosture === NATURAL_POSTURES.EXPLAIN
-      ? "姿态：解释型。2-4句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
+      ? longAnswerPreferred
+        ? "姿态：解释型。4-6句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
+        : "姿态：解释型。3-5句，先给结论，再用1-2条因果链解释，并嵌入关键数据。"
       : safePosture === NATURAL_POSTURES.ADVISE
-        ? "姿态：建议型。3-5句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
-        : "姿态：判断型。1-3句，先给明确判断，再给1条关键依据。";
+        ? longAnswerPreferred
+          ? "姿态：建议型。5-7句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
+          : "姿态：建议型。4-6句，先给结论，再给一条优先可执行动作（仅在适合推进下一步时自然提出）。"
+        : longAnswerPreferred
+          ? "姿态：判断型。3-5句，先给明确判断，再给1-2条关键依据。"
+          : "姿态：判断型。2-4句，先给明确判断，再给1条关键依据。";
   const naturalContext = {
     scope: contextV1?.scope || {},
     business: {
@@ -1874,7 +1896,9 @@ function buildNaturalPrompt(message, contextV1, history, toneProfile = null) {
     "回答形态：自然问答（非结构化模板）。",
     "首句必须直接回答用户问题，禁止先讲流程或系统状态。",
     "固定顺序：结论 -> 依据 -> 边界 -> （可选）下一步。",
-    "证据要求：只嵌入1-2条关键数据点，写成自然句，不做字段播报。",
+    longAnswerPreferred
+      ? "证据要求：优先嵌入2-3条关键数据点，写成自然句，不做字段播报。"
+      : "证据要求：优先嵌入2条关键数据点，必要时可到3条，写成自然句，不做字段播报。",
     "naturalMini.monthlyFluctuation.amountMom 为比例小数语义（例如 0.08 = 环比 +8%）。",
     "naturalMini.monthlyFluctuation.quantityMom 同样是比例小数语义（例如 0.08 = 销量环比 +8%）。",
     "不要机械播报 naturalMini 字段名；优先用它支撑判断，不强制逐项朗读。",
