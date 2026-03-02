@@ -1065,9 +1065,106 @@ async function initializeApp() {
     }
   };
 
+  async function parseJsonSafe(response) {
+    try {
+      return await response.json();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function getChatAuthToken() {
+    const client = getSupabaseClient();
+    if (!client) {
+      return "";
+    }
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error) {
+        throw error;
+      }
+      return String(data?.session?.access_token || "").trim();
+    } catch (error) {
+      console.warn("[Sales Tool] 读取聊天鉴权令牌失败。", error);
+      return "";
+    }
+  }
+
+  function normalizeChatApiError(response, payload) {
+    const status = Number(response?.status);
+    const serverMessage = String(payload?.error?.message || "").trim();
+    if (serverMessage) {
+      return serverMessage;
+    }
+    if (status === 401) {
+      return "登录状态已失效，请重新登录后再试。";
+    }
+    if (status === 404) {
+      return "未找到 /api/chat。请确认已部署 Cloudflare Pages Functions。";
+    }
+    if (status === 429) {
+      return "聊天请求过于频繁，请稍后重试。";
+    }
+    if (Number.isFinite(status) && status >= 500) {
+      return "聊天服务暂时不可用，请稍后重试。";
+    }
+    return "聊天请求失败，请稍后重试。";
+  }
+
+  async function requestAiChatReply(message, options = {}) {
+    const safeMessage = String(message || "").trim();
+    if (!safeMessage) {
+      throw new Error("消息不能为空。");
+    }
+
+    const accessToken = await getChatAuthToken();
+    if (!accessToken) {
+      throw new Error("登录状态已失效，请重新登录后再试。");
+    }
+
+    const requestBody = {
+      message: safeMessage,
+      mode: String(options?.mode || "").trim(),
+      history: Array.isArray(options?.history) ? options.history : [],
+    };
+
+    let response;
+    try {
+      response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+    } catch (error) {
+      throw new Error(`无法连接 /api/chat：${error instanceof Error ? error.message : "请稍后重试"}`);
+    }
+
+    const payload = await parseJsonSafe(response);
+    if (!response.ok) {
+      throw new Error(normalizeChatApiError(response, payload));
+    }
+
+    const reply = String(payload?.reply || payload?.surfaceReply || "").trim();
+    if (!reply) {
+      throw new Error("聊天服务未返回有效回复，请稍后重试。");
+    }
+
+    return {
+      reply,
+      surfaceReply: reply,
+      responseAction: "natural_answer",
+      businessIntent: "chat",
+      model: String(payload?.model || "").trim(),
+      requestId: String(payload?.requestId || response.headers.get("x-request-id") || "").trim(),
+    };
+  }
+
   const aiChatApi = window.__SALES_TOOL_AI_CHAT__;
   if (aiChatApi && typeof aiChatApi.setSendHandler === "function") {
-    aiChatApi.setSendHandler(null);
+    aiChatApi.setSendHandler((message, options) => requestAiChatReply(message, options));
   } else {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象。");
   }
@@ -1229,7 +1326,7 @@ function showInitError(error) {
 async function bootstrap() {
   try {
     initAiChatUi({
-      placeholderStatus: "AI 对话能力已下线，后续将重建。",
+      placeholderStatus: "聊天服务连接中，请稍后再试。",
     });
 
     await bootstrapAuthGate({

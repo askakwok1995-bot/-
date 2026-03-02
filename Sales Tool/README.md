@@ -204,3 +204,46 @@ window.__APP_CONFIG__ = {
 - 当批量写入出现网络/超时等状态不确定异常时，系统不会逐行重试；需刷新页面核对后再决定是否重试。
 - 当前缺少自动化测试（仅有语法检查），建议优先补 records/products/targets 的关键路径测试。
 - 当导入后的产品同步失败时，系统会提示并尝试回拉云端产品；已写入的 records 不会回滚。
+
+## 11. 聊天（阶段1：自然对话）
+
+当前已恢复最小可用聊天链路（Cloudflare Pages Functions）：
+- 前端聊天 UI 可发送消息。
+- 后端 `POST /api/chat` 调用 Gemini 返回自然文本回答。
+- 聊天请求要求登录态（`Authorization: Bearer <SUPABASE_ACCESS_TOKEN>`）。
+
+### 11.1 Cloudflare 配置
+
+在 Pages 项目中配置以下项（Production / Preview）：
+
+- Environment Variables：
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `GEMINI_MODEL`（可选，默认 `gemini-3-flash-preview`）
+- Secret：
+  - `GEMINI_API_KEY`
+
+说明：
+- `GEMINI_API_KEY` 只放服务端 Secret，不放前端 `config.js`。
+- 本阶段仅支持自然对话，不输出结构化 JSON。
+
+### 11.2 本地与线上说明
+
+- `npm run dev` 只启动静态站点，不提供 `/api/chat`。
+- 聊天功能需在 Cloudflare Pages Functions 环境验证。
+
+### 11.3 最小接口验收（curl）
+
+```bash
+curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
+  -H "Authorization: Bearer <SUPABASE_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message":"请用一句话总结本周重点工作。"
+  }'
+```
+
+预期：
+- 成功返回 `200`，响应包含 `reply`（自然文本）与 `model`。
+- 若未登录或 token 无效，返回 `401 UNAUTHORIZED`。
+- 若未配置 `GEMINI_API_KEY`，返回 `500 CONFIG_MISSING`。
