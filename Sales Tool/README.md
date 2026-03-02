@@ -453,7 +453,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 回答形态说明：
 - `responseAction = natural_answer`：用户侧显示自然文本，`internalStructured` 为轻量内部结构（证据追踪/质量验收）。
 - `responseAction = structured_answer`：继续走 `briefing/diagnosis/action-plan` 结构化链路。
-- `responseAction = clarify`：先追问关键缺失信息（第一版仅高置信触发：无数据，或明确要求时间对比明细且无法从 `scope/session/message/legacy.analysis.range` 继承 period）。
+- `responseAction = clarify`：先追问关键缺失信息（高置信触发：无数据、明确要求时间对比明细但无法继承 period、或 `mode=auto` 下明显非销售问题）。
 
 自然回答语气层（v1，仅作用于 `natural_answer`）：
 - 目标：更像专业业务助手，保持“首句直答 + 结论先行 + 数据依据”，避免模板腔。
@@ -731,6 +731,7 @@ npm run check:chat-stability -- --contextMode real --contextFile scripts/fixture
 
 说明：
 - `mode=auto` 现为 **natural 默认**：仅在“产物动词 + 产物名词”同时命中时路由到 `structured_answer`（如“请输出 + 简报/报告/执行清单/负责人里程碑”）。
+- `mode=auto` 新增“非销售问题拦截”：命中明显非业务问题（如天气/娱乐/翻译等）且未命中业务锚点时，返回 `clarify_off_topic`，用 1-2 句提示职责边界并引导提问销售问题。
 - natural 题集中若出现 `401 UNAUTHORIZED`，脚本会提前中断当前 profile 并标记该档位为无效（`executionValid=false`，`abortReason=unauthorized`）。
 
 可选参数：

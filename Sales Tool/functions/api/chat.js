@@ -681,6 +681,26 @@ function hasLegacyPeriodRange(contextV1) {
   );
 }
 
+function hasBusinessSignal(message) {
+  const text = trimString(message);
+  if (!text) {
+    return false;
+  }
+  return /(销售|业绩|产品|医院|客户|目标|达成|环比|同比|趋势|盒数|金额|回款|月度|季度|预算|执行|渠道)/i.test(
+    text,
+  );
+}
+
+function hasOffTopicSignal(message) {
+  const text = trimString(message);
+  if (!text) {
+    return false;
+  }
+  return /(天气|气温|下雨|台风|新闻|娱乐|电影|电视剧|星座|运势|翻译|写代码|编程|旅游|菜谱|食谱|股票推荐|八卦|体育比分)/i.test(
+    text,
+  );
+}
+
 function resolveResponseAction(requestedMode, message, contextV1) {
   const explicitMode = sanitizeMode(requestedMode);
   if (requestedMode !== CHAT_REQUEST_MODES.AUTO) {
@@ -691,6 +711,19 @@ function resolveResponseAction(requestedMode, message, contextV1) {
       ruleId: "explicit_mode",
       routeSource: "explicit",
       confidence: "high",
+    };
+  }
+
+  const safeMessage = trimString(message);
+  if (hasOffTopicSignal(safeMessage) && !hasBusinessSignal(safeMessage)) {
+    return {
+      responseAction: RESPONSE_ACTIONS.CLARIFY,
+      businessIntent: BUSINESS_INTENTS.CHAT,
+      structuredMode: "",
+      ruleId: "clarify_off_topic",
+      routeSource: "rule",
+      confidence: "high",
+      clarifyReason: "off_topic",
     };
   }
 
@@ -729,7 +762,6 @@ function resolveResponseAction(requestedMode, message, contextV1) {
     };
   }
 
-  const safeMessage = trimString(message);
   const artifactVerbSignal = /(请输出|输出|生成|写一份|整理成|按模板|按结构|表格化|清单化|形成|给我一份|给我一个)/i.test(
     safeMessage,
   );
@@ -849,6 +881,19 @@ function buildClarifyResponse(contextV1, reason) {
         missingSlot: "data",
         confidence: "high",
         question: "请先确认是否已导入本期销售数据与目标口径。",
+      },
+    };
+  }
+
+  if (reason === "off_topic") {
+    return {
+      surfaceReply:
+        "我主要负责基于线下业绩数据做销售分析，像这个问题不在我的职责范围内。你可以问我本月销售趋势、产品贡献或医院表现这类问题。",
+      internalStructured: {
+        kind: "clarify",
+        missingSlot: "scope",
+        confidence: "high",
+        question: "请告诉我你想分析的销售问题，例如本月趋势、产品贡献或医院表现。",
       },
     };
   }
