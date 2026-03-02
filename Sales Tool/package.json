@@ -7,8 +7,7 @@
     "gen:config": "node scripts/generate-config.js",
     "build:cf": "node scripts/build-pages.js",
     "check": "npm run check:js",
-    "check:js": "node --check main.js && node --check auth.js && node --check storage.js && node --check products.js && node --check records.js && node --check targets.js && node --check reports.js && node --check ai-chat-ui.js && node --check analytics-engine.js && node --check functions/api/chat.js && node --check scripts/chat-stability-check.js",
-    "check:chat-stability": "node scripts/chat-stability-check.js"
+    "check:js": "node --check main.js && node --check auth.js && node --check storage.js && node --check products.js && node --check records.js && node --check targets.js && node --check reports.js && node --check ai-chat-ui.js"
   },
   "devDependencies": {
     "http-server": "^14.1.1"

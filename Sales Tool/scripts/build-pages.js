@@ -15,7 +15,6 @@ const STATIC_FILES = [
   "targets.js",
   "reports.js",
   "ai-chat-ui.js",
-  "analytics-engine.js",
 ];
 
 const STATIC_DIRS = ["vendor"];
