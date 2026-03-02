@@ -509,6 +509,13 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   - `ruleHits`: 本次命中的语气规则标记
   - `actionSuggested`: 是否自然包含了下一步动作建议
 
+自然回答异常排查（格式治理）：
+- 先看 Network 响应头与响应体里的 `requestId`，用于关联服务端日志。
+- 重点看 `meta.attemptDiagnostics[0].formatReason`：异常兜底时会是 `schema_invalid`。
+- 重点看 `meta.attemptDiagnostics[0].finishReason`：异常兜底时会是 `NATURAL_FORMAT_ANOMALY_GUARDED`。
+- 重点看 `meta.attemptDiagnostics[0].qualityIssues`：命中时包含 `natural_format_anomaly`。
+- 重点看 `meta.tone.ruleHits`：命中时包含 `natural_format_anomaly_guard`。
+
 `naturalMini` 口径说明（仅 natural 路径消费）：
 - `monthlyFluctuation.amountMom` 为比例小数（例如 `0.08 = 环比 +8%`）。
 - `monthlyFluctuation.quantity` 为销量（盒），`quantityMom` 为比例小数（例如 `0.08 = 销量环比 +8%`）。

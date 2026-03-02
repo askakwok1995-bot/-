@@ -1243,13 +1243,28 @@ function sanitizeNaturalSentence(text) {
   if (!safeText) {
     return "";
   }
-  return trimString(
+  const normalized = trimString(
     safeText
       .replace(/^[-*•]\s+/, "")
       .replace(/^\d+[.)、]\s+/, "")
       .replace(/^(结论|依据|建议)\s*[:：]\s*/i, "")
       .replace(/^(先说结论|先给结论)\s*[:：]\s*/i, ""),
   );
+  if (!normalized) {
+    return "";
+  }
+  if (/^(先说|先给|结论如下|依据如下|建议如下)$/i.test(normalized)) {
+    return "";
+  }
+  const compact = normalized.replace(/\s+/g, "");
+  if (
+    compact.length <= 2 &&
+    !/[0-9一二三四五六七八九十%％万千元盒月季年Qq]/.test(compact) &&
+    !/(涨|降|稳|增|减|好|差|优|劣|风险|建议|执行|达成)/.test(compact)
+  ) {
+    return "";
+  }
+  return normalized;
 }
 
 function splitSentencesNatural(text, maxItems = 16) {
@@ -1259,7 +1274,7 @@ function splitSentencesNatural(text, maxItems = 16) {
   }
   const normalized = safeText
     .replace(/\r\n/g, "\n")
-    .replace(/(结论|依据|建议)\s*[:：]/g, "\n")
+    .replace(/(^|\n)\s*(结论|依据|建议)\s*[:：]\s*/g, "$1")
     .replace(/\n{2,}/g, "\n");
   const chunks = normalized
     .split(/[\n。！？；]/)
@@ -1282,6 +1297,60 @@ function hasRigidTripletTemplate(text) {
     return false;
   }
   return /(结论)\s*[:：][\s\S]{0,400}(依据)\s*[:：][\s\S]{0,400}(建议)\s*[:：]/.test(safeText);
+}
+
+function detectNaturalFormatAnomaly(text) {
+  const safeText = trimString(text);
+  if (!safeText) {
+    return {
+      isAnomaly: true,
+      reasons: ["empty_text"],
+    };
+  }
+
+  const reasons = [];
+  const bulletRegex = /(^|\n)\s*[-*•]\s*(.+)/g;
+  const bulletItems = [];
+  let match = bulletRegex.exec(safeText);
+  while (match) {
+    bulletItems.push(trimString(match[2]));
+    match = bulletRegex.exec(safeText);
+  }
+
+  if (bulletItems.length > 0) {
+    const fragmentPattern = /^(先说|先给|结论如下|依据如下|建议如下)$/;
+    const validBulletItems = bulletItems.filter((item) => {
+      const sentence = sanitizeNaturalSentence(item);
+      return sentence && !fragmentPattern.test(sentence);
+    });
+    if (validBulletItems.length !== bulletItems.length) {
+      reasons.push("bullet_fragment_item");
+    }
+    if (validBulletItems.length < 1) {
+      reasons.push("bullet_insufficient_valid_items");
+    }
+  }
+
+  if (
+    /(结合现有证据，可以看到：|从数据上看，主要有这几点：|下一步建议优先做这几件事：)\s*(\n\s*[-*•]\s*(先说|先给))/m.test(
+      safeText,
+    )
+  ) {
+    reasons.push("broken_template_transition");
+  }
+
+  const sentenceItems = splitSentencesNatural(safeText, 24);
+  if (sentenceItems.length >= 4) {
+    const uniqueCount = new Set(sentenceItems.map((item) => item.replace(/\s+/g, ""))).size;
+    if (uniqueCount <= Math.floor(sentenceItems.length / 2)) {
+      reasons.push("high_duplication");
+    }
+  }
+
+  return {
+    isAnomaly: reasons.length > 0,
+    reasons: dedupeStringList(reasons, 6),
+  };
 }
 
 function getNaturalSeedNumber(text) {
@@ -1481,7 +1550,14 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
   );
   const normalizedModel = normalizeNaturalSurfaceReply(modelReply, message, contextV1, toneProfile);
   const modelText = trimString(normalizedModel.text);
-  const surfaceReply = modelText || fallbackReply;
+  const anomalyDetection = modelText ? detectNaturalFormatAnomaly(modelText) : { isAnomaly: false, reasons: [] };
+  const formatAnomalyGuarded = anomalyDetection.isAnomaly === true;
+  const anomalyFallbackReply = "本次回答生成异常，请重试。\n如仍异常，请稍后再试。";
+  const surfaceReply = formatAnomalyGuarded ? anomalyFallbackReply : modelText || fallbackReply;
+  const finalDisclaimers = [...disclaimerList];
+  if (formatAnomalyGuarded) {
+    finalDisclaimers.push("自然回答格式异常，已触发短句兜底。");
+  }
   const summaryText = extractLeadingSentence(surfaceReply) || surfaceReply.slice(0, 120);
   const actionSuggested = /(建议|下一步|优先|先做|先从|执行|推进|跟进|复盘)/.test(surfaceReply);
   const toneRuleHits = dedupeStringList(
@@ -1496,6 +1572,7 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
       longAnswerPreferred ? "long_answer_preferred" : "",
       gapHint.ruleHit || "",
       ...normalizedModel.ruleHits,
+      formatAnomalyGuarded ? "natural_format_anomaly_guard" : "",
       actionSuggested ? "light_action_suggested" : "",
     ],
     12,
@@ -1517,12 +1594,16 @@ function buildNaturalResponse(contextV1, message, modelReply = "", toneProfile =
           ...sanitizeStringList(contextV1?.scope?.entities?.regions, 4),
         ].slice(0, 6),
       },
-      disclaimers: disclaimerList,
+      disclaimers: finalDisclaimers,
     },
     toneMeta: {
       posture: safePosture,
       ruleHits: toneRuleHits,
       actionSuggested,
+    },
+    formatAnomaly: {
+      guarded: formatAnomalyGuarded,
+      reasons: formatAnomalyGuarded ? anomalyDetection.reasons : [],
     },
   };
 }
@@ -3598,20 +3679,25 @@ export async function onRequestPost(context) {
       : Number(naturalModel?.error?.durationMs || 0);
     const safeNaturalDurationMs =
       Number.isFinite(naturalDurationMs) && naturalDurationMs >= 0 ? Math.floor(naturalDurationMs) : 0;
-    const naturalFormatReason = modelReply
-      ? CHAT_FORMAT_REASONS.STRUCTURED_OK
-      : trimString(naturalModel?.error?.code).toLowerCase() || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
+    const naturalFormatGuarded = Boolean(natural?.formatAnomaly?.guarded);
+    const naturalFormatReason = naturalFormatGuarded
+      ? CHAT_FORMAT_REASONS.SCHEMA_INVALID
+      : modelReply
+        ? CHAT_FORMAT_REASONS.STRUCTURED_OK
+        : trimString(naturalModel?.error?.code).toLowerCase() || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
     const evaluation = {
-      format: modelReply ? "structured" : "text_fallback",
+      format: naturalFormatGuarded || !modelReply ? "text_fallback" : "structured",
       structured: null,
       reply: natural.surfaceReply,
       formatReason: naturalFormatReason,
-      finishReason: modelReply
-        ? trimString(naturalModel.finishReason) || "NATURAL_ROUTED"
-        : trimString(naturalModel?.error?.code) || "NATURAL_FALLBACK",
+      finishReason: naturalFormatGuarded
+        ? "NATURAL_FORMAT_ANOMALY_GUARDED"
+        : modelReply
+          ? trimString(naturalModel.finishReason) || "NATURAL_ROUTED"
+          : trimString(naturalModel?.error?.code) || "NATURAL_FALLBACK",
       outputChars: natural.surfaceReply.length,
       shouldRetry: false,
-      qualityIssues: [],
+      qualityIssues: naturalFormatGuarded ? ["natural_format_anomaly"] : [],
       qualityCounts: null,
     };
     const firstTransportAttempts = naturalModel.ok
