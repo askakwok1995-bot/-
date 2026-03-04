@@ -22,8 +22,65 @@ const CHAT_ERROR_CODES = Object.freeze({
   EMPTY_REPLY: "EMPTY_REPLY",
 });
 
+const DEFAULT_ASSISTANT_ROLE = Object.freeze({
+  identity: "你是医药销售业务分析助手",
+  goal: "基于当前业务数据提供数据洞察，并回答医药销售相关问题，帮助用户识别业绩、产品、医院表现和趋势变化中的关键问题与机会，并给出可执行的下一步动作建议",
+  style: "简体中文，自然回答，结论先行，专业清晰，强调数据依据、关键问题与机会判断，以及实际推进价值",
+  rules: Object.freeze([
+    "不要编造数据",
+    "数据不足时明确说明",
+    "当前阶段不要输出JSON",
+    "可以引用当前输入中已有的业务代号、字段代号、产品代号、医院代号",
+    "不要编造不存在的字段、代号或含义",
+    "优先回答医药销售相关问题",
+    "对明显无关的问题，简洁说明当前职责范围，不展开回答",
+  ]),
+});
+
+const ASSISTANT_ROLE_DEFINITION = Object.freeze({
+  assistant_role: Object.freeze({
+    identity: DEFAULT_ASSISTANT_ROLE.identity,
+    goal: DEFAULT_ASSISTANT_ROLE.goal,
+    style: DEFAULT_ASSISTANT_ROLE.style,
+    rules: DEFAULT_ASSISTANT_ROLE.rules,
+  }),
+});
+
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeRoleText(value, fallback) {
+  const text = trimString(value);
+  return text || fallback;
+}
+
+function normalizeRoleRules(value, fallbackRules) {
+  const fallback = Array.isArray(fallbackRules)
+    ? fallbackRules.map((item) => trimString(item)).filter((item) => item)
+    : [];
+  const rules = Array.isArray(value) ? value.map((item) => trimString(item)).filter((item) => item) : [];
+  return rules.length > 0 ? rules : fallback;
+}
+
+function buildAssistantRoleSystemInstruction(roleDefinition) {
+  const roleCandidate =
+    roleDefinition && typeof roleDefinition === "object" && roleDefinition.assistant_role
+      ? roleDefinition.assistant_role
+      : null;
+
+  const identity = normalizeRoleText(roleCandidate?.identity, DEFAULT_ASSISTANT_ROLE.identity);
+  const goal = normalizeRoleText(roleCandidate?.goal, DEFAULT_ASSISTANT_ROLE.goal);
+  const style = normalizeRoleText(roleCandidate?.style, DEFAULT_ASSISTANT_ROLE.style);
+  const rules = normalizeRoleRules(roleCandidate?.rules, DEFAULT_ASSISTANT_ROLE.rules);
+
+  return [
+    `角色定位：${identity}`,
+    `目标：${goal}`,
+    `回答风格：${style}`,
+    "行为规则：",
+    ...rules.map((rule, index) => `${index + 1}. ${rule}`),
+  ].join("\n");
 }
 
 function getEnvString(env, key) {
@@ -173,15 +230,12 @@ function sanitizeModelName(value) {
 }
 
 function buildGeminiPayload(message) {
+  const systemInstructionText = buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION);
   return {
     systemInstruction: {
       parts: [
         {
-          text: [
-            "你是销售对话助手。",
-            "请使用简体中文自然回答，结论先行、表达简洁。",
-            "当前阶段不要输出 JSON。",
-          ].join(" "),
+          text: systemInstructionText,
         },
       ],
     },
