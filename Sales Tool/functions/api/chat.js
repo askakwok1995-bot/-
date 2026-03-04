@@ -80,6 +80,7 @@ function buildAssistantRoleSystemInstruction(roleDefinition) {
     `回答风格：${style}`,
     "行为规则：",
     ...rules.map((rule, index) => `${index + 1}. ${rule}`),
+    "业务输入约束：优先依据 business_snapshot 回答；若快照数据不足，请明确说明，不要编造。",
   ].join("\n");
 }
 
@@ -229,7 +230,86 @@ function sanitizeModelName(value) {
   return candidate || DEFAULT_GEMINI_MODEL;
 }
 
-function buildGeminiPayload(message) {
+function createEmptyBusinessSnapshot() {
+  return {
+    analysis_range: {},
+    performance_overview: {},
+    key_business_signals: [],
+    product_performance: [],
+    hospital_performance: [],
+    recent_trends: [],
+    risk_alerts: [],
+    opportunity_hints: [],
+  };
+}
+
+function normalizeSnapshotObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const output = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    const safeKey = trimString(key);
+    if (!safeKey) continue;
+    if (typeof rawValue === "string") {
+      output[safeKey] = trimString(rawValue);
+      continue;
+    }
+    if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+      output[safeKey] = String(rawValue);
+      continue;
+    }
+    if (rawValue === null || rawValue === undefined) {
+      output[safeKey] = "";
+      continue;
+    }
+    output[safeKey] = String(rawValue);
+  }
+  return output;
+}
+
+function normalizeSnapshotStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => trimString(item))
+    .filter((item) => item);
+}
+
+function normalizeSnapshotObjectArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeSnapshotObject(item))
+    .filter((item) => Object.keys(item).length > 0);
+}
+
+function normalizeBusinessSnapshot(input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const normalized = createEmptyBusinessSnapshot();
+  normalized.analysis_range = normalizeSnapshotObject(source.analysis_range);
+  normalized.performance_overview = normalizeSnapshotObject(source.performance_overview);
+  normalized.key_business_signals = normalizeSnapshotStringArray(source.key_business_signals);
+  normalized.product_performance = normalizeSnapshotObjectArray(source.product_performance);
+  normalized.hospital_performance = normalizeSnapshotObjectArray(source.hospital_performance);
+  normalized.recent_trends = normalizeSnapshotObjectArray(source.recent_trends);
+  normalized.risk_alerts = normalizeSnapshotStringArray(source.risk_alerts);
+  normalized.opportunity_hints = normalizeSnapshotStringArray(source.opportunity_hints);
+  return normalized;
+}
+
+function buildUserPrompt(message, businessSnapshot) {
+  const normalizedSnapshot = normalizeBusinessSnapshot(businessSnapshot);
+  return [
+    "以下是当前业务快照（business_snapshot），请将其作为本轮回答的事实依据。",
+    "如果快照中的数据不足，请明确说明“数据不足”，不要编造。",
+    "",
+    "business_snapshot:",
+    JSON.stringify(normalizedSnapshot, null, 2),
+    "",
+    `用户问题：${message}`,
+  ].join("\n");
+}
+
+function buildGeminiPayload(message, businessSnapshot) {
   const systemInstructionText = buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION);
   return {
     systemInstruction: {
@@ -242,7 +322,7 @@ function buildGeminiPayload(message) {
     contents: [
       {
         role: "user",
-        parts: [{ text: message }],
+        parts: [{ text: buildUserPrompt(message, businessSnapshot) }],
       },
     ],
     generationConfig: {
@@ -268,7 +348,7 @@ function extractGeminiReply(payload) {
   return "";
 }
 
-async function callGemini(message, env) {
+async function callGemini(message, businessSnapshot, env) {
   const apiKey = getEnvString(env, "GEMINI_API_KEY");
   if (!apiKey) {
     return {
@@ -290,7 +370,7 @@ async function callGemini(message, env) {
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify(buildGeminiPayload(message)),
+        body: JSON.stringify(buildGeminiPayload(message, businessSnapshot)),
       },
       GEMINI_UPSTREAM_TIMEOUT_MS,
     );
@@ -382,7 +462,8 @@ export async function onRequestPost(context) {
     );
   }
 
-  const geminiResult = await callGemini(message, context.env);
+  const businessSnapshot = body?.business_snapshot;
+  const geminiResult = await callGemini(message, businessSnapshot, context.env);
   if (!geminiResult.ok) {
     return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
   }

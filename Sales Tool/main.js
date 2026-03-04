@@ -45,6 +45,7 @@ import {
   DEFAULT_REPORT_CHART_DATA_LABEL_MODE,
   DEFAULT_REPORT_CHART_PALETTE_ID,
   bindReportEvents,
+  buildReportSnapshot,
   getDefaultReportRange,
   renderReportSection,
 } from "./reports.js";
@@ -1073,6 +1074,182 @@ async function initializeApp() {
     }
   }
 
+  function createEmptyBusinessSnapshot() {
+    return {
+      analysis_range: {
+        start_month: "",
+        end_month: "",
+        period: "",
+      },
+      performance_overview: {
+        sales_amount: "--",
+        amount_achievement: "--",
+        latest_key_change: "--",
+        sales_volume: "--",
+      },
+      key_business_signals: [],
+      product_performance: [],
+      hospital_performance: [],
+      recent_trends: [],
+      risk_alerts: [],
+      opportunity_hints: [],
+    };
+  }
+
+  function isValidYm(value) {
+    const matched = String(value || "").trim().match(/^(\d{4})-(\d{2})$/);
+    if (!matched) return false;
+    const month = Number(matched[2]);
+    return Number.isInteger(month) && month >= 1 && month <= 12;
+  }
+
+  function formatAmountWanText(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return "--";
+    return `${(amount / 10000).toFixed(2)}万元`;
+  }
+
+  function formatPercentText(ratio) {
+    const value = Number(ratio);
+    if (!Number.isFinite(value)) return "--";
+    return `${(value * 100).toFixed(2)}%`;
+  }
+
+  function formatDeltaPercentText(ratio) {
+    const value = Number(ratio);
+    if (!Number.isFinite(value)) return "--";
+    const percentText = `${(Math.abs(value) * 100).toFixed(2)}%`;
+    if (value > 0) return `+${percentText}`;
+    if (value < 0) return `-${percentText}`;
+    return "0.00%";
+  }
+
+  function formatQuantityBoxText(value) {
+    const quantity = Number(value);
+    if (!Number.isFinite(quantity)) return "--";
+    return `${formatMoney(roundMoney(quantity))}盒`;
+  }
+
+  function parseProductCodeFromKey(productKey) {
+    const key = String(productKey || "").trim();
+    if (!key.startsWith("id:")) return "";
+    return String(key.slice(3) || "").trim();
+  }
+
+  function buildBusinessSnapshotPayload() {
+    const snapshot = createEmptyBusinessSnapshot();
+    const startYm = String(state.reportStartYm || "").trim();
+    const endYm = String(state.reportEndYm || "").trim();
+    const hasValidRange = isValidYm(startYm) && isValidYm(endYm) && startYm <= endYm;
+
+    snapshot.analysis_range = {
+      start_month: startYm,
+      end_month: endYm,
+      period: hasValidRange ? `${startYm}~${endYm}` : "--",
+    };
+
+    if (!hasValidRange) {
+      snapshot.key_business_signals = ["当前分析区间无效或数据不足，请先在报表区设置有效起止月。"];
+      return snapshot;
+    }
+
+    const reportRecords = Array.isArray(state.reportRecords) ? state.reportRecords : [];
+    const reportSnapshot = buildReportSnapshot({ records: reportRecords }, deps, { startYm, endYm });
+    const monthRows = Array.isArray(reportSnapshot?.monthRows) ? reportSnapshot.monthRows : [];
+    const productRows = Array.isArray(reportSnapshot?.productRows) ? reportSnapshot.productRows : [];
+
+    let totalAmount = 0;
+    let totalQuantity = 0;
+    let targetAmountSum = 0;
+    let hasMissingTarget = false;
+
+    monthRows.forEach((row) => {
+      const amount = Number(row?.amount);
+      const quantity = Number(row?.quantity);
+      const targetAmount = Number(row?.targetAmount);
+      if (Number.isFinite(amount)) {
+        totalAmount += amount;
+      }
+      if (Number.isFinite(quantity)) {
+        totalQuantity += quantity;
+      }
+      if (Number.isFinite(targetAmount)) {
+        targetAmountSum += targetAmount;
+      } else {
+        hasMissingTarget = true;
+      }
+    });
+
+    totalAmount = roundMoney(totalAmount);
+    totalQuantity = roundMoney(totalQuantity);
+    targetAmountSum = roundMoney(targetAmountSum);
+
+    const latestMonthRow = monthRows.length > 0 ? monthRows[monthRows.length - 1] : null;
+    let latestKeyChange = "--";
+    if (latestMonthRow && Number.isFinite(Number(latestMonthRow.amountMom))) {
+      latestKeyChange = `最近月金额环比 ${formatDeltaPercentText(latestMonthRow.amountMom)}`;
+    } else if (latestMonthRow && Number.isFinite(Number(latestMonthRow.amountYoy))) {
+      latestKeyChange = `最近月金额同比 ${formatDeltaPercentText(latestMonthRow.amountYoy)}`;
+    }
+
+    snapshot.performance_overview = {
+      sales_amount: formatAmountWanText(totalAmount),
+      amount_achievement: !hasMissingTarget && targetAmountSum > 0 ? formatPercentText(totalAmount / targetAmountSum) : "--",
+      latest_key_change: latestKeyChange,
+      sales_volume: formatQuantityBoxText(totalQuantity),
+    };
+
+    const keySignals = [];
+    if (latestMonthRow) {
+      const latestPeriod = String(latestMonthRow.ym || "").trim() || "最近月";
+      if (Number.isFinite(Number(latestMonthRow.amountMom))) {
+        const mom = Number(latestMonthRow.amountMom);
+        const trend = mom > 0 ? "上升" : mom < 0 ? "下降" : "持平";
+        keySignals.push(`最近月（${latestPeriod}）销售额较上月${trend}，变动${formatDeltaPercentText(mom)}。`);
+      } else if (Number.isFinite(Number(latestMonthRow.amountYoy))) {
+        const yoy = Number(latestMonthRow.amountYoy);
+        const trend = yoy > 0 ? "上升" : yoy < 0 ? "下降" : "持平";
+        keySignals.push(`最近月（${latestPeriod}）销售额同比${trend}，变动${formatDeltaPercentText(yoy)}。`);
+      } else {
+        keySignals.push(`最近月（${latestPeriod}）缺少可比基线，暂无法判断金额变化趋势。`);
+      }
+    }
+
+    const topProduct = productRows.length > 0 ? productRows[0] : null;
+    if (topProduct) {
+      const topProductName = String(topProduct.productName || "").trim() || "未命名产品";
+      keySignals.push(
+        `Top1产品${topProductName}贡献销售额${formatAmountWanText(topProduct.amount)}，占比${formatPercentText(topProduct.amountShare)}。`,
+      );
+    }
+
+    snapshot.key_business_signals = keySignals.slice(0, 2);
+    if (snapshot.key_business_signals.length === 0) {
+      snapshot.key_business_signals = ["当前分析区间数据不足，暂无法提炼关键业务信号。"];
+    }
+    if (!reportSnapshot?.hasRangeRecords) {
+      snapshot.key_business_signals = ["当前分析区间暂无销售数据，暂无法形成完整业务结论。"];
+    }
+
+    snapshot.product_performance = productRows.slice(0, 2).map((row) => ({
+      product_name: String(row?.productName || "").trim() || "未命名产品",
+      product_code: parseProductCodeFromKey(row?.productKey),
+      sales_amount: formatAmountWanText(row?.amount),
+      sales_share: formatPercentText(row?.amountShare),
+      change_metric: "金额同比",
+      change_value: formatDeltaPercentText(row?.amountYoy),
+    }));
+
+    snapshot.recent_trends = monthRows.slice(-3).map((row) => ({
+      period: String(row?.ym || "").trim(),
+      sales_amount: formatAmountWanText(row?.amount),
+      amount_mom: formatDeltaPercentText(row?.amountMom),
+      sales_volume: formatQuantityBoxText(row?.quantity),
+    }));
+
+    return snapshot;
+  }
+
   async function getChatAuthToken() {
     const client = getSupabaseClient();
     if (!client) {
@@ -1126,6 +1303,7 @@ async function initializeApp() {
       message: safeMessage,
       mode: String(options?.mode || "").trim(),
       history: Array.isArray(options?.history) ? options.history : [],
+      business_snapshot: buildBusinessSnapshotPayload(),
     };
 
     let response;

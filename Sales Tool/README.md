@@ -245,19 +245,62 @@ window.__APP_CONFIG__ = {
 - 当前阶段仍不注入业务上下文，仅根据用户输入进行自然对话。
 - `POST /api/chat` 请求/响应契约保持不变。
 
-### 11.3 本地与线上说明
+### 11.3 业务快照输入层（阶段1.2）
+
+`POST /api/chat` 请求体新增可选字段 `business_snapshot`（向后兼容）：
+
+- `message/mode/history` 兼容保留；
+- `business_snapshot` 为业务输入层，首版采用“8类骨架完整、5类必填、3类可空”的最小摘要策略。
+
+骨架字段（snake_case）：
+
+- `analysis_range`（对象）
+- `performance_overview`（对象）
+- `key_business_signals`（字符串数组）
+- `product_performance`（对象数组）
+- `hospital_performance`（对象数组，首版可空）
+- `recent_trends`（对象数组）
+- `risk_alerts`（字符串数组，首版可空）
+- `opportunity_hints`（字符串数组，首版可空）
+
+首版值格式统一：
+
+- 金额：`xx.xx万元`
+- 比例：`xx.xx%`
+- 变化：`+xx.xx%` / `-xx.xx%`
+- 销量：`xx盒`
+- 时间：`YYYY-MM`
+- 区间：`YYYY-MM~YYYY-MM`
+
+本阶段边界：
+
+- 不恢复全产品、全医院、全年月明细上下文；
+- 不新增复杂风险识别与机会识别逻辑；
+- 仅提供最小业务摘要供模型自然回答引用。
+
+### 11.4 本地与线上说明
 
 - `npm run dev` 只启动静态站点，不提供 `/api/chat`。
 - 聊天功能需在 Cloudflare Pages Functions 环境验证。
 
-### 11.4 最小接口验收（curl）
+### 11.5 最小接口验收（curl）
 
 ```bash
 curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
   -H "Authorization: Bearer <SUPABASE_ACCESS_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
-    "message":"请用一句话总结本周重点工作。"
+    "message":"请基于当前业务快照给出本月重点推进建议。",
+    "business_snapshot":{
+      "analysis_range":{"start_month":"2026-01","end_month":"2026-03","period":"2026-01~2026-03"},
+      "performance_overview":{"sales_amount":"128.50万元","amount_achievement":"92.40%","latest_key_change":"最近月金额环比 +5.20%","sales_volume":"1850盒"},
+      "key_business_signals":["最近月（2026-03）销售额较上月上升，变动+5.20%。","Top1产品阿莫西林贡献销售额42.30万元，占比32.91%。"],
+      "product_performance":[{"product_name":"阿莫西林","product_code":"P001","sales_amount":"42.30万元","sales_share":"32.91%","change_metric":"金额同比","change_value":"+8.10%"}],
+      "hospital_performance":[],
+      "recent_trends":[{"period":"2026-01","sales_amount":"38.20万元","amount_mom":"--","sales_volume":"560盒"},{"period":"2026-02","sales_amount":"40.10万元","amount_mom":"+4.97%","sales_volume":"600盒"},{"period":"2026-03","sales_amount":"50.20万元","amount_mom":"+25.19%","sales_volume":"690盒"}],
+      "risk_alerts":[],
+      "opportunity_hints":[]
+    }
   }'
 ```
 
