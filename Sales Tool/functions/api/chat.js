@@ -1,4 +1,4 @@
-const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
+const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 const MAX_MESSAGE_LENGTH = 4000;

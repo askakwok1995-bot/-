@@ -219,7 +219,7 @@ window.__APP_CONFIG__ = {
 - Environment Variables：
   - `SUPABASE_URL`
   - `SUPABASE_ANON_KEY`
-  - `GEMINI_MODEL`（可选，默认 `gemini-3-flash-preview`）
+  - `GEMINI_MODEL`（可选，默认 `gemini-3.1-flash-lite-preview`）
 - Secret：
   - `GEMINI_API_KEY`
 
