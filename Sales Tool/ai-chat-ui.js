@@ -163,39 +163,175 @@ function buildActionMeta(action) {
   return parts.join(" | ");
 }
 
-function renderTextWithBoldMarkers(container, text) {
+function appendInlineMarkdown(container, content) {
+  const safeContent = String(content || "");
+  if (!safeContent) {
+    return;
+  }
+
+  const markerPattern = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__)/g;
+  let matched = markerPattern.exec(safeContent);
+  if (!matched) {
+    container.appendChild(document.createTextNode(safeContent));
+    return;
+  }
+
+  let lastIndex = 0;
+  while (matched) {
+    const start = matched.index;
+    if (start > lastIndex) {
+      container.appendChild(document.createTextNode(safeContent.slice(lastIndex, start)));
+    }
+
+    const token = matched[0];
+    if (token.startsWith("`") && token.endsWith("`")) {
+      const inlineCode = document.createElement("code");
+      inlineCode.className = "ai-chat-md-inline-code";
+      inlineCode.textContent = token.slice(1, -1);
+      container.appendChild(inlineCode);
+    } else if ((token.startsWith("**") && token.endsWith("**")) || (token.startsWith("__") && token.endsWith("__"))) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      container.appendChild(strong);
+    } else {
+      container.appendChild(document.createTextNode(token));
+    }
+
+    lastIndex = markerPattern.lastIndex;
+    matched = markerPattern.exec(safeContent);
+  }
+
+  if (lastIndex < safeContent.length) {
+    container.appendChild(document.createTextNode(safeContent.slice(lastIndex)));
+  }
+}
+
+function isMarkdownBlockStarter(line) {
+  const safeLine = String(line || "");
+  return (
+    /^\s*#{1,4}\s+/.test(safeLine) ||
+    /^\s*>\s?/.test(safeLine) ||
+    /^\s*[-*+]\s+/.test(safeLine) ||
+    /^\s*\d+\.\s+/.test(safeLine) ||
+    /^\s*```/.test(safeLine)
+  );
+}
+
+function renderTextWithMarkdownMarkers(container, text) {
   if (!(container instanceof HTMLElement)) return;
-  const content = String(text || "");
+  const content = String(text || "").replace(/\r\n?/g, "\n");
   if (!content) {
     container.textContent = "";
     return;
   }
 
-  const markerPattern = /\*\*([\s\S]+?)\*\*/g;
-  let matched = markerPattern.exec(content);
-  if (!matched) {
-    container.textContent = content;
-    return;
-  }
-
   container.textContent = "";
-  let lastIndex = 0;
-  while (matched) {
-    const start = matched.index;
-    if (start > lastIndex) {
-      container.appendChild(document.createTextNode(content.slice(lastIndex, start)));
+  const lines = content.split("\n");
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (/^\s*$/.test(line)) {
+      index += 1;
+      continue;
     }
 
-    const strong = document.createElement("strong");
-    strong.textContent = matched[1];
-    container.appendChild(strong);
+    if (/^\s*```/.test(line)) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length && /^\s*```/.test(lines[index])) {
+        index += 1;
+      }
 
-    lastIndex = markerPattern.lastIndex;
-    matched = markerPattern.exec(content);
-  }
+      const pre = document.createElement("pre");
+      pre.className = "ai-chat-md-code-block ai-chat-md-block";
+      const code = document.createElement("code");
+      code.textContent = codeLines.join("\n");
+      pre.appendChild(code);
+      container.appendChild(pre);
+      continue;
+    }
 
-  if (lastIndex < content.length) {
-    container.appendChild(document.createTextNode(content.slice(lastIndex)));
+    const headingMatched = line.match(/^\s*(#{1,4})\s+(.+)\s*$/);
+    if (headingMatched) {
+      const headingLevel = Math.min(4, headingMatched[1].length);
+      const heading = document.createElement("div");
+      heading.className = `ai-chat-md-heading ai-chat-md-heading-${headingLevel} ai-chat-md-block`;
+      appendInlineMarkdown(heading, headingMatched[2]);
+      container.appendChild(heading);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const quote = document.createElement("blockquote");
+      quote.className = "ai-chat-md-quote ai-chat-md-block";
+      while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+        const quoteLine = lines[index].replace(/^\s*>\s?/, "");
+        appendInlineMarkdown(quote, quoteLine);
+        if (index < lines.length - 1 && /^\s*>\s?/.test(lines[index + 1])) {
+          quote.appendChild(document.createElement("br"));
+        }
+        index += 1;
+      }
+      container.appendChild(quote);
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const list = document.createElement("ul");
+      list.className = "ai-chat-md-list ai-chat-md-list-ul ai-chat-md-block";
+      while (index < lines.length) {
+        const itemMatched = lines[index].match(/^\s*[-*+]\s+(.+)\s*$/);
+        if (!itemMatched) break;
+        const li = document.createElement("li");
+        appendInlineMarkdown(li, itemMatched[1]);
+        list.appendChild(li);
+        index += 1;
+      }
+      container.appendChild(list);
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const list = document.createElement("ol");
+      list.className = "ai-chat-md-list ai-chat-md-list-ol ai-chat-md-block";
+      while (index < lines.length) {
+        const itemMatched = lines[index].match(/^\s*\d+\.\s+(.+)\s*$/);
+        if (!itemMatched) break;
+        const li = document.createElement("li");
+        appendInlineMarkdown(li, itemMatched[1]);
+        list.appendChild(li);
+        index += 1;
+      }
+      container.appendChild(list);
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length && !/^\s*$/.test(lines[index]) && !isMarkdownBlockStarter(lines[index])) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    if (paragraphLines.length > 0) {
+      const paragraph = document.createElement("p");
+      paragraph.className = "ai-chat-md-paragraph ai-chat-md-block";
+      paragraphLines.forEach((paragraphLine, lineIndex) => {
+        appendInlineMarkdown(paragraph, paragraphLine);
+        if (lineIndex < paragraphLines.length - 1) {
+          paragraph.appendChild(document.createElement("br"));
+        }
+      });
+      container.appendChild(paragraph);
+      continue;
+    }
+
+    index += 1;
   }
 }
 
@@ -527,7 +663,7 @@ export function initAiChatUi(options = {}) {
     article.className = "ai-chat-message";
     article.classList.add(role === "user" ? "ai-chat-message--user" : "ai-chat-message--assistant");
     if (role === "assistant") {
-      renderTextWithBoldMarkers(article, message);
+      renderTextWithMarkdownMarkers(article, message);
     } else {
       article.textContent = message;
     }
@@ -576,7 +712,7 @@ export function initAiChatUi(options = {}) {
     if (!liveMessage || !liveMessage.isActive) return;
     liveMessage.text = String(text || "");
     liveMessage.article.classList.remove("ai-chat-thinking");
-    renderTextWithBoldMarkers(liveMessage.article, liveMessage.text || " ");
+    renderTextWithMarkdownMarkers(liveMessage.article, liveMessage.text || " ");
     scrollMessagesToBottom();
   }
 
