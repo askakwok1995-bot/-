@@ -163,6 +163,42 @@ function buildActionMeta(action) {
   return parts.join(" | ");
 }
 
+function renderTextWithBoldMarkers(container, text) {
+  if (!(container instanceof HTMLElement)) return;
+  const content = String(text || "");
+  if (!content) {
+    container.textContent = "";
+    return;
+  }
+
+  const markerPattern = /\*\*([\s\S]+?)\*\*/g;
+  let matched = markerPattern.exec(content);
+  if (!matched) {
+    container.textContent = content;
+    return;
+  }
+
+  container.textContent = "";
+  let lastIndex = 0;
+  while (matched) {
+    const start = matched.index;
+    if (start > lastIndex) {
+      container.appendChild(document.createTextNode(content.slice(lastIndex, start)));
+    }
+
+    const strong = document.createElement("strong");
+    strong.textContent = matched[1];
+    container.appendChild(strong);
+
+    lastIndex = markerPattern.lastIndex;
+    matched = markerPattern.exec(content);
+  }
+
+  if (lastIndex < content.length) {
+    container.appendChild(document.createTextNode(content.slice(lastIndex)));
+  }
+}
+
 function isValidHistoryRole(value) {
   return value === "user" || value === "assistant";
 }
@@ -490,7 +526,11 @@ export function initAiChatUi(options = {}) {
     const article = document.createElement("article");
     article.className = "ai-chat-message";
     article.classList.add(role === "user" ? "ai-chat-message--user" : "ai-chat-message--assistant");
-    article.textContent = message;
+    if (role === "assistant") {
+      renderTextWithBoldMarkers(article, message);
+    } else {
+      article.textContent = message;
+    }
     dom.messages.appendChild(article);
     scrollMessagesToBottom();
   }
@@ -536,7 +576,7 @@ export function initAiChatUi(options = {}) {
     if (!liveMessage || !liveMessage.isActive) return;
     liveMessage.text = String(text || "");
     liveMessage.article.classList.remove("ai-chat-thinking");
-    liveMessage.article.textContent = liveMessage.text || " ";
+    renderTextWithBoldMarkers(liveMessage.article, liveMessage.text || " ");
     scrollMessagesToBottom();
   }
 
