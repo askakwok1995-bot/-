@@ -283,7 +283,8 @@ window.__APP_CONFIG__ = {
 
 - 结构化字段后缀统一使用 `_value / _ratio / _code`。
 - `performance_overview`：`sales_amount_value`、`amount_achievement_ratio`、`latest_key_change_ratio`、`latest_key_change_code`、`sales_volume_value`。
-- `product_performance[*]`：`sales_amount_value`、`sales_share_ratio`、`change_metric_code`、`change_value_ratio`。
+- `performance_overview`（产品覆盖补充）：`product_catalog_count_value`、`product_snapshot_count_value`、`product_coverage_code`（`full|partial|none`）。
+- `product_performance[*]`：`sales_amount_value`、`sales_share_ratio`、`sales_volume_value`、`change_metric_code`、`change_value_ratio`。
 - `recent_trends[*]`：`sales_amount_value`、`amount_mom_ratio`、`sales_volume_value`。
 - 文本字段与结构化字段必须同口径同来源，语义保持一致。
 
@@ -359,6 +360,12 @@ window.__APP_CONFIG__ = {
   - `performance_overview` 仅自身有效 -> `partial`
   - `performance_overview` 无效但其他整体支撑存在 -> `partial`
 - `risk_opportunity` 若仅由 `key_business_signals` 支撑而判为 `partial`，语义是“可做泛判断，不可视为专门风险/机会依据”。
+- 医院维度在 `detail` 且命中“逐月明细请求”时，`answer_depth=detailed` 需依赖 `hospital_performance[*].monthly_points` 的有效覆盖；仅有医院汇总行不再直接判为 `detailed`。
+- 产品维度在命中“全产品问法”时，`dimension_availability` 按覆盖度判定：
+  - `product_coverage_code=full` -> `available`
+  - `product_coverage_code=partial` -> `partial`
+  - `product_coverage_code=none` -> `unavailable`
+- `detail_request_mode` 扩展为：`hospital_monthly|product_full|generic`；命中全产品问法时会输出 `product_full_support`（`full|partial|none`）用于内部观测。
 
 与会话状态层关系（本阶段锁定）：
 
@@ -422,6 +429,7 @@ window.__APP_CONFIG__ = {
 
 - `need_more_data` 若命中多个条件，会先完整收集全部 `reason_codes`，再一次性返回（不只保留首个原因）。
 - `need_more_data` 是内部路由状态，用于进入后续按需调取/补强链路，不是最终用户可见回复类型。
+- 命中“全产品问法”且当前仅 `partial` 覆盖时，会进入 `need_more_data`，并记录 `reason_code=product_full_scope_insufficient`。
 - `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
 - `sessionState` 当前仅在请求作用域内保留并用于观测，路由规则首版不消费其分支影响（后续阶段再接入）。
 
@@ -446,6 +454,9 @@ window.__APP_CONFIG__ = {
 5. `analysis_range` 无效时，本次补强跳过；随后按未补强结果继续重判。  
 6. 补强后必须重跑 `dataAvailability + routeDecision`。  
 7. 若重判后仍不足（仍为 `need_more_data`），最终内部收敛为 `bounded_answer`，不做第二次补强。
+8. 医院维度在逐月明细场景会按报表区间生成“逐月 TopN”增强片段：在现有 `hospital_performance` 项内扩展 `monthly_points / monthly_coverage_ratio / monthly_coverage_code`，不新增顶层 schema。
+9. 产品维度命中“全产品问法”时，会优先基于产品主数据补齐无记录产品（按 `0` 值呈现），并更新 `performance_overview.product_catalog_count_value/product_snapshot_count_value/product_coverage_code`。
+10. 产品全量补强受安全上限控制（首版 `50` 条）；超过上限时覆盖标记为 `partial`，后续由 `bounded_answer` 收敛表达边界。
 
 本阶段边界：
 
@@ -477,6 +488,10 @@ window.__APP_CONFIG__ = {
 固定顺序为“当前结论 -> 边界说明 -> 可继续深入方向”；必须先结论后边界，不要求用户手动补数据。边界句需命中至少一个提示词：`在当前范围内 / 基于现有信息 / 目前只能 / 暂时无法 / 信息有限 / 口径有限`。  
 3. `refuse`  
 优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例；示例必须是医药销售分析可答问题，且不包含真实客户姓名（可使用代号/产品名/医院代称）。
+4. 医院逐月明细（hospital + detail + 逐月请求）  
+`direct_answer` 优先按月份组织医院表现要点；`bounded_answer` 先给逐月可得结论，再说明当前逐月覆盖边界。
+5. 全产品问法（product + full scope）  
+`direct_answer` 优先覆盖当前可见产品范围并给出关键贡献；`bounded_answer` 需说明当前产品覆盖范围（如受上限或口径影响）。
 
 系统与模型分工：
 
@@ -508,7 +523,7 @@ Prompt 接入方式：
 Trace 规则（仅 server log）：
 
 - 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_full_support)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
 - 不打印 token、不打印业务明细、不打印原始 records。
 - 不打印 `message` 原文、不打印 `history` 原文。
 

@@ -1361,6 +1361,18 @@ async function initializeApp() {
       };
     });
 
+    const productCatalogCount = Array.isArray(state.products) ? state.products.length : 0;
+    const productSnapshotCount = snapshot.product_performance.length;
+    let productCoverageCode = "none";
+    if (productCatalogCount > 0 && productSnapshotCount >= productCatalogCount) {
+      productCoverageCode = "full";
+    } else if (productSnapshotCount > 0) {
+      productCoverageCode = "partial";
+    }
+    snapshot.performance_overview.product_catalog_count_value = productCatalogCount;
+    snapshot.performance_overview.product_snapshot_count_value = productSnapshotCount;
+    snapshot.performance_overview.product_coverage_code = productCoverageCode;
+
     snapshot.recent_trends = monthRows.slice(-3).map((row) => ({
       period: String(row?.ym || "").trim(),
       sales_amount: formatAmountWanText(row?.amount),

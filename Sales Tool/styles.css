@@ -943,6 +943,8 @@ tbody tr:hover td {
   column-gap: 12px;
   row-gap: 6px;
   align-items: start;
+  min-width: 0;
+  width: 100%;
 }
 
 .report-charts-intro,
@@ -1002,6 +1004,7 @@ tbody tr:hover td {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  min-width: 0;
 }
 
 .report-chart-card {
@@ -1013,6 +1016,8 @@ tbody tr:hover td {
   flex-direction: column;
   gap: 8px;
   box-shadow: 0 1px 3px rgb(20 96 134 / 8%);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .report-chart-card-wide {
@@ -1036,6 +1041,7 @@ tbody tr:hover td {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .report-chart-export-group {
@@ -1101,6 +1107,8 @@ tbody tr:hover td {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: transparent;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .report-chart-canvas-compact {
@@ -1905,6 +1913,12 @@ tr.selected-row td {
 }
 
 @media (max-width: 768px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
   .container {
     padding: 10px 8px 16px;
   }
@@ -2085,6 +2099,24 @@ tr.selected-row td {
 
   .report-chart-canvas {
     min-height: 280px;
+  }
+
+  .report-chart-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .report-chart-card-title {
+    width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .report-chart-card-head > .report-chart-export-group {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .report-chart-canvas.report-chart-canvas-compact {
