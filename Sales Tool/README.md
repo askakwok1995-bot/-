@@ -390,6 +390,7 @@ window.__APP_CONFIG__ = {
 判定边界（首版）：
 
 - 仅规则/启发式，不引入模型参与判定。
+- 短追问信号采用“短句精确承接”判定（如“为什么/具体呢/那医院呢/那产品呢/那趋势呢”），避免“重点做哪个产品”这类长句被关键词误判为 followup。
 - `risk_opportunity` 显式维度信号仅接受高置信表达（如“最大风险/最大机会/关键问题/突破口/最值得关注”）；单独“风险/机会”不触发显式维度切换。
 - 范围改口径优先视为 `scope override`，不默认等价于 `topic_shift_detected=true`。
 
@@ -422,7 +423,7 @@ window.__APP_CONFIG__ = {
 - `need_more_data` 若命中多个条件，会先完整收集全部 `reason_codes`，再一次性返回（不只保留首个原因）。
 - `need_more_data` 是内部路由状态，用于进入后续按需调取/补强链路，不是最终用户可见回复类型。
 - `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
-- `sessionState` 入参在本阶段保留为依赖链就位，路由规则首版不消费其分支影响（后续阶段再接入）。
+- `sessionState` 当前仅在请求作用域内保留并用于观测，路由规则首版不消费其分支影响（后续阶段再接入）。
 
 边界（本阶段）：
 
@@ -466,6 +467,7 @@ window.__APP_CONFIG__ = {
 - `need_more_data` 已在 Phase 2.5 内部消化，不属于用户可见输出类型。
 - 输出层输入必须使用 Phase 2.5 完成后的最终内部结果（最终 `routeDecision + dataAvailability`）。
 - 输出层不重新参与数据判断与补强决策。
+- 职责边界：`normalizeOutputReply` 仅做文本归一化；结构性修复（边界句、refuse 示例、内部词清理、重复裁剪）统一由 Phase 2.8 QC 负责。
 
 三类输出约束：
 
@@ -516,6 +518,7 @@ Trace 输出时机：
 
 最终路由不变量：
 
+- 正常收敛位置在 Phase 2.5（重判后仍 `need_more_data` 时收敛到 `bounded_answer`）。
 - 输出层前增加防御性保护：若最终仍为 `need_more_data`，强制收敛到 `bounded_answer`。
 - `forced_bounded=true` 用于标记该兜底；正常情况下此标记应极少出现（Phase 2.5 已应完成收敛）。
 
@@ -624,7 +627,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 3. `high_duplication` 固定按 `\n` 与 `。！？；` 切句；比对前做“去空白+去标点”归一化；仅在 `sentenceCount >= QC_HIGH_DUP_SENTENCE_MIN` 时启用。  
 4. `irrelevant_refuse_mismatch` 仅强信号触发：  
    - `route!=refuse`：强拒绝词 + 文本长度 `<80`；  
-   - `route=refuse`：业务证据词 + 句子数 `>=3`。  
+   - `route=refuse`：先忽略“你可以问”示例区，仅对主体拒答语句做判定；主体命中业务证据词 + 句子数 `>=3` 才触发。  
 5. findings 分级：  
    - 严重项：`empty_or_too_short`、`irrelevant_refuse_mismatch`；  
    - 非严重项：其余四项。  

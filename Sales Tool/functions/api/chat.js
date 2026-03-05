@@ -271,6 +271,9 @@ const SESSION_SHORT_FOLLOWUP_CUES = Object.freeze([
   "详细点",
   "细说",
 ]);
+const SESSION_SHORT_FOLLOWUP_PATTERNS = Object.freeze([
+  /^那(?:医院|产品|趋势|风险|机会)(?:呢)?[\s，,。！？!?；;：:、]*$/i,
+]);
 
 const SESSION_SCOPE_OVERRIDE_CUES = Object.freeze([
   "换成",
@@ -1555,15 +1558,26 @@ function containsAnyPattern(text, patterns) {
   return patterns.some((pattern) => pattern instanceof RegExp && pattern.test(text));
 }
 
+function normalizeShortFollowupText(text) {
+  return trimString(text).replace(/[\s，,。！？!?；;：:、]/g, "");
+}
+
 function hasShortFollowupSignal(messageText) {
   const text = trimString(messageText);
   if (!text) {
     return false;
   }
-  if (containsAnyKeyword(text, SESSION_SHORT_FOLLOWUP_CUES)) {
+  const normalizedText = normalizeShortFollowupText(text);
+  if (!normalizedText) {
+    return false;
+  }
+  const hasExactCue = SESSION_SHORT_FOLLOWUP_CUES.some(
+    (cue) => normalizeShortFollowupText(cue) === normalizedText,
+  );
+  if (hasExactCue) {
     return true;
   }
-  return /^(为什么|具体呢?|哪个|怎么做|怎么推进|继续|展开|那呢|然后呢|还有呢)[\s？?。！!]*$/i.test(text);
+  return containsAnyPattern(text, SESSION_SHORT_FOLLOWUP_PATTERNS);
 }
 
 function hasFollowupSignal(messageText) {
@@ -2029,7 +2043,7 @@ function pushReasonCode(reasonCodes, code) {
   }
 }
 
-function buildRouteDecision(questionJudgment, dataAvailability, sessionState) {
+function buildRouteDecision(questionJudgment, dataAvailability) {
   const relevanceCode = trimString(questionJudgment?.relevance?.code);
   const granularityCode = trimString(questionJudgment?.granularity?.code);
   const hasBusinessDataCode = trimString(dataAvailability?.has_business_data?.code);
@@ -2298,16 +2312,49 @@ function hasHighDuplication(text) {
   return uniqueRatio <= QC_HIGH_DUP_UNIQUE_RATIO_MAX;
 }
 
+function stripRefuseExamplesForMismatch(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return "";
+  }
+  const lines = normalized
+    .split(/\n+/)
+    .map((item) => trimString(item))
+    .filter((item) => item);
+  if (lines.length === 0) {
+    return "";
+  }
+
+  const cutIndex = lines.findIndex((line) => {
+    return (
+      line.includes("你可以问") ||
+      line.includes("你可以这样问") ||
+      line.includes("例如") ||
+      /^\s*-\s+/.test(line) ||
+      /^\s*\d+[).、]/.test(line)
+    );
+  });
+
+  if (cutIndex === -1) {
+    return normalized;
+  }
+  return trimString(lines.slice(0, cutIndex).join("\n"));
+}
+
 function isStrongRouteMismatch(reply, routeCode) {
   const text = trimString(reply);
   if (!text) {
     return false;
   }
-  const sentenceCount = splitTextByQcSentenceRule(text).length;
   if (routeCode !== ROUTE_DECISION_CODES.REFUSE) {
     return containsAnyKeywordIgnoreCase(text, QC_STRONG_REFUSE_WORDS) && text.length < QC_ROUTE_MISMATCH_SHORT_MAX_CHARS;
   }
-  return sentenceCount >= 3 && containsAnyKeywordIgnoreCase(text, QC_BUSINESS_EVIDENCE_WORDS);
+  const refuseMainText = stripRefuseExamplesForMismatch(text);
+  if (!refuseMainText) {
+    return false;
+  }
+  const sentenceCount = splitTextByQcSentenceRule(refuseMainText).length;
+  return sentenceCount >= 3 && containsAnyKeywordIgnoreCase(refuseMainText, QC_BUSINESS_EVIDENCE_WORDS);
 }
 
 function splitQcFindingsBySeverity(findings) {
@@ -2585,24 +2632,11 @@ function hasRefuseExamples(text) {
   );
 }
 
-function normalizeOutputReply(reply, outputContext) {
-  const routeCode = trimString(outputContext?.route_code);
-  let normalized = trimString(reply)
+function normalizeOutputReply(reply) {
+  // Keep this function as plain text normalization only; structural fixes are handled in QC.
+  return trimString(reply)
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n");
-
-  if (routeCode === ROUTE_DECISION_CODES.REFUSE && !hasRefuseExamples(normalized)) {
-    normalized = [normalized || "这个问题不属于我当前的医药销售业务分析职责范围。", QC_REFUSE_EXAMPLES_TEXT]
-      .filter((item) => item)
-      .join("\n");
-  }
-
-  if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER && !hasBoundaryHintSentence(normalized)) {
-    const boundaryFallback = QC_BOUNDED_BOUNDARY_TEXT;
-    normalized = [normalized, boundaryFallback].filter((item) => item).join("\n\n");
-  }
-
-  return normalized || "当前可用信息不足，建议换个业务问题再试。";
 }
 
 function buildGeminiPayload(message, businessSnapshot, outputContext) {
@@ -2776,13 +2810,13 @@ export async function onRequestPost(context) {
   // Phase 2.1: 问题判定层，仅在当前请求作用域内保留，供后续层接入复用。
   const questionJudgment = buildQuestionJudgment(message);
   const normalizedBusinessSnapshot = normalizeBusinessSnapshot(body?.business_snapshot);
-  // Phase 2.3: 会话状态层，仅在当前请求作用域内保留，供后续层接入复用。
+  // Phase 2.3: 会话状态层（当前仅请求内保留与观测，暂不参与路由分流）。
   const historyWindow = normalizeSessionHistoryWindow(body?.history);
   const sessionState = buildSessionState(message, historyWindow, questionJudgment);
   // Phase 2.2: 数据可用性层，仅在当前请求作用域内保留，供后续层接入复用。
   let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, questionJudgment);
   // Phase 2.4: 路由层，仅在当前请求作用域内保留，供后续层接入复用。
-  let routeDecision = buildRouteDecision(questionJudgment, dataAvailability, sessionState);
+  let routeDecision = buildRouteDecision(questionJudgment, dataAvailability);
   // Phase 2.5: 按需调取层，仅在当前请求作用域内保留，供后续层接入复用。
   let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
   let retrievalState = createInitialRetrievalState();
@@ -2800,7 +2834,7 @@ export async function onRequestPost(context) {
     retrievalState = enhancementResult.retrievalState;
 
     dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, questionJudgment);
-    routeDecision = buildRouteDecision(questionJudgment, dataAvailability, sessionState);
+    routeDecision = buildRouteDecision(questionJudgment, dataAvailability);
 
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
       routeDecision = forceBoundedRouteDecision(dataAvailability);
@@ -2808,11 +2842,10 @@ export async function onRequestPost(context) {
     }
   }
 
-  // Phase 2.7: 最终路由防御性不变量，确保 need_more_data 不成为用户可见输出类型。
+  // Phase 2.7: 最终路由防御性不变量（仅异常防线），确保 need_more_data 不成为用户可见输出类型。
   let forcedBounded = false;
   if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
     routeDecision = forceBoundedRouteDecision(dataAvailability);
-    retrievalState.degraded_to_bounded = true;
     forcedBounded = true;
   }
 
@@ -2830,7 +2863,7 @@ export async function onRequestPost(context) {
     responseModel = geminiResult.model;
     modelReplyText = geminiResult.reply;
   }
-  const replyDraft = normalizeOutputReply(modelReplyText, outputContext);
+  const replyDraft = normalizeOutputReply(modelReplyText);
   const qcResult = applyQualityControl(replyDraft, outputContext, routeDecision);
   const finalReply = qcResult.finalReplyText;
 
