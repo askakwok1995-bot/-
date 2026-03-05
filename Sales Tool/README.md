@@ -315,6 +315,10 @@ window.__APP_CONFIG__ = {
 - 主维度优先级：`product > hospital > trend > risk_opportunity > overall > other`
 - 细度：命中“具体/分别/明细/各月/每月/top/排名/列出来/详细拆解”等信号判为 `detail`，否则默认 `summary`
 - 相关性：仅拦“明显无关”，判不稳默认 `relevant`
+- 产品维度固定关键词已扩充：`产品/品种/单品/规格/药品/药物/用药/品规/剂型` 等；其中“药”单字有护栏，需与分析动作词共现（如“哪个/哪些/表现/贡献/销量/销售/分析/对比/推进/重点”）才作为产品高置信信号。
+- 医院维度固定关键词已扩充：`医院/终端/门诊/机构/诊所` 等，支持非“医院”字面问法的稳定命中。
+- 命名产品问法支持“精确+归一化匹配”产品目录：当消息直接命中已录入产品名时，可在请求内将有效主维度提升到 `product`（不回写外部响应）。
+- 命名医院问法支持“全称/简称提及”识别：当消息中提及具体医院（含简称）时，可在请求内将有效主维度提升到 `hospital`（不回写外部响应）；简称仅在唯一匹配单医院时生效。
 
 边界（本阶段）：
 
@@ -365,7 +369,15 @@ window.__APP_CONFIG__ = {
   - `product_coverage_code=full` -> `available`
   - `product_coverage_code=partial` -> `partial`
   - `product_coverage_code=none` -> `unavailable`
-- `detail_request_mode` 扩展为：`hospital_monthly|product_full|generic`；命中全产品问法时会输出 `product_full_support`（`full|partial|none`）用于内部观测。
+- 产品维度命中“命名产品问法”（精确+归一化匹配产品目录）时，`dimension_availability` 按命名覆盖度判定：
+  - `product_named_support=full` -> `available`
+  - `product_named_support=partial` -> `partial`
+  - `product_named_support=none` -> `unavailable`
+- 医院维度命中“命名医院问法”时，`dimension_availability` 按命名覆盖度判定：
+  - `hospital_named_support=full` -> `available`
+  - `hospital_named_support=partial` -> `partial`
+  - `hospital_named_support=none` -> `unavailable`
+- `detail_request_mode` 扩展为：`hospital_monthly|product_full|product_named|hospital_named|generic`；命中命名场景时会输出 `product_named_support / hospital_named_support`（`full|partial|none`）用于内部观测。
 
 与会话状态层关系（本阶段锁定）：
 
@@ -398,6 +410,8 @@ window.__APP_CONFIG__ = {
 
 - 仅规则/启发式，不引入模型参与判定。
 - 短追问信号采用“短句精确承接”判定（如“为什么/具体呢/那医院呢/那产品呢/那趋势呢”），避免“重点做哪个产品”这类长句被关键词误判为 followup。
+- 会话层显式维度信号与主判定词表保持一致（含“药品/药物/用药/品规/剂型”）；“药”单字同样走共现护栏，不单独触发产品维度切换。
+- 会话层医院显式维度信号已补充 `门诊/机构/诊所`，与主判定保持一致，避免多轮会话中维度漂移。
 - `risk_opportunity` 显式维度信号仅接受高置信表达（如“最大风险/最大机会/关键问题/突破口/最值得关注”）；单独“风险/机会”不触发显式维度切换。
 - 范围改口径优先视为 `scope override`，不默认等价于 `topic_shift_detected=true`。
 
@@ -430,6 +444,11 @@ window.__APP_CONFIG__ = {
 - `need_more_data` 若命中多个条件，会先完整收集全部 `reason_codes`，再一次性返回（不只保留首个原因）。
 - `need_more_data` 是内部路由状态，用于进入后续按需调取/补强链路，不是最终用户可见回复类型。
 - 命中“全产品问法”且当前仅 `partial` 覆盖时，会进入 `need_more_data`，并记录 `reason_code=product_full_scope_insufficient`。
+- 命中“命名产品问法”且 `product_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=product_named_scope_insufficient`。
+- 命中“命名医院问法”且 `hospital_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=hospital_named_scope_insufficient`。
+- 全产品问法关键词已补充：`所有药品/全部药品/所有药/全部药/全药品清单`，与“所有产品/全部产品”同级处理。
+- 产品模式优先级固定为：`product_full > product_named > generic`。
+- 命名维度覆盖优先级固定为：`product_full > product_named > hospital_named > generic`（产品场景优先，医院命名次之）。
 - `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
 - `sessionState` 当前仅在请求作用域内保留并用于观测，路由规则首版不消费其分支影响（后续阶段再接入）。
 
@@ -455,8 +474,10 @@ window.__APP_CONFIG__ = {
 6. 补强后必须重跑 `dataAvailability + routeDecision`。  
 7. 若重判后仍不足（仍为 `need_more_data`），最终内部收敛为 `bounded_answer`，不做第二次补强。
 8. 医院维度在逐月明细场景会按报表区间生成“逐月 TopN”增强片段：在现有 `hospital_performance` 项内扩展 `monthly_points / monthly_coverage_ratio / monthly_coverage_code`，不新增顶层 schema。
-9. 产品维度命中“全产品问法”时，会优先基于产品主数据补齐无记录产品（按 `0` 值呈现），并更新 `performance_overview.product_catalog_count_value/product_snapshot_count_value/product_coverage_code`。
-10. 产品全量补强受安全上限控制（首版 `50` 条）；超过上限时覆盖标记为 `partial`，后续由 `bounded_answer` 收敛表达边界。
+9. 医院维度命中“命名医院问法”时，会优先按命名医院集合补强；简称采用“保守唯一匹配”，多候选不强行绑定。
+10. 产品维度命中“全产品问法”时，会优先基于产品主数据补齐无记录产品（按 `0` 值呈现），并更新 `performance_overview.product_catalog_count_value/product_snapshot_count_value/product_coverage_code`。
+11. 产品维度命中“命名产品问法”时，会优先按命名产品集合补强（最多 10 个）；无记录命名产品按 `0` 值呈现并使用中性变化码，不再泛化为“数据不足”中断。
+12. 产品全量补强受安全上限控制（首版 `50` 条）；超过上限时覆盖标记为 `partial`，后续由 `bounded_answer` 收敛表达边界。
 
 本阶段边界：
 
@@ -490,8 +511,12 @@ window.__APP_CONFIG__ = {
 优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例；示例必须是医药销售分析可答问题，且不包含真实客户姓名（可使用代号/产品名/医院代称）。
 4. 医院逐月明细（hospital + detail + 逐月请求）  
 `direct_answer` 优先按月份组织医院表现要点；`bounded_answer` 先给逐月可得结论，再说明当前逐月覆盖边界。
-5. 全产品问法（product + full scope）  
+5. 命名医院问法（hospital + named scope）  
+`direct_answer` 优先逐条覆盖被点名医院的结论与依据；`bounded_answer` 先给结论，再说明当前命名医院覆盖边界（不暴露内部过程词）。
+6. 全产品问法（product + full scope）  
 `direct_answer` 优先覆盖当前可见产品范围并给出关键贡献；`bounded_answer` 需说明当前产品覆盖范围（如受上限或口径影响）。
+7. 命名产品问法（product + named scope）  
+`direct_answer` 优先逐条覆盖被点名产品结论与依据；若某命名产品无销售记录，使用“本期无销售记录/贡献为0”的业务表达。`bounded_answer` 先结论后边界，说明当前命名产品覆盖范围。
 
 系统与模型分工：
 
@@ -523,7 +548,7 @@ Prompt 接入方式：
 Trace 规则（仅 server log）：
 
 - 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_full_support)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/hospital_named_support/product_full_support/product_named_support)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
 - 不打印 token、不打印业务明细、不打印原始 records。
 - 不打印 `message` 原文、不打印 `history` 原文。
 

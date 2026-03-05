@@ -146,6 +146,8 @@ const ROUTE_REASON_CODES = Object.freeze({
   DIMENSION_UNAVAILABLE: "dimension_unavailable",
   DETAIL_REQUESTED_BUT_INSUFFICIENT: "detail_requested_but_insufficient",
   PRODUCT_FULL_SCOPE_INSUFFICIENT: "product_full_scope_insufficient",
+  PRODUCT_NAMED_SCOPE_INSUFFICIENT: "product_named_scope_insufficient",
+  HOSPITAL_NAMED_SCOPE_INSUFFICIENT: "hospital_named_scope_insufficient",
   DIMENSION_PARTIAL: "dimension_partial",
   GAP_HINT_NEEDED: "gap_hint_needed",
   SUFFICIENT: "sufficient",
@@ -235,6 +237,8 @@ const OUTPUT_POLICY_REFUSE = [
 
 const ON_DEMAND_MAX_WINDOW_MONTHS = 24;
 const ON_DEMAND_PRODUCT_FULL_SAFE_CAP = 50;
+const ON_DEMAND_PRODUCT_NAMED_SAFE_CAP = 10;
+const ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP = 10;
 const SUPABASE_DATA_UPSTREAM_TIMEOUT_MS = 15000;
 const SUPABASE_DATA_PAGE_SIZE = 1000;
 const SUPABASE_DATA_MAX_PAGES = 20;
@@ -305,8 +309,21 @@ const SESSION_SCOPE_OVERRIDE_PATTERNS = Object.freeze([
 ]);
 
 const SESSION_EXPLICIT_DIMENSION_KEYWORDS = Object.freeze({
-  product: Object.freeze(["产品", "品种", "单品", "规格", "产品结构", "重点产品"]),
-  hospital: Object.freeze(["医院", "终端", "医院结构", "医院贡献", "长尾医院"]),
+  product: Object.freeze([
+    "产品",
+    "品种",
+    "单品",
+    "规格",
+    "产品结构",
+    "重点产品",
+    "药品",
+    "药",
+    "药物",
+    "用药",
+    "品规",
+    "剂型",
+  ]),
+  hospital: Object.freeze(["医院", "终端", "医院结构", "医院贡献", "长尾医院", "门诊", "机构", "诊所"]),
   trend: Object.freeze(["趋势", "走势", "波动", "环比", "同比", "逐月", "每月", "近三个月", "哪个月"]),
   overall: Object.freeze(["整体", "总体", "全局", "汇总", "总览", "整体表现", "总体表现"]),
   risk_opportunity: Object.freeze([
@@ -338,7 +355,47 @@ const FULL_PRODUCT_REQUEST_KEYWORDS = Object.freeze([
   "全部产品列出来",
   "所有产品列出来",
   "所有产品表现",
+  "所有药品",
+  "全部药品",
+  "所有药",
+  "全部药",
+  "全药品清单",
 ]);
+const PRODUCT_SINGLE_DRUG_CO_OCCURRENCE_KEYWORDS = Object.freeze([
+  "哪个",
+  "哪些",
+  "这个",
+  "那个",
+  "表现",
+  "贡献",
+  "销量",
+  "销售",
+  "分析",
+  "对比",
+  "推进",
+  "重点",
+]);
+const HOSPITAL_NAMED_TRIGGER_KEYWORDS = Object.freeze(["医院", "门诊", "机构", "诊所", "终端"]);
+const HOSPITAL_NAMED_GENERIC_MENTION_KEYWORDS = Object.freeze([
+  "医院",
+  "门诊",
+  "诊所",
+  "机构",
+  "哪家医院",
+  "哪个医院",
+  "哪些医院",
+  "哪家门诊",
+  "哪个门诊",
+  "哪家机构",
+  "哪个机构",
+  "重点医院",
+  "医院表现",
+  "医院数据",
+  "医院情况",
+]);
+const HOSPITAL_ENTITY_SUFFIX_RE = /(医院|门诊|诊所|机构)$/;
+const HOSPITAL_ALIAS_STRIP_RE = /(有限责任公司|有限公司|医疗美容|医疗|美容|门诊部|门诊|诊所|医院|机构|中心|集团|股份|连锁)/g;
+const HOSPITAL_MENTION_CAPTURE_RE = /([\u4e00-\u9fa5A-Za-z0-9]{2,40}(?:医院|门诊|诊所|机构))/g;
 
 const SESSION_HISTORY_ROLE_SET = new Set(["user", "assistant"]);
 
@@ -380,8 +437,22 @@ const QUESTION_KEYWORDS = Object.freeze({
     "逐月",
   ]),
   primary_dimension: Object.freeze({
-    product: Object.freeze(["产品", "品种", "单品", "规格", "产品贡献", "重点产品", "产品结构"]),
-    hospital: Object.freeze(["医院", "终端", "医院结构", "医院贡献", "长尾医院"]),
+    product: Object.freeze([
+      "产品",
+      "品种",
+      "单品",
+      "规格",
+      "产品贡献",
+      "重点产品",
+      "产品结构",
+      "药品",
+      "药",
+      "药物",
+      "用药",
+      "品规",
+      "剂型",
+    ]),
+    hospital: Object.freeze(["医院", "终端", "医院结构", "医院贡献", "长尾医院", "门诊", "机构", "诊所"]),
     trend: Object.freeze(["趋势", "走势", "波动", "增长", "下滑", "变化", "环比", "同比", "最近", "近三个月", "哪个月"]),
     risk_opportunity: Object.freeze(["风险", "机会", "突破口", "抓手", "优先", "推进", "下一步", "怎么推进", "最值得"]),
     overall: Object.freeze(["整体", "总体", "全局", "业绩", "销售", "情况", "表现", "分析", "汇总"]),
@@ -433,6 +504,20 @@ function containsAnyKeyword(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+function containsProductDimensionKeyword(text, keywords) {
+  if (!text || !Array.isArray(keywords) || keywords.length === 0) {
+    return false;
+  }
+  const strongKeywords = keywords.filter((keyword) => trimString(keyword) && trimString(keyword) !== "药");
+  if (containsAnyKeyword(text, strongKeywords)) {
+    return true;
+  }
+  if (!text.includes("药")) {
+    return false;
+  }
+  return containsAnyKeyword(text, PRODUCT_SINGLE_DRUG_CO_OCCURRENCE_KEYWORDS);
+}
+
 function judgeRelevance(text) {
   if (containsAnyKeyword(text, QUESTION_KEYWORDS.irrelevant)) {
     return QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT;
@@ -465,7 +550,11 @@ function judgePrimaryDimension(text, relevanceCode) {
 
   for (const code of candidates) {
     const keywords = QUESTION_KEYWORDS.primary_dimension[code];
-    if (containsAnyKeyword(text, keywords)) {
+    const matched =
+      code === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT
+        ? containsProductDimensionKeyword(text, keywords)
+        : containsAnyKeyword(text, keywords);
+    if (matched) {
       return code;
     }
   }
@@ -490,6 +579,32 @@ function buildQuestionJudgment(message) {
     relevance: {
       code: relevanceCode,
       label: QUESTION_JUDGMENT_LABELS.relevance[relevanceCode],
+    },
+  };
+}
+
+function buildEffectiveQuestionJudgment(questionJudgment, options = {}) {
+  const base = questionJudgment && typeof questionJudgment === "object" ? questionJudgment : null;
+  if (!base) {
+    return buildQuestionJudgment("");
+  }
+  if (!options?.productNamedRequested && !options?.hospitalNamedRequested) {
+    return base;
+  }
+  if (options?.productNamedRequested) {
+    return {
+      ...base,
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: QUESTION_JUDGMENT_LABELS.primary_dimension[QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT],
+      },
+    };
+  }
+  return {
+    ...base,
+    primary_dimension: {
+      code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+      label: QUESTION_JUDGMENT_LABELS.primary_dimension[QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL],
     },
   };
 }
@@ -938,6 +1053,150 @@ function normalizeTextForLookup(value) {
     .replace(/\s+/g, "");
 }
 
+function normalizeProductNameForMatch(value) {
+  return normalizeTextForLookup(value).replace(/[()（）\[\]【】\-_.·,，。:：;；/\\]/g, "");
+}
+
+function normalizeHospitalNameForMatch(value) {
+  return normalizeTextForLookup(value).replace(/[()（）\[\]【】\-_.·,，。:：;；/\\]/g, "");
+}
+
+function normalizeHospitalAliasKey(value) {
+  return normalizeHospitalNameForMatch(value).replace(HOSPITAL_ALIAS_STRIP_RE, "");
+}
+
+function isGenericHospitalMention(value) {
+  const text = trimString(value);
+  if (!text) {
+    return true;
+  }
+  if (HOSPITAL_NAMED_GENERIC_MENTION_KEYWORDS.includes(text)) {
+    return true;
+  }
+  return /^(这家|这个|那个|哪家|哪个|哪些|该)?(医院|门诊|诊所|机构)$/.test(text);
+}
+
+function cleanHospitalMentionText(value) {
+  let text = trimString(value);
+  if (!text) {
+    return "";
+  }
+  text = text.replace(/^[，,。！？!?:：；;\s]+|[，,。！？!?:：；;\s]+$/g, "");
+  text = text.replace(/^(这家|这个|那个|哪家|哪个|哪些|该)/, "");
+  text = text.replace(/(.+?)(这家|这个|那个|哪家|哪个|哪些|该)(医院|门诊|诊所|机构)$/u, "$1$3");
+  return trimString(text);
+}
+
+function extractHospitalMentionTokens(message) {
+  const text = trimString(message);
+  if (!text) {
+    return [];
+  }
+  const mentions = [];
+  const seen = new Set();
+  const matched = text.matchAll(HOSPITAL_MENTION_CAPTURE_RE);
+  for (const item of matched) {
+    const mentionName = cleanHospitalMentionText(item?.[1]);
+    if (!mentionName || isGenericHospitalMention(mentionName)) {
+      continue;
+    }
+    const mentionKey = normalizeHospitalNameForMatch(mentionName);
+    const mentionAliasKey = normalizeHospitalAliasKey(mentionName);
+    if (!mentionKey || mentionKey.length < 2) {
+      continue;
+    }
+    const dedupeKey = mentionKey;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    mentions.push({
+      mention_name: mentionName,
+      mention_key: mentionKey,
+      mention_alias_key: mentionAliasKey,
+    });
+    if (mentions.length >= ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP) {
+      break;
+    }
+  }
+  return mentions;
+}
+
+function buildHospitalNamedCandidates(rows) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  return sourceRows
+    .map((row) => {
+      const name = trimString(row?.name || row?.hospital_name);
+      const fullKey = normalizeHospitalNameForMatch(name);
+      const aliasKey = normalizeHospitalAliasKey(name);
+      if (!name || !fullKey) {
+        return null;
+      }
+      return {
+        name,
+        full_key: fullKey,
+        alias_key: aliasKey,
+        row,
+      };
+    })
+    .filter((item) => item !== null);
+}
+
+function resolveHospitalNamedMatches(requestedHospitals, candidateRows) {
+  const requested = Array.isArray(requestedHospitals) ? requestedHospitals : [];
+  const candidates = Array.isArray(candidateRows) ? candidateRows : [];
+  if (requested.length === 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const resolved = [];
+  const usedCandidates = new Set();
+  requested.forEach((requestItem) => {
+    const mentionKey = normalizeHospitalNameForMatch(requestItem?.mention_key || requestItem?.mention_name);
+    const mentionAliasKey = normalizeHospitalAliasKey(requestItem?.mention_alias_key || requestItem?.mention_name);
+    if (!mentionKey || mentionKey.length < 2) {
+      return;
+    }
+
+    const exactMatches = candidates.filter((candidate) => {
+      return candidate.full_key === mentionKey || (mentionAliasKey && candidate.alias_key && candidate.alias_key === mentionAliasKey);
+    });
+
+    let selected = null;
+    if (exactMatches.length === 1) {
+      selected = exactMatches[0];
+    } else if (exactMatches.length === 0) {
+      const fuzzyMatches = candidates.filter((candidate) => {
+        if (candidate.full_key.includes(mentionKey)) {
+          return true;
+        }
+        if (mentionAliasKey && candidate.alias_key && candidate.alias_key.includes(mentionAliasKey)) {
+          return true;
+        }
+        if (mentionAliasKey && candidate.alias_key && mentionAliasKey.includes(candidate.alias_key) && candidate.alias_key.length >= 2) {
+          return true;
+        }
+        return false;
+      });
+      if (fuzzyMatches.length === 1) {
+        selected = fuzzyMatches[0];
+      }
+    }
+
+    if (!selected) {
+      return;
+    }
+    const dedupeKey = selected.full_key;
+    if (usedCandidates.has(dedupeKey)) {
+      return;
+    }
+    usedCandidates.add(dedupeKey);
+    resolved.push(selected);
+  });
+
+  return resolved;
+}
+
 function createInitialRetrievalState() {
   return {
     triggered: false,
@@ -1113,6 +1372,117 @@ function buildProductsNameMap(catalog) {
     map.set(lookupKey, productId);
   });
   return map;
+}
+
+function matchNamedProductsFromCatalog(message, productCatalog, cap = ON_DEMAND_PRODUCT_NAMED_SAFE_CAP) {
+  const sourceText = trimString(message);
+  const normalizedSourceText = normalizeProductNameForMatch(sourceText);
+  if (!sourceText || !normalizedSourceText || !Array.isArray(productCatalog) || productCatalog.length === 0) {
+    return [];
+  }
+
+  const safeCap = Number.isInteger(cap) && cap > 0 ? cap : ON_DEMAND_PRODUCT_NAMED_SAFE_CAP;
+  const matchedRows = [];
+  const usedKeys = new Set();
+
+  productCatalog.forEach((row) => {
+    const productId = trimString(row?.product_id);
+    const productName = trimString(row?.product_name);
+    const lookupKey = normalizeProductNameForMatch(row?.lookup_key || productName);
+    if (!productId || !productName || !lookupKey || lookupKey.length < 2) {
+      return;
+    }
+    const dedupeKey = `${productId}::${lookupKey}`;
+    if (usedKeys.has(dedupeKey)) {
+      return;
+    }
+
+    const rawIndex = sourceText.indexOf(productName);
+    const normalizedIndex = normalizedSourceText.indexOf(lookupKey);
+    if (rawIndex < 0 && normalizedIndex < 0) {
+      return;
+    }
+
+    const order =
+      rawIndex >= 0 && normalizedIndex >= 0 ? Math.min(rawIndex, normalizedIndex) : rawIndex >= 0 ? rawIndex : normalizedIndex;
+    usedKeys.add(dedupeKey);
+    matchedRows.push({
+      order,
+      product_id: productId,
+      product_name: productName,
+      lookup_key: lookupKey,
+    });
+  });
+
+  matchedRows.sort((left, right) => left.order - right.order);
+  return matchedRows.slice(0, safeCap);
+}
+
+async function resolveProductNamedRequestContext({
+  message,
+  questionJudgment,
+  productFullRequested,
+  token,
+  env,
+}) {
+  const relevanceCode = trimString(questionJudgment?.relevance?.code);
+  if (relevanceCode !== QUESTION_JUDGMENT_CODES.relevance.RELEVANT || productFullRequested) {
+    return {
+      productNamedRequested: false,
+      requestedProducts: [],
+    };
+  }
+
+  try {
+    const productCatalog = await fetchProductsCatalog(token, env);
+    const requestedProducts = matchNamedProductsFromCatalog(message, productCatalog, ON_DEMAND_PRODUCT_NAMED_SAFE_CAP);
+    return {
+      productNamedRequested: requestedProducts.length > 0,
+      requestedProducts,
+    };
+  } catch (_error) {
+    return {
+      productNamedRequested: false,
+      requestedProducts: [],
+    };
+  }
+}
+
+function resolveHospitalNamedRequestContext({
+  message,
+  questionJudgment,
+  productFullRequested,
+  productNamedRequested,
+}) {
+  const relevanceCode = trimString(questionJudgment?.relevance?.code);
+  if (
+    relevanceCode !== QUESTION_JUDGMENT_CODES.relevance.RELEVANT ||
+    productFullRequested ||
+    productNamedRequested
+  ) {
+    return {
+      hospitalNamedRequested: false,
+      requestedHospitals: [],
+    };
+  }
+
+  const normalizedMessage = normalizeQuestionText(message);
+  const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  const hasHospitalCue =
+    primaryDimensionCode === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ||
+    containsAnyKeyword(normalizedMessage, HOSPITAL_NAMED_TRIGGER_KEYWORDS);
+  if (!hasHospitalCue) {
+    return {
+      hospitalNamedRequested: false,
+      requestedHospitals: [],
+    };
+  }
+
+  const requestedHospitals = extractHospitalMentionTokens(message);
+  return {
+    hospitalNamedRequested: requestedHospitals.length > 0,
+    requestedHospitals,
+  };
 }
 
 function resolveControlledRowLimit(existingRows, granularityCode, availableCount) {
@@ -1327,6 +1697,8 @@ function buildProductPerformanceRows(metrics, limit, options = {}) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestYm = trimString(monthlyRows[monthlyRows.length - 1]?.ym);
   const includeAllCatalogProducts = Boolean(options?.includeAllCatalogProducts);
+  const includeNamedProducts = Boolean(options?.includeNamedProducts);
+  const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
   const productCatalog = Array.isArray(options?.productCatalog) ? options.productCatalog : [];
   const productNameMap = options?.productNameMap instanceof Map ? options.productNameMap : new Map();
 
@@ -1337,7 +1709,49 @@ function buildProductPerformanceRows(metrics, limit, options = {}) {
     _lookup_key: normalizeTextForLookup(row?.name),
   }));
 
-  if (includeAllCatalogProducts && productCatalog.length > 0) {
+  if (includeNamedProducts && requestedProducts.length > 0) {
+    const rowMap = new Map();
+    rows.forEach((row) => {
+      const lookupKey = trimString(row?._lookup_key);
+      if (!lookupKey || rowMap.has(lookupKey)) {
+        return;
+      }
+      rowMap.set(lookupKey, row);
+    });
+
+    const selectedRows = [];
+    const selectedKeys = new Set();
+    requestedProducts.forEach((requestedRow) => {
+      const lookupKey = normalizeProductNameForMatch(requestedRow?.lookup_key || requestedRow?.product_name);
+      const productId = trimString(requestedRow?.product_id);
+      const productName = trimString(requestedRow?.product_name);
+      if (!lookupKey || !productName || selectedKeys.has(lookupKey)) {
+        return;
+      }
+      const matched = rowMap.get(lookupKey);
+      if (matched) {
+        selectedRows.push({
+          ...matched,
+          _catalog_product_id: productId || trimString(matched?._catalog_product_id),
+          _lookup_key: lookupKey,
+        });
+      } else {
+        selectedRows.push({
+          name: productName,
+          amount: 0,
+          quantity: 0,
+          amount_share_ratio: 0,
+          quantity_share_ratio: 0,
+          monthly: new Map(),
+          _has_record: false,
+          _catalog_product_id: productId,
+          _lookup_key: lookupKey,
+        });
+      }
+      selectedKeys.add(lookupKey);
+    });
+    rows = selectedRows;
+  } else if (includeAllCatalogProducts && productCatalog.length > 0) {
     const rowMap = new Map();
     rows.forEach((row) => {
       const lookupKey = trimString(row?._lookup_key);
@@ -1444,13 +1858,21 @@ function buildProductPerformanceRows(metrics, limit, options = {}) {
   });
 }
 
-function buildHospitalPerformanceRows(metrics, limit) {
-  const rows = Array.isArray(metrics?.hospital_rows) ? metrics.hospital_rows : [];
+function buildHospitalPerformanceRows(metrics, limit, options = {}) {
+  let rows = Array.isArray(metrics?.hospital_rows) ? metrics.hospital_rows : [];
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestYm = trimString(monthlyRows[monthlyRows.length - 1]?.ym);
   const monthKeys = monthlyRows.map((item) => trimString(item?.ym)).filter((item) => item);
   const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : rows.length;
   const includeMonthlyPoints = Boolean(metrics?.include_hospital_monthly_points);
+  const includeNamedHospitals = Boolean(options?.includeNamedHospitals);
+  const requestedHospitals = Array.isArray(options?.requestedHospitals) ? options.requestedHospitals : [];
+
+  if (includeNamedHospitals && requestedHospitals.length > 0) {
+    const candidates = buildHospitalNamedCandidates(rows);
+    const resolved = resolveHospitalNamedMatches(requestedHospitals, candidates);
+    rows = resolved.map((item) => item.row);
+  }
 
   return rows.slice(0, safeLimit).map((row) => {
     const yoyRatio = latestYm ? calcEntityRatioByYm(row.monthly, latestYm, -12) : null;
@@ -1549,6 +1971,58 @@ function resolveProductFullSupportCode(snapshot) {
   );
 }
 
+function resolveProductNamedSupportCode(snapshot, requestedProducts) {
+  const targets = Array.isArray(requestedProducts) ? requestedProducts : [];
+  if (targets.length === 0) {
+    return "none";
+  }
+
+  const rows = Array.isArray(snapshot?.product_performance) ? snapshot.product_performance : [];
+  if (rows.length === 0) {
+    return "none";
+  }
+
+  const rowProductIds = new Set();
+  const rowLookupKeys = new Set();
+  rows.forEach((row) => {
+    const productId = trimString(row?.product_code);
+    if (productId) {
+      rowProductIds.add(productId);
+    }
+    const lookupKey = normalizeProductNameForMatch(row?.product_name);
+    if (lookupKey) {
+      rowLookupKeys.add(lookupKey);
+    }
+  });
+
+  let matchedCount = 0;
+  const dedupeTargets = new Set();
+  targets.forEach((target) => {
+    const productId = trimString(target?.product_id);
+    const lookupKey = normalizeProductNameForMatch(target?.lookup_key || target?.product_name);
+    const dedupeKey = productId || lookupKey;
+    if (!dedupeKey || dedupeTargets.has(dedupeKey)) {
+      return;
+    }
+    dedupeTargets.add(dedupeKey);
+    if ((productId && rowProductIds.has(productId)) || (lookupKey && rowLookupKeys.has(lookupKey))) {
+      matchedCount += 1;
+    }
+  });
+
+  const targetCount = dedupeTargets.size;
+  if (targetCount === 0) {
+    return "none";
+  }
+  if (matchedCount >= targetCount) {
+    return "full";
+  }
+  if (matchedCount > 0) {
+    return "partial";
+  }
+  return "none";
+}
+
 function resolveHospitalMonthlySupportCode(snapshot) {
   const rows = Array.isArray(snapshot?.hospital_performance) ? snapshot.hospital_performance : [];
   if (rows.length === 0) {
@@ -1565,6 +2039,26 @@ function resolveHospitalMonthlySupportCode(snapshot) {
     }
   }
   return hasPartial ? "partial" : "none";
+}
+
+function resolveHospitalNamedSupportCode(snapshot, requestedHospitals) {
+  const requested = Array.isArray(requestedHospitals) ? requestedHospitals : [];
+  if (requested.length === 0) {
+    return "none";
+  }
+  const rows = Array.isArray(snapshot?.hospital_performance) ? snapshot.hospital_performance : [];
+  if (rows.length === 0) {
+    return "none";
+  }
+  const candidates = buildHospitalNamedCandidates(rows);
+  const resolved = resolveHospitalNamedMatches(requested, candidates);
+  if (resolved.length >= requested.length) {
+    return "full";
+  }
+  if (resolved.length > 0) {
+    return "partial";
+  }
+  return "none";
 }
 
 function buildRiskOpportunityHints(metrics) {
@@ -1609,7 +2103,11 @@ async function buildDimensionEnhancementPayload(params) {
   const targetDimension = trimString(params?.targetDimension);
   const granularityCode = trimString(params?.granularityCode);
   const hospitalMonthlyDetailRequested = Boolean(params?.hospitalMonthlyDetailRequested);
+  const hospitalNamedRequested = Boolean(params?.hospitalNamedRequested);
+  const requestedHospitals = Array.isArray(params?.requestedHospitals) ? params.requestedHospitals : [];
   const productFullRequested = Boolean(params?.productFullRequested);
+  const productNamedRequested = Boolean(params?.productNamedRequested);
+  const requestedProducts = Array.isArray(params?.requestedProducts) ? params.requestedProducts : [];
   const metrics = params?.metrics && typeof params.metrics === "object" ? params.metrics : {};
   const sourceSnapshot = params?.sourceSnapshot && typeof params.sourceSnapshot === "object" ? params.sourceSnapshot : {};
   const authToken = trimString(params?.authToken);
@@ -1624,7 +2122,7 @@ async function buildDimensionEnhancementPayload(params) {
 
   const trendLimit = resolveControlledTrendLimit(baseTrends, granularityCode, monthlyRows.length);
   let productLimit = resolveControlledRowLimit(baseProducts, granularityCode, productRows.length);
-  const hospitalLimit = resolveControlledRowLimit(baseHospitals, granularityCode, hospitalRows.length);
+  let hospitalLimit = resolveControlledRowLimit(baseHospitals, granularityCode, hospitalRows.length);
 
   const payload = {
     performance_overview: buildPerformanceOverviewFromMetrics(metrics),
@@ -1648,7 +2146,9 @@ async function buildDimensionEnhancementPayload(params) {
         productNameMap = new Map();
       }
     }
-    if (productFullRequested) {
+    if (productNamedRequested) {
+      productLimit = Math.min(ON_DEMAND_PRODUCT_NAMED_SAFE_CAP, requestedProducts.length);
+    } else if (productFullRequested) {
       const desiredCount = productCatalog.length > 0 ? productCatalog.length : productRows.length;
       productLimit = Math.min(ON_DEMAND_PRODUCT_FULL_SAFE_CAP, Math.max(0, desiredCount));
     }
@@ -1656,6 +2156,8 @@ async function buildDimensionEnhancementPayload(params) {
       productNameMap,
       productCatalog,
       includeAllCatalogProducts: productFullRequested,
+      includeNamedProducts: productNamedRequested,
+      requestedProducts,
     });
     if (productFullRequested) {
       const catalogCount = productCatalog.length;
@@ -1670,12 +2172,19 @@ async function buildDimensionEnhancementPayload(params) {
   }
 
   if (targetDimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL) {
+    if (hospitalNamedRequested) {
+      hospitalLimit = Math.min(ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP, requestedHospitals.length);
+    }
     payload.hospital_performance = buildHospitalPerformanceRows(
       {
         ...metrics,
         include_hospital_monthly_points: hospitalMonthlyDetailRequested,
       },
       hospitalLimit,
+      {
+        includeNamedHospitals: hospitalNamedRequested,
+        requestedHospitals,
+      },
     );
   }
 
@@ -1805,7 +2314,11 @@ async function buildOnDemandSnapshotEnhancement(params) {
     targetDimension,
     granularityCode: trimString(params?.questionJudgment?.granularity?.code),
     hospitalMonthlyDetailRequested: Boolean(params?.hospitalMonthlyDetailRequested),
+    hospitalNamedRequested: Boolean(params?.hospitalNamedRequested),
+    requestedHospitals: Array.isArray(params?.requestedHospitals) ? params.requestedHospitals : [],
     productFullRequested: Boolean(params?.productFullRequested),
+    productNamedRequested: Boolean(params?.productNamedRequested),
+    requestedProducts: Array.isArray(params?.requestedProducts) ? params.requestedProducts : [],
     metrics,
     sourceSnapshot,
     authToken: params?.authToken,
@@ -1922,7 +2435,7 @@ function resolveExplicitDimensionCode(messageText) {
   if (!text) {
     return "";
   }
-  if (containsAnyKeyword(text, SESSION_EXPLICIT_DIMENSION_KEYWORDS.product)) {
+  if (containsProductDimensionKeyword(text, SESSION_EXPLICIT_DIMENSION_KEYWORDS.product)) {
     return QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
   }
   if (containsAnyKeyword(text, SESSION_EXPLICIT_DIMENSION_KEYWORDS.hospital)) {
@@ -2159,7 +2672,11 @@ function judgeBusinessDataAvailability(snapshot) {
 
 function judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessDataCode, options = {}) {
   const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  const hospitalNamedRequested = Boolean(options?.hospitalNamedRequested);
+  const requestedHospitals = Array.isArray(options?.requestedHospitals) ? options.requestedHospitals : [];
   const productFullRequested = Boolean(options?.productFullRequested);
+  const productNamedRequested = Boolean(options?.productNamedRequested);
+  const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
 
   const hasPerformanceOverview = hasEffectiveSnapshotField(snapshot, "performance_overview");
   const hasKeyBusinessSignals = hasEffectiveSnapshotField(snapshot, "key_business_signals");
@@ -2189,6 +2706,15 @@ function judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessDataC
         } else {
           code = DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
         }
+      } else if (productNamedRequested) {
+        const productNamedSupportCode = resolveProductNamedSupportCode(snapshot, requestedProducts);
+        if (productNamedSupportCode === "full") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE;
+        } else if (productNamedSupportCode === "partial") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.PARTIAL;
+        } else {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
+        }
       } else if (hasProductPerformance) {
         code = DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE;
       } else if (hasKeyBusinessSignals || hasRecentTrends) {
@@ -2197,9 +2723,20 @@ function judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessDataC
       break;
     }
     case QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL: {
-      code = hasHospitalPerformance
-        ? DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE
-        : DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
+      if (hospitalNamedRequested) {
+        const hospitalNamedSupportCode = resolveHospitalNamedSupportCode(snapshot, requestedHospitals);
+        if (hospitalNamedSupportCode === "full") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE;
+        } else if (hospitalNamedSupportCode === "partial") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.PARTIAL;
+        } else {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
+        }
+      } else {
+        code = hasHospitalPerformance
+          ? DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE
+          : DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
+      }
       break;
     }
     case QUESTION_JUDGMENT_CODES.primary_dimension.TREND: {
@@ -2353,10 +2890,18 @@ function judgeGapHintNeeded(questionJudgment, hasBusinessDataCode, dimensionAvai
 
 function buildDataAvailability(snapshot, questionJudgment, options = {}) {
   const hospitalMonthlyDetailRequested = Boolean(options?.hospitalMonthlyDetailRequested);
+  const hospitalNamedRequested = Boolean(options?.hospitalNamedRequested);
+  const requestedHospitals = Array.isArray(options?.requestedHospitals) ? options.requestedHospitals : [];
   const productFullRequested = Boolean(options?.productFullRequested);
+  const productNamedRequested = Boolean(options?.productNamedRequested);
+  const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
   const hasBusinessData = judgeBusinessDataAvailability(snapshot);
   const dimensionAvailability = judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessData.code, {
+    hospitalNamedRequested,
+    requestedHospitals,
     productFullRequested,
+    productNamedRequested,
+    requestedProducts,
   });
   const answerDepth = judgeAnswerDepth(questionJudgment, dimensionAvailability.code, snapshot, {
     hospitalMonthlyDetailRequested,
@@ -2377,9 +2922,15 @@ function buildDataAvailability(snapshot, questionJudgment, options = {}) {
       ? "hospital_monthly"
       : productFullRequested
         ? "product_full"
+        : productNamedRequested
+          ? "product_named"
+          : hospitalNamedRequested
+            ? "hospital_named"
         : "generic",
     hospital_monthly_support: hospitalMonthlyDetailRequested ? resolveHospitalMonthlySupportCode(snapshot) : "none",
+    hospital_named_support: hospitalNamedRequested ? resolveHospitalNamedSupportCode(snapshot, requestedHospitals) : "none",
     product_full_support: productFullRequested ? resolveProductFullSupportCode(snapshot) : "none",
+    product_named_support: productNamedRequested ? resolveProductNamedSupportCode(snapshot, requestedProducts) : "none",
   };
 }
 
@@ -2406,7 +2957,11 @@ function buildRouteDecision(questionJudgment, dataAvailability, routeHints = {})
   const dimensionAvailabilityCode = trimString(dataAvailability?.dimension_availability?.code);
   const answerDepthCode = trimString(dataAvailability?.answer_depth?.code);
   const gapHintNeededCode = trimString(dataAvailability?.gap_hint_needed?.code);
+  const hospitalNamedRequested = Boolean(routeHints?.hospitalNamedRequested);
+  const hospitalNamedSupportCode = trimString(dataAvailability?.hospital_named_support);
   const productFullRequested = Boolean(routeHints?.productFullRequested);
+  const productNamedRequested = Boolean(routeHints?.productNamedRequested);
+  const productNamedSupportCode = trimString(dataAvailability?.product_named_support);
 
   if (relevanceCode === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT) {
     return {
@@ -2434,6 +2989,12 @@ function buildRouteDecision(questionJudgment, dataAvailability, routeHints = {})
     dimensionAvailabilityCode === DATA_AVAILABILITY_CODES.dimension_availability.PARTIAL
   ) {
     pushReasonCode(needMoreDataReasons, ROUTE_REASON_CODES.PRODUCT_FULL_SCOPE_INSUFFICIENT);
+  }
+  if (productNamedRequested && productNamedSupportCode !== "full") {
+    pushReasonCode(needMoreDataReasons, ROUTE_REASON_CODES.PRODUCT_NAMED_SCOPE_INSUFFICIENT);
+  }
+  if (hospitalNamedRequested && hospitalNamedSupportCode !== "full") {
+    pushReasonCode(needMoreDataReasons, ROUTE_REASON_CODES.HOSPITAL_NAMED_SCOPE_INSUFFICIENT);
   }
   if (needMoreDataReasons.length > 0) {
     return {
@@ -2484,7 +3045,9 @@ function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalData
   const primaryDimensionCode = trimString(finalQuestionJudgment?.primary_dimension?.code);
   const granularityCode = trimString(finalQuestionJudgment?.granularity?.code);
   const hospitalMonthlyDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "hospital_monthly";
+  const hospitalNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "hospital_named";
   const productFullDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_full";
+  const productNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_named";
   return {
     route_code: routeCode,
     primary_dimension_code: primaryDimensionCode,
@@ -2492,8 +3055,12 @@ function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalData
     boundary_needed: routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER,
     refuse_mode: routeCode === ROUTE_DECISION_CODES.REFUSE,
     hospital_monthly_detail_mode: hospitalMonthlyDetailMode,
+    hospital_named_detail_mode: hospitalNamedDetailMode,
     product_full_detail_mode: productFullDetailMode,
+    product_named_detail_mode: productNamedDetailMode,
+    hospital_named_support_code: trimString(finalDataAvailability?.hospital_named_support),
     product_full_support_code: trimString(finalDataAvailability?.product_full_support),
+    product_named_support_code: trimString(finalDataAvailability?.product_named_support),
     dimension_availability_code: trimString(finalDataAvailability?.dimension_availability?.code),
     answer_depth_code: trimString(finalDataAvailability?.answer_depth?.code),
   };
@@ -2519,7 +3086,9 @@ function toDataAvailabilityTrace(dataAvailability) {
     gap_hint_needed: trimString(dataAvailability?.gap_hint_needed?.code),
     detail_request_mode: trimString(dataAvailability?.detail_request_mode),
     hospital_monthly_support: trimString(dataAvailability?.hospital_monthly_support),
+    hospital_named_support: trimString(dataAvailability?.hospital_named_support),
     product_full_support: trimString(dataAvailability?.product_full_support),
+    product_named_support: trimString(dataAvailability?.product_named_support),
   };
 }
 
@@ -2961,14 +3530,24 @@ function applyQualityControl(replyDraft, outputContext, routeDecision) {
 function buildOutputInstructionText(outputContext) {
   const routeCode = trimString(outputContext?.route_code);
   const hospitalMonthlyDetailMode = Boolean(outputContext?.hospital_monthly_detail_mode);
+  const hospitalNamedDetailMode = Boolean(outputContext?.hospital_named_detail_mode);
   const productFullDetailMode = Boolean(outputContext?.product_full_detail_mode);
+  const productNamedDetailMode = Boolean(outputContext?.product_named_detail_mode);
+  const hospitalNamedSupportCode = trimString(outputContext?.hospital_named_support_code);
   const productFullSupportCode = trimString(outputContext?.product_full_support_code);
+  const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。`;
     }
+    if (hospitalNamedDetailMode) {
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。`;
+    }
     if (productFullDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求全产品分析时，优先覆盖当前可见产品范围并明确产品盘点口径。`;
+    }
+    if (productNamedDetailMode) {
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体产品时，优先逐条覆盖命名产品的结论与依据；无销售记录产品使用“本期无销售记录/贡献为0”的业务表达。`;
     }
     return OUTPUT_POLICY_DIRECT_ANSWER;
   }
@@ -2977,8 +3556,14 @@ function buildOutputInstructionText(outputContext) {
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：医院逐月明细场景下，先给逐月可得结论，再用业务口吻说明当前逐月覆盖边界。`;
     }
+    if (hospitalNamedDetailMode) {
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名医院场景下，先给可得结论，再说明当前已覆盖命名医院范围（${hospitalNamedSupportCode || "partial"}）。`;
+    }
     if (productFullDetailMode) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：全产品分析场景下，先给当前可得产品结论，再说明当前覆盖范围（${productFullSupportCode || "partial"}）。`;
+    }
+    if (productNamedDetailMode) {
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名产品场景下，先给可得结论，再说明当前已覆盖命名产品范围（${productNamedSupportCode || "partial"}）。`;
     }
     return OUTPUT_POLICY_BOUNDED_ANSWER;
   }
@@ -3197,30 +3782,63 @@ export async function onRequestPost(context) {
   const questionJudgment = buildQuestionJudgment(message);
   const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
   const productFullRequested = isFullProductRequest(message, questionJudgment);
+  const productNamedContext = await resolveProductNamedRequestContext({
+    message,
+    questionJudgment,
+    productFullRequested,
+    token: authResult.token,
+    env: context.env,
+  });
+  const productNamedRequested = Boolean(productNamedContext.productNamedRequested);
+  const requestedProducts = Array.isArray(productNamedContext.requestedProducts) ? productNamedContext.requestedProducts : [];
+  const hospitalNamedContext = resolveHospitalNamedRequestContext({
+    message,
+    questionJudgment,
+    productFullRequested,
+    productNamedRequested,
+  });
+  const hospitalNamedRequested = Boolean(hospitalNamedContext.hospitalNamedRequested);
+  const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
+    ? hospitalNamedContext.requestedHospitals
+    : [];
+  const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
+    productNamedRequested,
+    hospitalNamedRequested,
+  });
   const normalizedBusinessSnapshot = normalizeBusinessSnapshot(body?.business_snapshot);
   // Phase 2.3: 会话状态层（当前仅请求内保留与观测，暂不参与路由分流）。
   const historyWindow = normalizeSessionHistoryWindow(body?.history);
   const sessionState = buildSessionState(message, historyWindow, questionJudgment);
   // Phase 2.2: 数据可用性层，仅在当前请求作用域内保留，供后续层接入复用。
-  let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, questionJudgment, {
+  let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
     hospitalMonthlyDetailRequested,
+    hospitalNamedRequested,
+    requestedHospitals,
     productFullRequested,
+    productNamedRequested,
+    requestedProducts,
   });
   // Phase 2.4: 路由层，仅在当前请求作用域内保留，供后续层接入复用。
-  let routeDecision = buildRouteDecision(questionJudgment, dataAvailability, {
+  let routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+    hospitalNamedRequested,
     productFullRequested,
+    productNamedRequested,
   });
   // Phase 2.5: 按需调取层，仅在当前请求作用域内保留，供后续层接入复用。
   let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
   let retrievalState = createInitialRetrievalState();
   if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
     const enhancementResult = await buildOnDemandSnapshotEnhancement({
-      questionJudgment,
+      questionJudgment: effectiveQuestionJudgment,
       dataAvailability,
       routeDecision,
       sessionState,
       hospitalMonthlyDetailRequested,
+      hospitalNamedRequested,
+      requestedHospitals,
       productFullRequested,
+      productNamedRequested,
+      requestedProducts,
       businessSnapshot: effectiveBusinessSnapshot,
       authToken: authResult.token,
       env: context.env,
@@ -3228,12 +3846,18 @@ export async function onRequestPost(context) {
     effectiveBusinessSnapshot = normalizeBusinessSnapshot(enhancementResult.effectiveSnapshot);
     retrievalState = enhancementResult.retrievalState;
 
-    dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, questionJudgment, {
+    dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
       hospitalMonthlyDetailRequested,
+      hospitalNamedRequested,
+      requestedHospitals,
       productFullRequested,
+      productNamedRequested,
+      requestedProducts,
     });
-    routeDecision = buildRouteDecision(questionJudgment, dataAvailability, {
+    routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+      hospitalNamedRequested,
       productFullRequested,
+      productNamedRequested,
     });
 
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
@@ -3250,7 +3874,7 @@ export async function onRequestPost(context) {
   }
 
   // Phase 2.6: 输出层，仅消费 Phase 2.5 后的最终内部结果，不重做数据判断与补强决策。
-  const outputContext = buildOutputContext(routeDecision, questionJudgment, dataAvailability);
+  const outputContext = buildOutputContext(routeDecision, effectiveQuestionJudgment, dataAvailability);
   let modelReplyText = "";
   let responseModel = "local-template-refuse";
   if (outputContext.refuse_mode) {

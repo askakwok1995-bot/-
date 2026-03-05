@@ -2141,9 +2141,28 @@ tr.selected-row td {
     flex-wrap: nowrap;
   }
 
-  .report-chart-card-tools .report-hospital-trend-field select {
-    width: 280px;
-    min-width: 280px;
+  .report-chart-card-head-with-tools .report-chart-card-tools {
+    align-items: stretch;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  .report-chart-card-head-with-tools .report-hospital-trend-field {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+  }
+
+  .report-chart-card-head-with-tools .report-hospital-trend-field select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .report-chart-card-head-with-tools .report-chart-export-group {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .report-charts-toolbar .report-chart-palette-field select {
