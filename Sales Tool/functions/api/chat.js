@@ -150,6 +150,88 @@ const ROUTE_REASON_CODES = Object.freeze({
   SUFFICIENT: "sufficient",
 });
 
+const QC_REASON_CODES = Object.freeze({
+  EMPTY_OR_TOO_SHORT: "empty_or_too_short",
+  CONTAINS_INTERNAL_PROCESS_WORDS: "contains_internal_process_words",
+  REFUSE_MISSING_EXAMPLES: "refuse_missing_examples",
+  BOUNDED_MISSING_BOUNDARY_SENTENCE: "bounded_missing_boundary_sentence",
+  HIGH_DUPLICATION: "high_duplication",
+  IRRELEVANT_REFUSE_MISMATCH: "irrelevant_refuse_mismatch",
+});
+
+const QC_ACTIONS = Object.freeze({
+  PASS_THROUGH: "pass_through",
+  MINIMAL_PATCH: "minimal_patch",
+  SAFE_FALLBACK: "safe_fallback",
+});
+
+const QC_MIN_EFFECTIVE_CHARS = 20;
+const QC_HIGH_DUP_SENTENCE_MIN = 4;
+const QC_HIGH_DUP_UNIQUE_RATIO_MAX = 0.6;
+const QC_ROUTE_MISMATCH_SHORT_MAX_CHARS = 80;
+const QC_NON_SEVERE_FALLBACK_MIN = 2;
+
+const INTERNAL_PROCESS_WORDS = Object.freeze([
+  "路由",
+  "补强",
+  "内部判定",
+  "系统判断",
+  "调取",
+  "重判",
+  "追踪",
+  "need_more_data",
+  "bounded_answer",
+  "routedecision",
+  "dataavailability",
+  "sessionstate",
+  "business_snapshot",
+  "retrievalstate",
+  "outputcontext",
+  "phase2trace",
+]);
+
+const QC_STRONG_REFUSE_WORDS = Object.freeze(["超出职责", "无法回答", "不在范围", "不属于我的职责", "不在我当前"]);
+const QC_BUSINESS_EVIDENCE_WORDS = Object.freeze(["金额", "盒数", "%", "top", "达成率", "环比", "同比"]);
+const QC_BOUNDARY_HINT_WORDS = Object.freeze([
+  "在当前范围内",
+  "基于现有信息",
+  "目前只能",
+  "暂时无法",
+  "信息有限",
+  "口径有限",
+]);
+const QC_REFUSE_EXAMPLES_TEXT =
+  ["你可以问：", "- 本月整体业绩和达成率的核心变化是什么？", "- 当前哪个产品最值得优先推进，原因是什么？", "- 近三个月医院表现有哪些关键波动，对应风险和机会在哪里？"].join(
+    "\n",
+  );
+const QC_BOUNDED_BOUNDARY_TEXT =
+  "在当前范围内，基于现有信息，以上结论可用于方向判断；暂时无法支持更细颗粒度拆解。";
+
+const OUTPUT_POLICY_DIRECT_ANSWER = [
+  "输出策略（direct_answer）：请用简体中文自然回答。",
+  "结构固定：",
+  "1）先用1-2句给出明确结论；",
+  "2）再给1-2条依据（优先引用当前business_snapshot的业务信号/数据点，用自然句表达，不要报字段名）；",
+  "3）如适用，再补1条下一步动作建议（可选）。",
+  "禁止：提及任何内部过程或系统判断（如“路由/补强/重判/trace/need_more_data/bounded_answer/phase”等），也不要描述系统怎么做的过程。",
+].join("\n");
+
+const OUTPUT_POLICY_BOUNDED_ANSWER = [
+  "输出策略（bounded_answer）：请用简体中文自然回答。",
+  "结构固定：",
+  "1）先用1-2句给出当前可得的结论；",
+  "2）再用1句说明边界（业务口吻，例如“在当前口径/当前时间范围/当前可见数据下…”），说明结论的适用范围或不确定点；",
+  "3）最后给1-2条继续深入方向/下一步关注点（只说业务上下一步怎么看/怎么验证，不要求用户手动补数据，不提调取/补强/导入/系统处理）。",
+  "边界句必须命中至少1个边界提示词：在当前范围内 / 基于现有信息 / 目前只能 / 暂时无法 / 信息有限 / 口径有限（任选其一）。",
+  "禁止：任何内部过程词、系统状态描述、让用户“去补数据/去导入/去调取”的指令。",
+].join("\n");
+
+const OUTPUT_POLICY_REFUSE = [
+  "输出策略（refuse）：请简洁说明该问题不属于医药销售分析助手的职责范围（1句即可），然后给2-3个用户可问的示例问题（用项目符号列出）。",
+  "示例覆盖方向中的任意2-3类：整体业绩、产品表现、医院表现、趋势波动、风险/机会。",
+  "禁止：展开回答原问题；不要说教；不要出现内部过程词。",
+].join("\n");
+
 const ON_DEMAND_MAX_WINDOW_MONTHS = 24;
 const SUPABASE_DATA_UPSTREAM_TIMEOUT_MS = 15000;
 const SUPABASE_DATA_PAGE_SIZE = 1000;
@@ -2093,6 +2175,17 @@ function toOutputContextTrace(outputContext) {
   };
 }
 
+function toQcStateTrace(qcState) {
+  const reasonCodes = Array.isArray(qcState?.reason_codes)
+    ? qcState.reason_codes.map((item) => trimString(item)).filter((item) => item)
+    : [];
+  return {
+    applied: Boolean(qcState?.applied),
+    action: trimString(qcState?.action),
+    reason_codes: reasonCodes,
+  };
+}
+
 function buildPhase2Trace({
   requestId,
   questionJudgment,
@@ -2102,6 +2195,7 @@ function buildPhase2Trace({
   retrievalState,
   outputContext,
   forcedBounded,
+  qcState,
 }) {
   return {
     requestId: trimString(requestId),
@@ -2112,6 +2206,7 @@ function buildPhase2Trace({
     retrievalState: toRetrievalStateTrace(retrievalState),
     outputContext: toOutputContextTrace(outputContext),
     forced_bounded: Boolean(forcedBounded),
+    qc: toQcStateTrace(qcState),
   };
 }
 
@@ -2126,34 +2221,337 @@ function logPhase2Trace(tracePayload, env) {
   }
 }
 
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeQcComparableText(text) {
+  return trimString(text)
+    .toLocaleLowerCase()
+    .replace(/[\s`~!@#$%^&*()\-_=+\[\]{}\\|;:'",.<>/?，。！？；：、（）【】《》“”‘’…—]+/g, "");
+}
+
+function getEffectiveCharCount(text) {
+  return normalizeQcComparableText(text).length;
+}
+
+function splitTextByQcSentenceRule(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return [];
+  }
+  return normalized
+    .split(/[\n。！？；]+/g)
+    .map((item) => trimString(item))
+    .filter((item) => item);
+}
+
+function containsAnyKeywordIgnoreCase(text, keywords) {
+  const target = trimString(text).toLocaleLowerCase();
+  if (!target || !Array.isArray(keywords) || keywords.length === 0) {
+    return false;
+  }
+  return keywords.some((keyword) => {
+    const probe = trimString(keyword).toLocaleLowerCase();
+    return probe ? target.includes(probe) : false;
+  });
+}
+
+function hasRefuseExamplesForQc(text) {
+  if (hasRefuseExamples(text)) {
+    return true;
+  }
+  const normalized = trimString(text);
+  if (!normalized) {
+    return false;
+  }
+  const bulletCount = (normalized.match(/^\s*-\s+/gm) || []).length;
+  if (bulletCount >= 2) {
+    return true;
+  }
+  const numberedCount = (normalized.match(/\d+[).、]/g) || []).length;
+  if (numberedCount >= 2 && (normalized.includes("你可以问") || normalized.includes("例如") || normalized.includes("你可以这样问"))) {
+    return true;
+  }
+  return false;
+}
+
+function hasBoundarySentenceForQc(text) {
+  return hasBoundaryHintSentence(text) || containsAnyKeywordIgnoreCase(text, QC_BOUNDARY_HINT_WORDS);
+}
+
+function containsInternalProcessWords(text) {
+  return containsAnyKeywordIgnoreCase(text, INTERNAL_PROCESS_WORDS);
+}
+
+function hasHighDuplication(text) {
+  const sentences = splitTextByQcSentenceRule(text);
+  if (sentences.length < QC_HIGH_DUP_SENTENCE_MIN) {
+    return false;
+  }
+  const normalizedSentences = sentences.map((item) => normalizeQcComparableText(item)).filter((item) => item);
+  if (normalizedSentences.length < QC_HIGH_DUP_SENTENCE_MIN) {
+    return false;
+  }
+  const uniqueCount = new Set(normalizedSentences).size;
+  const uniqueRatio = uniqueCount / normalizedSentences.length;
+  return uniqueRatio <= QC_HIGH_DUP_UNIQUE_RATIO_MAX;
+}
+
+function isStrongRouteMismatch(reply, routeCode) {
+  const text = trimString(reply);
+  if (!text) {
+    return false;
+  }
+  const sentenceCount = splitTextByQcSentenceRule(text).length;
+  if (routeCode !== ROUTE_DECISION_CODES.REFUSE) {
+    return containsAnyKeywordIgnoreCase(text, QC_STRONG_REFUSE_WORDS) && text.length < QC_ROUTE_MISMATCH_SHORT_MAX_CHARS;
+  }
+  return sentenceCount >= 3 && containsAnyKeywordIgnoreCase(text, QC_BUSINESS_EVIDENCE_WORDS);
+}
+
+function splitQcFindingsBySeverity(findings) {
+  const safeFindings = Array.isArray(findings) ? findings : [];
+  const severeSet = new Set([QC_REASON_CODES.EMPTY_OR_TOO_SHORT, QC_REASON_CODES.IRRELEVANT_REFUSE_MISMATCH]);
+  const severeFindings = safeFindings.filter((code) => severeSet.has(code));
+  const nonSevereFindings = safeFindings.filter((code) => !severeSet.has(code));
+  return {
+    severe_findings: severeFindings,
+    non_severe_findings: nonSevereFindings,
+  };
+}
+
+function evaluateReplyQuality(reply, outputContext, routeDecision) {
+  const findings = [];
+  const routeCode = trimString(routeDecision?.route?.code) || trimString(outputContext?.route_code);
+  const text = trimString(reply);
+
+  if (!text || getEffectiveCharCount(text) < QC_MIN_EFFECTIVE_CHARS) {
+    findings.push(QC_REASON_CODES.EMPTY_OR_TOO_SHORT);
+  }
+  if (containsInternalProcessWords(text)) {
+    findings.push(QC_REASON_CODES.CONTAINS_INTERNAL_PROCESS_WORDS);
+  }
+  if (routeCode === ROUTE_DECISION_CODES.REFUSE && !hasRefuseExamplesForQc(text)) {
+    findings.push(QC_REASON_CODES.REFUSE_MISSING_EXAMPLES);
+  }
+  if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER && !hasBoundarySentenceForQc(text)) {
+    findings.push(QC_REASON_CODES.BOUNDED_MISSING_BOUNDARY_SENTENCE);
+  }
+  if (hasHighDuplication(text)) {
+    findings.push(QC_REASON_CODES.HIGH_DUPLICATION);
+  }
+  if (isStrongRouteMismatch(text, routeCode)) {
+    findings.push(QC_REASON_CODES.IRRELEVANT_REFUSE_MISMATCH);
+  }
+
+  const dedupedFindings = [];
+  for (const finding of findings) {
+    if (!dedupedFindings.includes(finding)) {
+      dedupedFindings.push(finding);
+    }
+  }
+  return {
+    findings: dedupedFindings,
+    ...splitQcFindingsBySeverity(dedupedFindings),
+  };
+}
+
+function scrubInternalProcessWords(text) {
+  let output = trimString(text);
+  for (const keyword of INTERNAL_PROCESS_WORDS) {
+    const safeKeyword = trimString(keyword);
+    if (!safeKeyword) {
+      continue;
+    }
+    output = output.replace(new RegExp(escapeRegExp(safeKeyword), "gi"), "");
+  }
+  output = output
+    .replace(/[ ]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\(\s*\)/g, "")
+    .replace(/（\s*）/g, "");
+  return trimString(output);
+}
+
+function removeTailDuplicatedContent(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return "";
+  }
+
+  const lines = normalized
+    .split(/\n+/)
+    .map((item) => trimString(item))
+    .filter((item) => item);
+  if (lines.length > 1) {
+    while (lines.length > 1) {
+      const last = normalizeQcComparableText(lines[lines.length - 1]);
+      const previous = new Set(lines.slice(0, -1).map((item) => normalizeQcComparableText(item)));
+      if (last && previous.has(last)) {
+        lines.pop();
+        continue;
+      }
+      break;
+    }
+  }
+
+  let output = lines.join("\n");
+  const sentences = splitTextByQcSentenceRule(output);
+  if (sentences.length > 1) {
+    while (sentences.length > 1) {
+      const last = normalizeQcComparableText(sentences[sentences.length - 1]);
+      const previous = new Set(sentences.slice(0, -1).map((item) => normalizeQcComparableText(item)));
+      if (last && previous.has(last)) {
+        sentences.pop();
+        continue;
+      }
+      break;
+    }
+    output = sentences.join("。");
+  }
+  return trimString(output);
+}
+
+function appendRefuseExamplesText(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return QC_REFUSE_EXAMPLES_TEXT;
+  }
+  if (hasRefuseExamplesForQc(normalized)) {
+    return normalized;
+  }
+  return [normalized, QC_REFUSE_EXAMPLES_TEXT].join("\n");
+}
+
+function injectBoundedBoundarySentence(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return QC_BOUNDED_BOUNDARY_TEXT;
+  }
+  if (hasBoundarySentenceForQc(normalized)) {
+    return normalized;
+  }
+  const lines = normalized.split(/\n+/).map((item) => trimString(item)).filter((item) => item);
+  if (lines.length === 0) {
+    return QC_BOUNDED_BOUNDARY_TEXT;
+  }
+  if (lines.length === 1) {
+    return [lines[0], QC_BOUNDED_BOUNDARY_TEXT].join("\n\n");
+  }
+  return [lines[0], QC_BOUNDED_BOUNDARY_TEXT, ...lines.slice(1)].join("\n");
+}
+
+function applyMinimalPatch(reply, findings, outputContext) {
+  let patched = trimString(reply);
+  const routeCode = trimString(outputContext?.route_code);
+  const findingSet = new Set(Array.isArray(findings) ? findings : []);
+
+  if (findingSet.has(QC_REASON_CODES.CONTAINS_INTERNAL_PROCESS_WORDS)) {
+    patched = scrubInternalProcessWords(patched);
+  }
+  if (findingSet.has(QC_REASON_CODES.HIGH_DUPLICATION)) {
+    patched = removeTailDuplicatedContent(patched);
+  }
+  if (routeCode === ROUTE_DECISION_CODES.REFUSE && findingSet.has(QC_REASON_CODES.REFUSE_MISSING_EXAMPLES)) {
+    patched = appendRefuseExamplesText(patched);
+  }
+  if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER && findingSet.has(QC_REASON_CODES.BOUNDED_MISSING_BOUNDARY_SENTENCE)) {
+    patched = injectBoundedBoundarySentence(patched);
+  }
+
+  return trimString(patched)
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function buildQualityFallbackReply(routeCode, outputContext) {
+  const safeRouteCode = trimString(routeCode) || trimString(outputContext?.route_code);
+  if (safeRouteCode === ROUTE_DECISION_CODES.REFUSE) {
+    return buildRefuseReplyTemplate(outputContext);
+  }
+  if (safeRouteCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
+    return [
+      "基于当前可用业务信息，可以先给出方向性判断：当前表现已有可参考信号。",
+      QC_BOUNDED_BOUNDARY_TEXT,
+      "如果继续深入，建议优先按产品、医院和时间层级逐步细拆。",
+    ].join("\n");
+  }
+  return [
+    "基于当前可用业务信息，可以先给出方向性结论：请优先聚焦对业绩影响最大的产品或医院。",
+    "依据是现有快照已提供关键业务信号与近期趋势。",
+    "下一步建议围绕重点对象制定可执行推进动作，并持续跟踪变化。",
+  ].join("\n");
+}
+
+function applyQualityControl(replyDraft, outputContext, routeDecision) {
+  const initial = evaluateReplyQuality(replyDraft, outputContext, routeDecision);
+  if (initial.findings.length === 0) {
+    return {
+      finalReplyText: replyDraft,
+      qcState: {
+        applied: false,
+        reason_codes: [],
+        action: QC_ACTIONS.PASS_THROUGH,
+      },
+    };
+  }
+
+  if (initial.severe_findings.length > 0) {
+    return {
+      finalReplyText: buildQualityFallbackReply(trimString(routeDecision?.route?.code), outputContext),
+      qcState: {
+        applied: true,
+        reason_codes: initial.findings,
+        action: QC_ACTIONS.SAFE_FALLBACK,
+      },
+    };
+  }
+
+  const patchedReply = applyMinimalPatch(replyDraft, initial.findings, outputContext);
+  const rechecked = evaluateReplyQuality(patchedReply, outputContext, routeDecision);
+  const shouldFallback =
+    rechecked.severe_findings.length > 0 ||
+    (initial.non_severe_findings.length >= QC_NON_SEVERE_FALLBACK_MIN && rechecked.findings.length >= 1);
+  if (shouldFallback) {
+    const reasonCodes = [...initial.findings];
+    for (const code of rechecked.findings) {
+      if (!reasonCodes.includes(code)) {
+        reasonCodes.push(code);
+      }
+    }
+    return {
+      finalReplyText: buildQualityFallbackReply(trimString(routeDecision?.route?.code), outputContext),
+      qcState: {
+        applied: true,
+        reason_codes: reasonCodes,
+        action: QC_ACTIONS.SAFE_FALLBACK,
+      },
+    };
+  }
+
+  return {
+    finalReplyText: patchedReply,
+    qcState: {
+      applied: true,
+      reason_codes: initial.findings,
+      action: QC_ACTIONS.MINIMAL_PATCH,
+    },
+  };
+}
+
 function buildOutputInstructionText(outputContext) {
   const routeCode = trimString(outputContext?.route_code);
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
-    return [
-      "输出层约束（direct_answer）：",
-      "1) 按“结论 -> 依据/分析 -> 建议（如适用）”组织回答。",
-      "2) 至少给出1~2个业务依据点。",
-      "3) 不要提及系统流程、内部路由、补强过程、数据调取过程。",
-      "4) 不要使用“需要补数据/系统判断”等边界话术。",
-    ].join("\n");
+    return OUTPUT_POLICY_DIRECT_ANSWER;
   }
 
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
-    return [
-      "输出层约束（bounded_answer）：",
-      "1) 必须先给当前可得结论，再说明边界，再给可继续深入方向。",
-      "2) 不要要求用户手动补数据。",
-      "3) 不要提及内部流程（例如补强、路由、系统状态）。",
-      "4) 使用业务化表达，不写系统提示或报错语气。",
-    ].join("\n");
+    return OUTPUT_POLICY_BOUNDED_ANSWER;
   }
 
   if (routeCode === ROUTE_DECISION_CODES.REFUSE) {
-    return [
-      "输出层约束（refuse）：",
-      "1) 用简洁语气收住，并引导回医药销售业务分析范围。",
-      "2) 给2~3个可问示例，不展开原问题。",
-    ].join("\n");
+    return OUTPUT_POLICY_REFUSE;
   }
 
   return "";
@@ -2161,22 +2559,30 @@ function buildOutputInstructionText(outputContext) {
 
 function buildRefuseReplyTemplate(_outputContext) {
   return [
-    "这个问题不在我当前的医药销售业务分析职责范围内。",
-    "你可以这样问我：1) 本月整体业绩和达成情况如何？2) 当前应优先推进哪个产品？3) 哪些医院是近期重点机会？",
+    "这个问题不属于我当前的医药销售业务分析职责范围。",
+    "你可以问：",
+    "- 本月整体业绩和达成率的核心变化是什么？",
+    "- 当前哪个产品最值得优先推进，原因是什么？",
+    "- 近三个月医院表现有哪些关键波动，对应风险和机会在哪里？",
   ].join("\n");
 }
 
 function hasBoundaryHintSentence(text) {
   if (!text) return false;
-  const lowered = text.toLocaleLowerCase();
-  const keywords = ["边界", "当前可用", "当前信息", "现阶段", "进一步", "继续深入", "可再按", "可继续"];
-  return keywords.some((keyword) => lowered.includes(keyword));
+  return containsAnyKeywordIgnoreCase(text, QC_BOUNDARY_HINT_WORDS);
 }
 
 function hasRefuseExamples(text) {
   if (!text) return false;
   const lowered = text.toLocaleLowerCase();
-  return lowered.includes("你可以这样问") || lowered.includes("例如") || /1\).+2\)/.test(text);
+  const bulletCount = (text.match(/^\s*-\s+/gm) || []).length;
+  return (
+    lowered.includes("你可以这样问") ||
+    lowered.includes("你可以问") ||
+    lowered.includes("例如") ||
+    /1\).+2\)/.test(text) ||
+    bulletCount >= 2
+  );
 }
 
 function normalizeOutputReply(reply, outputContext) {
@@ -2186,16 +2592,13 @@ function normalizeOutputReply(reply, outputContext) {
     .replace(/\n{3,}/g, "\n\n");
 
   if (routeCode === ROUTE_DECISION_CODES.REFUSE && !hasRefuseExamples(normalized)) {
-    normalized = [
-      normalized || "这个问题不在我当前的医药销售业务分析职责范围内。",
-      "你可以这样问我：1) 本月整体业绩和达成情况如何？2) 当前应优先推进哪个产品？3) 哪些医院是近期重点机会？",
-    ]
+    normalized = [normalized || "这个问题不属于我当前的医药销售业务分析职责范围。", QC_REFUSE_EXAMPLES_TEXT]
       .filter((item) => item)
       .join("\n");
   }
 
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER && !hasBoundaryHintSentence(normalized)) {
-    const boundaryFallback = "基于当前可用业务信息，以上结论可用于方向判断，若继续深入可再按产品、医院或时间层级细拆。";
+    const boundaryFallback = QC_BOUNDED_BOUNDARY_TEXT;
     normalized = [normalized, boundaryFallback].filter((item) => item).join("\n\n");
   }
 
@@ -2205,6 +2608,7 @@ function normalizeOutputReply(reply, outputContext) {
 function buildGeminiPayload(message, businessSnapshot, outputContext) {
   const systemInstructionText = buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION);
   const outputInstructionText = buildOutputInstructionText(outputContext);
+  // Append output policy after role system instruction; keep user prompt focused on business facts/question only.
   const mergedSystemInstructionText = outputInstructionText
     ? `${systemInstructionText}\n\n${outputInstructionText}`
     : systemInstructionText;
@@ -2414,6 +2818,22 @@ export async function onRequestPost(context) {
 
   // Phase 2.6: 输出层，仅消费 Phase 2.5 后的最终内部结果，不重做数据判断与补强决策。
   const outputContext = buildOutputContext(routeDecision, questionJudgment, dataAvailability);
+  let modelReplyText = "";
+  let responseModel = "local-template-refuse";
+  if (outputContext.refuse_mode) {
+    modelReplyText = buildRefuseReplyTemplate(outputContext);
+  } else {
+    const geminiResult = await callGemini(message, effectiveBusinessSnapshot, outputContext, context.env);
+    if (!geminiResult.ok) {
+      return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
+    }
+    responseModel = geminiResult.model;
+    modelReplyText = geminiResult.reply;
+  }
+  const replyDraft = normalizeOutputReply(modelReplyText, outputContext);
+  const qcResult = applyQualityControl(replyDraft, outputContext, routeDecision);
+  const finalReply = qcResult.finalReplyText;
+
   const phase2Trace = buildPhase2Trace({
     requestId,
     questionJudgment,
@@ -2423,22 +2843,9 @@ export async function onRequestPost(context) {
     retrievalState,
     outputContext,
     forcedBounded,
+    qcState: qcResult.qcState,
   });
   logPhase2Trace(phase2Trace, context.env);
-
-  let finalReply = "";
-  let responseModel = "local-template-refuse";
-  if (outputContext.refuse_mode) {
-    finalReply = buildRefuseReplyTemplate(outputContext);
-  } else {
-    const geminiResult = await callGemini(message, effectiveBusinessSnapshot, outputContext, context.env);
-    if (!geminiResult.ok) {
-      return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
-    }
-    responseModel = geminiResult.model;
-    finalReply = geminiResult.reply;
-  }
-  finalReply = normalizeOutputReply(finalReply, outputContext);
 
   return jsonResponse(
     {

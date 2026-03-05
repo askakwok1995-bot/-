@@ -472,9 +472,9 @@ window.__APP_CONFIG__ = {
 1. `direct_answer`  
 先给业务结论，再给依据/分析，必要时补建议；不暴露内部流程与状态名。  
 2. `bounded_answer`  
-固定顺序为“当前结论 -> 边界说明 -> 可继续深入方向”；必须先结论后边界，不要求用户手动补数据。  
+固定顺序为“当前结论 -> 边界说明 -> 可继续深入方向”；必须先结论后边界，不要求用户手动补数据。边界句需命中至少一个提示词：`在当前范围内 / 基于现有信息 / 目前只能 / 暂时无法 / 信息有限 / 口径有限`。  
 3. `refuse`  
-优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例。
+优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例；示例必须是医药销售分析可答问题，且不包含真实客户姓名（可使用代号/产品名/医院代称）。
 
 系统与模型分工：
 
@@ -484,7 +484,8 @@ window.__APP_CONFIG__ = {
 
 Prompt 接入方式：
 
-- 输出层约束作为现有 prompt 主链的追加约束接入。
+- 输出策略指令通过 `systemInstruction` 追加段落（append）接入，位置在角色定义 `systemInstruction` 之后，优先级高于 user prompt。
+- 输出策略不得放入 user prompt。
 - 不覆盖已有角色定义、业务边界与“不编造数据”约束。
 
 边界（本阶段）：
@@ -505,7 +506,7 @@ Prompt 接入方式：
 Trace 规则（仅 server log）：
 
 - 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability/sessionState/routeDecision/retrievalState/outputContext/forced_bounded`。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
 - 不打印 token、不打印业务明细、不打印原始 records。
 - 不打印 `message` 原文、不打印 `history` 原文。
 
@@ -600,3 +601,49 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - 成功返回 `200`，响应包含 `reply`（自然文本）与 `model`。
 - 若未登录或 token 无效，返回 `401 UNAUTHORIZED`。
 - 若未配置 `GEMINI_API_KEY`，返回 `500 CONFIG_MISSING`。
+
+### 11.13 质量控制层（Phase 2.8）
+
+位置与目标：
+
+- QC 位于 Phase 2.6 输出层之后、最终 `reply` 写入之前。
+- 仅做轻量检测 + 最小修复/兜底，保证最终可见回复稳定。
+- 不改 `/api/chat` 请求/响应结构，不新增前端字段，不持久化，不二次调用模型。
+- Phase 2.9 不新增层级：它是 Phase 2.6 输出层内的“输出策略指令常量化 + 模板对齐”；Phase 2.8 QC 作为最终防线（内部词、边界句、refuse 示例兜底），两者协同但不引入二次模型调用。
+
+输入与输出（请求内）：
+
+- 输入：最终态 `routeDecision/outputContext` + `modelReplyText`（或 refuse 模板文案）。
+- 输出：`finalReplyText` + `qcState{ applied, action, reason_codes }`。
+- `qcState` 仅请求内使用；如开启 trace，仅记录 code/boolean。
+
+核心收口规则：
+
+1. `route=refuse` 时不调用 Gemini，直接 `buildRefuseReplyTemplate -> normalizeOutputReply -> QC`。  
+2. 内部过程词检测词表集中维护在 `INTERNAL_PROCESS_WORDS`，覆盖中文+英文+内部字段名。  
+3. `high_duplication` 固定按 `\n` 与 `。！？；` 切句；比对前做“去空白+去标点”归一化；仅在 `sentenceCount >= QC_HIGH_DUP_SENTENCE_MIN` 时启用。  
+4. `irrelevant_refuse_mismatch` 仅强信号触发：  
+   - `route!=refuse`：强拒绝词 + 文本长度 `<80`；  
+   - `route=refuse`：业务证据词 + 句子数 `>=3`。  
+5. findings 分级：  
+   - 严重项：`empty_or_too_short`、`irrelevant_refuse_mismatch`；  
+   - 非严重项：其余四项。  
+6. `safe_fallback` 条件：  
+   - 命中任一严重项；或  
+   - 非严重项 `>=2` 且执行一次 `minimal_patch` 后复检仍命中 `>=1`。  
+7. QC 最多执行“一次 patch + 一次复检”，不做循环改写。  
+
+检测项（6类）：
+
+- `empty_or_too_short`
+- `contains_internal_process_words`
+- `refuse_missing_examples`
+- `bounded_missing_boundary_sentence`
+- `high_duplication`
+- `irrelevant_refuse_mismatch`
+
+动作（3类）：
+
+- `pass_through`：无问题原样返回。  
+- `minimal_patch`：就地补丁（去内部词、补示例、补边界句、去尾部重复）。  
+- `safe_fallback`：严重异常或补丁后仍不稳定时，按 route 走最小安全模板。  
