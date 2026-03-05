@@ -1105,6 +1105,19 @@ function normalizeProductNameForMatch(value) {
   return normalizeTextForLookup(value).replace(/[()（）\[\]【】\-_.·,，。:：;；/\\]/g, "");
 }
 
+function normalizeProductFamilyKey(value) {
+  const normalized = normalizeProductNameForMatch(value);
+  if (!normalized) {
+    return "";
+  }
+  const stripped = normalized
+    .replace(/(?:[x×*]\d+(?:\.\d+)?)$/i, "")
+    .replace(/(?:\d+(?:\.\d+)?(?:mg|g|kg|ml|l|iu|u|%)?)$/i, "")
+    .replace(/(?:\d+)(?:支|盒|瓶|片|粒|针|袋|ml|mg|g|iu|u)?$/i, "")
+    .replace(/[x×*]+$/i, "");
+  return stripped || normalized;
+}
+
 function normalizeHospitalNameForMatch(value) {
   return normalizeTextForLookup(value).replace(/[()（）\[\]【】\-_.·,，。:：;；/\\]/g, "");
 }
@@ -1426,22 +1439,39 @@ function matchNamedProductsFromCatalog(message, productCatalog, cap = ON_DEMAND_
   const sourceText = trimString(message);
   const normalizedSourceText = normalizeProductNameForMatch(sourceText);
   if (!sourceText || !normalizedSourceText || !Array.isArray(productCatalog) || productCatalog.length === 0) {
-    return [];
+    return {
+      requestedProducts: [],
+      matchMode: "none",
+    };
   }
 
   const safeCap = Number.isInteger(cap) && cap > 0 ? cap : ON_DEMAND_PRODUCT_NAMED_SAFE_CAP;
-  const matchedRows = [];
-  const usedKeys = new Set();
+  const normalizedCatalog = productCatalog
+    .map((row) => {
+      const productId = trimString(row?.product_id);
+      const productName = trimString(row?.product_name);
+      const lookupKey = normalizeProductNameForMatch(row?.lookup_key || productName);
+      const familyKey = normalizeProductFamilyKey(productName);
+      if (!productId || !productName || !lookupKey || lookupKey.length < 2) {
+        return null;
+      }
+      return {
+        product_id: productId,
+        product_name: productName,
+        lookup_key: lookupKey,
+        family_key: familyKey,
+      };
+    })
+    .filter((item) => item !== null);
 
-  productCatalog.forEach((row) => {
+  const exactMatches = [];
+  const usedExact = new Set();
+  normalizedCatalog.forEach((row) => {
     const productId = trimString(row?.product_id);
     const productName = trimString(row?.product_name);
     const lookupKey = normalizeProductNameForMatch(row?.lookup_key || productName);
-    if (!productId || !productName || !lookupKey || lookupKey.length < 2) {
-      return;
-    }
     const dedupeKey = `${productId}::${lookupKey}`;
-    if (usedKeys.has(dedupeKey)) {
+    if (usedExact.has(dedupeKey)) {
       return;
     }
 
@@ -1453,8 +1483,8 @@ function matchNamedProductsFromCatalog(message, productCatalog, cap = ON_DEMAND_
 
     const order =
       rawIndex >= 0 && normalizedIndex >= 0 ? Math.min(rawIndex, normalizedIndex) : rawIndex >= 0 ? rawIndex : normalizedIndex;
-    usedKeys.add(dedupeKey);
-    matchedRows.push({
+    usedExact.add(dedupeKey);
+    exactMatches.push({
       order,
       product_id: productId,
       product_name: productName,
@@ -1462,8 +1492,62 @@ function matchNamedProductsFromCatalog(message, productCatalog, cap = ON_DEMAND_
     });
   });
 
-  matchedRows.sort((left, right) => left.order - right.order);
-  return matchedRows.slice(0, safeCap);
+  if (exactMatches.length > 0) {
+    exactMatches.sort((left, right) => left.order - right.order);
+    return {
+      requestedProducts: exactMatches.slice(0, safeCap),
+      matchMode: "exact",
+    };
+  }
+
+  // Fallback: group products by normalized family key (e.g., Botox50/Botox100 -> botox).
+  const familyMatchedEntries = normalizedCatalog
+    .map((row) => {
+      const familyKey = trimString(row?.family_key);
+      if (!familyKey || familyKey.length < 2) {
+        return null;
+      }
+      const familyIndex = normalizedSourceText.indexOf(familyKey);
+      if (familyIndex < 0) {
+        return null;
+      }
+      return {
+        familyIndex,
+        product_id: row.product_id,
+        product_name: row.product_name,
+        lookup_key: row.lookup_key,
+      };
+    })
+    .filter((item) => item !== null);
+
+  if (familyMatchedEntries.length === 0) {
+    return {
+      requestedProducts: [],
+      matchMode: "none",
+    };
+  }
+
+  const usedFamilyIds = new Set();
+  const dedupedFamilyMatches = [];
+  familyMatchedEntries
+    .sort((left, right) => left.familyIndex - right.familyIndex)
+    .forEach((item) => {
+      const productId = trimString(item?.product_id);
+      if (!productId || usedFamilyIds.has(productId)) {
+        return;
+      }
+      usedFamilyIds.add(productId);
+      dedupedFamilyMatches.push({
+        product_id: productId,
+        product_name: trimString(item?.product_name),
+        lookup_key: trimString(item?.lookup_key),
+      });
+    });
+
+  return {
+    requestedProducts: dedupedFamilyMatches.slice(0, safeCap),
+    matchMode: dedupedFamilyMatches.length > 0 ? "family" : "none",
+  };
 }
 
 async function resolveProductNamedRequestContext({
@@ -1478,20 +1562,25 @@ async function resolveProductNamedRequestContext({
     return {
       productNamedRequested: false,
       requestedProducts: [],
+      productNamedMatchMode: "none",
     };
   }
 
   try {
     const productCatalog = await fetchProductsCatalog(token, env);
-    const requestedProducts = matchNamedProductsFromCatalog(message, productCatalog, ON_DEMAND_PRODUCT_NAMED_SAFE_CAP);
+    const matched = matchNamedProductsFromCatalog(message, productCatalog, ON_DEMAND_PRODUCT_NAMED_SAFE_CAP);
+    const requestedProducts = Array.isArray(matched?.requestedProducts) ? matched.requestedProducts : [];
+    const matchMode = trimString(matched?.matchMode) || "none";
     return {
       productNamedRequested: requestedProducts.length > 0,
       requestedProducts,
+      productNamedMatchMode: requestedProducts.length > 0 ? matchMode : "none",
     };
   } catch (_error) {
     return {
       productNamedRequested: false,
       requestedProducts: [],
+      productNamedMatchMode: "none",
     };
   }
 }
@@ -3080,6 +3169,7 @@ function buildDataAvailability(snapshot, questionJudgment, options = {}) {
   const productFullRequested = Boolean(options?.productFullRequested);
   const productNamedRequested = Boolean(options?.productNamedRequested);
   const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
+  const productNamedMatchMode = trimString(options?.productNamedMatchMode).toLocaleLowerCase();
   const hasBusinessData = judgeBusinessDataAvailability(snapshot);
   const dimensionAvailability = judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessData.code, {
     productHospitalRequested,
@@ -3120,6 +3210,14 @@ function buildDataAvailability(snapshot, questionJudgment, options = {}) {
     hospital_named_support: hospitalNamedRequested ? resolveHospitalNamedSupportCode(snapshot, requestedHospitals) : "none",
     product_full_support: productFullRequested ? resolveProductFullSupportCode(snapshot) : "none",
     product_named_support: productNamedRequested ? resolveProductNamedSupportCode(snapshot, requestedProducts) : "none",
+    product_named_match_mode:
+      productNamedRequested && (productNamedMatchMode === "exact" || productNamedMatchMode === "family")
+        ? productNamedMatchMode
+        : "none",
+    requested_product_count_value: requestedProducts.length,
+    product_hospital_hospital_count_value:
+      normalizeNumericValue(snapshot?.performance_overview?.product_hospital_hospital_count_value) ??
+      (Array.isArray(snapshot?.hospital_performance) ? snapshot.hospital_performance.length : 0),
   };
 }
 
@@ -3255,6 +3353,7 @@ function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalData
     product_full_detail_mode: productFullDetailMode,
     product_named_detail_mode: productNamedDetailMode,
     product_hospital_support_code: trimString(finalDataAvailability?.product_hospital_support),
+    product_hospital_hospital_count_value: normalizeNumericValue(finalDataAvailability?.product_hospital_hospital_count_value),
     hospital_named_support_code: trimString(finalDataAvailability?.hospital_named_support),
     product_full_support_code: trimString(finalDataAvailability?.product_full_support),
     product_named_support_code: trimString(finalDataAvailability?.product_named_support),
@@ -3287,6 +3386,8 @@ function toDataAvailabilityTrace(dataAvailability) {
     hospital_named_support: trimString(dataAvailability?.hospital_named_support),
     product_full_support: trimString(dataAvailability?.product_full_support),
     product_named_support: trimString(dataAvailability?.product_named_support),
+    product_named_match_mode: trimString(dataAvailability?.product_named_match_mode),
+    requested_product_count_value: normalizeNumericValue(dataAvailability?.requested_product_count_value) ?? 0,
   };
 }
 
@@ -3733,6 +3834,7 @@ function buildOutputInstructionText(outputContext) {
   const productFullDetailMode = Boolean(outputContext?.product_full_detail_mode);
   const productNamedDetailMode = Boolean(outputContext?.product_named_detail_mode);
   const productHospitalSupportCode = trimString(outputContext?.product_hospital_support_code);
+  const productHospitalHospitalCountValue = normalizeNumericValue(outputContext?.product_hospital_hospital_count_value) ?? 0;
   const hospitalNamedSupportCode = trimString(outputContext?.hospital_named_support_code);
   const productFullSupportCode = trimString(outputContext?.product_full_support_code);
   const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
@@ -3741,7 +3843,11 @@ function buildOutputInstructionText(outputContext) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。`;
     }
     if (productHospitalDetailMode) {
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。`;
+      const listConstraint =
+        productHospitalHospitalCountValue >= 3
+          ? "若医院条目不少于3家，至少列出Top3医院贡献点（不要只给Top1）。"
+          : "若医院条目不足3家，按实际可见条目逐条说明。";
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。${listConstraint}`;
     }
     if (hospitalNamedDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。`;
@@ -3997,6 +4103,7 @@ export async function onRequestPost(context) {
   });
   const productNamedRequested = Boolean(productNamedContext.productNamedRequested);
   const requestedProducts = Array.isArray(productNamedContext.requestedProducts) ? productNamedContext.requestedProducts : [];
+  const productNamedMatchMode = trimString(productNamedContext.productNamedMatchMode).toLocaleLowerCase() || "none";
   const hospitalNamedContext = resolveHospitalNamedRequestContext({
     message,
     questionJudgment,
@@ -4033,6 +4140,7 @@ export async function onRequestPost(context) {
     requestedHospitals,
     productFullRequested,
     productNamedRequested,
+    productNamedMatchMode,
     requestedProducts,
   });
   // Phase 2.4: 路由层，仅在当前请求作用域内保留，供后续层接入复用。
@@ -4072,6 +4180,7 @@ export async function onRequestPost(context) {
       requestedHospitals,
       productFullRequested,
       productNamedRequested,
+      productNamedMatchMode,
       requestedProducts,
     });
     routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {

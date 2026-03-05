@@ -450,6 +450,7 @@ window.__APP_CONFIG__ = {
 - 全产品问法关键词已补充：`所有药品/全部药品/所有药/全部药/全药品清单`，与“所有产品/全部产品”同级处理。
 - 产品模式优先级固定为：`product_full > product_named > generic`。
 - 命名/交叉维度覆盖优先级固定为：`product_full > product_hospital > product_named > hospital_named > generic`。
+- 命名产品匹配模式为“精确优先 + 产品族回退”：`exact|family|none`。例如问 `botox` 时可回退命中 `Botox50/Botox100` 同族产品集合。
 - `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
 - `sessionState` 当前仅在请求作用域内保留并用于观测，路由规则首版不消费其分支影响（后续阶段再接入）。
 
@@ -520,7 +521,7 @@ window.__APP_CONFIG__ = {
 7. 命名产品问法（product + named scope）  
 `direct_answer` 优先逐条覆盖被点名产品结论与依据；若某命名产品无销售记录，使用“本期无销售记录/贡献为0”的业务表达。`bounded_answer` 先结论后边界，说明当前命名产品覆盖范围。
 8. 产品×医院交叉问法（product + hospital scope）  
-`direct_answer` 优先回答“该产品由哪些医院贡献、贡献结构如何”；`bounded_answer` 先给可得医院贡献结论，再说明当前医院覆盖范围边界。
+`direct_answer` 优先回答“该产品由哪些医院贡献、贡献结构如何”；当可见医院不少于3家时，至少列出Top3医院贡献点。`bounded_answer` 先给可得医院贡献结论，再说明当前医院覆盖范围边界。
 
 系统与模型分工：
 
@@ -552,7 +553,7 @@ Prompt 接入方式：
 Trace 规则（仅 server log）：
 
 - 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_hospital_support/hospital_named_support/product_full_support/product_named_support)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_hospital_support/hospital_named_support/product_full_support/product_named_support/product_named_match_mode/requested_product_count_value)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
 - 不打印 token、不打印业务明细、不打印原始 records。
 - 不打印 `message` 原文、不打印 `history` 原文。
 
