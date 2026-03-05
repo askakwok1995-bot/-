@@ -242,7 +242,7 @@ window.__APP_CONFIG__ = {
   - 优先回答医药销售相关问题；对明显无关问题仅简洁说明职责范围，不展开回答。
 
 说明：
-- 当前阶段仍不注入业务上下文，仅根据用户输入进行自然对话。
+- 阶段 1.1 仅注入角色定义；从阶段 1.2 起，聊天请求可携带最小业务快照 `business_snapshot`。
 - `POST /api/chat` 请求/响应契约保持不变。
 
 ### 11.3 业务快照输入层（阶段1.2）
@@ -263,6 +263,13 @@ window.__APP_CONFIG__ = {
 - `risk_alerts`（字符串数组，首版可空）
 - `opportunity_hints`（字符串数组，首版可空）
 
+字段语义约束：
+
+- `analysis_range` 仅表示分析时间范围，不作为“是否有可用业务数据”的判断依据。
+- `key_business_signals` 仅保留真实业务信号，首版最多 `1~2` 条，也允许空数组 `[]`；后续层必须兼容其为空。
+- `hospital_performance=[]` 在后续数据可用性层默认视为“医院维度无支撑”。
+- 若后续需表达“医院维度弱支撑”，应使用非空但摘要不足的数据形态，不用空数组表达弱支撑。
+
 首版值格式统一：
 
 - 金额：`xx.xx万元`
@@ -272,18 +279,276 @@ window.__APP_CONFIG__ = {
 - 时间：`YYYY-MM`
 - 区间：`YYYY-MM~YYYY-MM`
 
+文本 + 结构化伴随字段规范：
+
+- 结构化字段后缀统一使用 `_value / _ratio / _code`。
+- `performance_overview`：`sales_amount_value`、`amount_achievement_ratio`、`latest_key_change_ratio`、`latest_key_change_code`、`sales_volume_value`。
+- `product_performance[*]`：`sales_amount_value`、`sales_share_ratio`、`change_metric_code`、`change_value_ratio`。
+- `recent_trends[*]`：`sales_amount_value`、`amount_mom_ratio`、`sales_volume_value`。
+- 文本字段与结构化字段必须同口径同来源，语义保持一致。
+
+`product_performance.change_metric` 动态规则：
+
+- 优先同比：`change_metric=金额同比`，`change_metric_code=amount_yoy`。
+- 回退环比：`change_metric=金额环比`，`change_metric_code=amount_mom`。
+- 都不可用：`change_metric=变化值`，`change_metric_code=unknown`，`change_value=--`，`change_value_ratio=null`。
+
 本阶段边界：
 
 - 不恢复全产品、全医院、全年月明细上下文；
 - 不新增复杂风险识别与机会识别逻辑；
 - 仅提供最小业务摘要供模型自然回答引用。
 
-### 11.4 本地与线上说明
+### 11.4 问题判定层（Phase 2.1）
+
+后端已新增轻量前置分类 `questionJudgment`（仅请求作用域内可访问），用于后续数据可用性层和路由层复用。
+
+首版固定输出 3 项（code + label）：
+
+- `primary_dimension`：`overall|product|hospital|trend|risk_opportunity|other`
+- `granularity`：`summary|detail`
+- `relevance`：`relevant|irrelevant`
+
+判定规则：
+
+- 主维度优先级：`product > hospital > trend > risk_opportunity > overall > other`
+- 细度：命中“具体/分别/明细/各月/每月/top/排名/列出来/详细拆解”等信号判为 `detail`，否则默认 `summary`
+- 相关性：仅拦“明显无关”，判不稳默认 `relevant`
+
+边界（本阶段）：
+
+- 不写响应体
+- 不写入 prompt
+- 不持久化
+- 不做路由/补调/多轮纠偏
+
+验收样例：
+
+- “这个月整体怎么样” -> `overall / summary / relevant`
+- “重点做哪个产品” -> `product / summary / relevant`
+- “哪家医院最重要” -> `hospital / summary / relevant`
+- “近三个月趋势怎么样” -> `trend / summary / relevant`
+- “当前最大的风险是什么” -> `risk_opportunity / summary / relevant`
+- “把近三个月每个月数据分别列出来” -> `trend / detail / relevant`
+- “今天天气如何” -> `other / summary / irrelevant`
+- “帮我看看这个情况” -> `overall / summary / relevant`
+- “接下来怎么推进” -> `risk_opportunity / summary / relevant`
+
+### 11.5 数据可用性层（Phase 2.2）
+
+后端已新增 `dataAvailability`（仅请求作用域内可访问），基于 `business_snapshot + questionJudgment` 做 4 项内部判断：
+
+- `has_business_data`：`available|unavailable`
+- `dimension_availability`：`available|partial|unavailable`
+- `answer_depth`：`overall|focused|detailed`
+- `gap_hint_needed`：`yes|no`
+
+本阶段边界：
+
+- 仅做规则判断，不引入模型参与。
+- 不参与最终回答生成，不对外返回。
+- 不注入模型输入（prompt），不持久化。
+
+关键语义锁定：
+
+- `analysis_range` 不参与“是否有业务数据”判断。
+- `hospital_performance=[]` 在本阶段默认视为医院维度无支撑。
+- 有效值语义：`"0"`、`"0.00%"`、`"0盒"`按有效值处理；缺失值仅使用明确占位符（如 `-- / unknown / 空字符串`），不使用 `"0"` 表示缺失。
+- `overall` 维度判定以 `performance_overview` 为主支撑：
+  - `performance_overview` 有效，且 `key_business_signals` 或 `recent_trends` 任一有效 -> `available`
+  - `performance_overview` 仅自身有效 -> `partial`
+  - `performance_overview` 无效但其他整体支撑存在 -> `partial`
+- `risk_opportunity` 若仅由 `key_business_signals` 支撑而判为 `partial`，语义是“可做泛判断，不可视为专门风险/机会依据”。
+
+与会话状态层关系（本阶段锁定）：
+
+- `dataAvailability` 仍仅基于当前轮 `questionJudgment + business_snapshot` 计算。
+- 本阶段 `dataAvailability` 不消费 `sessionState`；会话承接对数据可用性层的影响留待后续阶段接入。
+
+### 11.6 会话状态层（Phase 2.3）
+
+后端新增 `sessionState`（仅请求作用域内可访问），用于会话承接/切题状态判断。固定 4 个布尔字段：
+
+- `is_followup`
+- `inherit_primary_dimension`
+- `inherit_scope`
+- `topic_shift_detected`
+
+输入与窗口：
+
+- 输入仅使用当前 `message` + `history`（最近窗口）。
+- 历史窗口只保留历史内容，不包含当前 `message`。
+
+关键约束：
+
+- `topic_shift_detected=true` 时，仅强制：
+  - `inherit_primary_dimension=false`
+  - `inherit_scope=false`
+- 允许“承接式切题”：`is_followup=true` 与 `topic_shift_detected=true` 可并存。
+- `is_followup=false` 时，继承字段均为 `false`。
+
+判定边界（首版）：
+
+- 仅规则/启发式，不引入模型参与判定。
+- `risk_opportunity` 显式维度信号仅接受高置信表达（如“最大风险/最大机会/关键问题/突破口/最值得关注”）；单独“风险/机会”不触发显式维度切换。
+- 范围改口径优先视为 `scope override`，不默认等价于 `topic_shift_detected=true`。
+
+与问题判定层关系（本阶段锁定）：
+
+- 本阶段 `sessionState` 只产出承接状态，不直接回写或修正 `questionJudgment`。
+- `sessionState` 与 `questionJudgment` 的联合消费留待后续阶段接入。
+
+### 11.7 路由层（Phase 2.4）
+
+后端新增 `routeDecision`（仅请求作用域内可访问），在调用 Gemini 前基于：
+
+- `questionJudgment`（Phase 2.1）
+- `dataAvailability`（Phase 2.2）
+- `sessionState`（Phase 2.3）
+
+输出 4 类业务路由结果之一：
+
+- `direct_answer`（直接回答）
+- `bounded_answer`（带边界回答）
+- `refuse`（拒绝/收住）
+- `need_more_data`（进入后续补强）
+
+优先级顺序（固定）：
+
+- `refuse -> need_more_data -> bounded_answer -> direct_answer`
+
+判定要点（首版锁定）：
+
+- `need_more_data` 若命中多个条件，会先完整收集全部 `reason_codes`，再一次性返回（不只保留首个原因）。
+- `need_more_data` 是内部路由状态，用于进入后续按需调取/补强链路，不是最终用户可见回复类型。
+- `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
+- `sessionState` 入参在本阶段保留为依赖链就位，路由规则首版不消费其分支影响（后续阶段再接入）。
+
+边界（本阶段）：
+
+- 路由层只负责业务路由决策。
+- 不执行按需调取动作（仅产出内部路由状态）。
+- 不做最终输出分支动作。
+- 不处理 Gemini 上游失败、超时、空回复、格式异常等技术兜底。
+- 技术失败继续由后续链路的容错/质量控制逻辑处理。
+- `routeDecision` 不注入 prompt、不写响应体、不持久化。
+
+### 11.8 按需调取层（Phase 2.5）
+
+后端新增 `need_more_data` 的内部补强闭环（仅请求作用域内）：
+
+1. 第一段先按既有顺序完成内部判断：  
+`questionJudgment -> normalizedBusinessSnapshot -> historyWindow -> sessionState -> dataAvailability -> routeDecision`
+2. 仅当 `routeDecision=need_more_data` 时，触发一次后端自动补强（同一请求最多一次）。  
+3. 补强目标仅限当前问题主维度（`other` 按 `overall` 兜底），不是补全整份 `business_snapshot`。  
+4. 补强窗口绑定 `analysis_range`，并应用最大 24 个月上限。  
+5. `analysis_range` 无效时，本次补强跳过；随后按未补强结果继续重判。  
+6. 补强后必须重跑 `dataAvailability + routeDecision`。  
+7. 若重判后仍不足（仍为 `need_more_data`），最终内部收敛为 `bounded_answer`，不做第二次补强。
+
+本阶段边界：
+
+- 不改对外 API 契约，不改前端请求协议。
+- 不改 prompt 主链结构，但允许将输入快照替换为补强后的 `business_snapshot`。
+- 不新增用户可见字段，不输出内部补强诊断信息。
+- 不做多轮代理或无限递归。
+
+### 11.9 输出层（Phase 2.6）
+
+输出层仅处理 3 类最终用户可见回复：
+
+- `direct_answer`
+- `bounded_answer`
+- `refuse`
+
+说明：
+
+- `need_more_data` 已在 Phase 2.5 内部消化，不属于用户可见输出类型。
+- 输出层输入必须使用 Phase 2.5 完成后的最终内部结果（最终 `routeDecision + dataAvailability`）。
+- 输出层不重新参与数据判断与补强决策。
+
+三类输出约束：
+
+1. `direct_answer`  
+先给业务结论，再给依据/分析，必要时补建议；不暴露内部流程与状态名。  
+2. `bounded_answer`  
+固定顺序为“当前结论 -> 边界说明 -> 可继续深入方向”；必须先结论后边界，不要求用户手动补数据。  
+3. `refuse`  
+优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例。
+
+系统与模型分工：
+
+- 系统负责最终输出类型与结构约束。
+- 模型负责 `direct_answer / bounded_answer` 的自然表达。
+- `refuse` 可由后端模板直接输出。
+
+Prompt 接入方式：
+
+- 输出层约束作为现有 prompt 主链的追加约束接入。
+- 不覆盖已有角色定义、业务边界与“不编造数据”约束。
+
+边界（本阶段）：
+
+- 不改对外响应结构。
+- 不新增前端协议字段。
+- 不改 UI。
+- 不负责技术失败兜底（超时、空回复、上游异常仍走现有错误链路）。
+
+### 11.10 端到端回归与最小观测（Phase 2.7）
+
+目标：
+
+- 验证 Phase 2.1~2.6 全链路顺序：判定 -> 可用性 -> 会话状态 -> 路由 -> 自动补强（可触发）-> 输出层。
+- 保证 `need_more_data` 不成为最终用户可见输出类型。
+- 在不改对外契约前提下提供最小内部 trace 便于排查。
+
+Trace 规则（仅 server log）：
+
+- 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability/sessionState/routeDecision/retrievalState/outputContext/forced_bounded`。
+- 不打印 token、不打印业务明细、不打印原始 records。
+- 不打印 `message` 原文、不打印 `history` 原文。
+
+Trace 输出时机：
+
+- 仅在 Phase 2.5 重判与收敛完成，且 Phase 2.6 `outputContext` 生成完成后，输出一次最终态 trace。
+
+最终路由不变量：
+
+- 输出层前增加防御性保护：若最终仍为 `need_more_data`，强制收敛到 `bounded_answer`。
+- `forced_bounded=true` 用于标记该兜底；正常情况下此标记应极少出现（Phase 2.5 已应完成收敛）。
+
+`retrievalState` 语义：
+
+- `triggered=true` 表示进入补强入口函数，不等于补强成功。
+- `success=true` 表示补强已产出增强片段。
+
+最小 E2E 用例：
+
+1. 无关问题（天气/星座）  
+预期：`route=refuse`，输出拒绝模板，不触发补强。
+2. 整体摘要（这个月整体怎么样）  
+预期：`route=direct_answer` 或 `bounded_answer`；不出现内部过程词。
+3. 产品明细（把 Top 产品列出来并说原因）  
+预期：可触发补强；最终仅 `direct/bounded`；不出现最终 `need_more_data`。
+4. 医院问题（哪家医院最重要）  
+预期：医院维度不足时触发补强；最终 `direct/bounded`。
+5. 趋势问题（近几个月趋势如何）  
+预期：趋势维度不足时触发补强；最终 `direct/bounded`。
+6. 承接切题（上轮产品，本轮“那医院呢？”）  
+预期：`is_followup=true` 且 `topic_shift_detected=true`，继承项为 `false`，路由按医院维度判定。
+
+窗口绑定专项验收：
+
+- 报表区间 `>24` 个月时，`retrievalState.window_capped=true`。
+- 报表区间 `<=24` 个月时，`retrievalState.window_capped=false`。
+
+### 11.11 本地与线上说明
 
 - `npm run dev` 只启动静态站点，不提供 `/api/chat`。
 - 聊天功能需在 Cloudflare Pages Functions 环境验证。
 
-### 11.5 最小接口验收（curl）
+### 11.12 最小接口验收（curl）
 
 ```bash
 curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
@@ -293,11 +558,38 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
     "message":"请基于当前业务快照给出本月重点推进建议。",
     "business_snapshot":{
       "analysis_range":{"start_month":"2026-01","end_month":"2026-03","period":"2026-01~2026-03"},
-      "performance_overview":{"sales_amount":"128.50万元","amount_achievement":"92.40%","latest_key_change":"最近月金额环比 +5.20%","sales_volume":"1850盒"},
+      "performance_overview":{
+        "sales_amount":"128.50万元",
+        "sales_amount_value":1285000,
+        "amount_achievement":"92.40%",
+        "amount_achievement_ratio":0.924,
+        "latest_key_change":"最近月金额环比 +5.20%",
+        "latest_key_change_ratio":0.052,
+        "latest_key_change_code":"amount_mom",
+        "sales_volume":"1850盒",
+        "sales_volume_value":1850
+      },
       "key_business_signals":["最近月（2026-03）销售额较上月上升，变动+5.20%。","Top1产品阿莫西林贡献销售额42.30万元，占比32.91%。"],
-      "product_performance":[{"product_name":"阿莫西林","product_code":"P001","sales_amount":"42.30万元","sales_share":"32.91%","change_metric":"金额同比","change_value":"+8.10%"}],
+      "product_performance":[
+        {
+          "product_name":"阿莫西林",
+          "product_code":"P001",
+          "sales_amount":"42.30万元",
+          "sales_amount_value":423000,
+          "sales_share":"32.91%",
+          "sales_share_ratio":0.3291,
+          "change_metric":"金额同比",
+          "change_metric_code":"amount_yoy",
+          "change_value":"+8.10%",
+          "change_value_ratio":0.081
+        }
+      ],
       "hospital_performance":[],
-      "recent_trends":[{"period":"2026-01","sales_amount":"38.20万元","amount_mom":"--","sales_volume":"560盒"},{"period":"2026-02","sales_amount":"40.10万元","amount_mom":"+4.97%","sales_volume":"600盒"},{"period":"2026-03","sales_amount":"50.20万元","amount_mom":"+25.19%","sales_volume":"690盒"}],
+      "recent_trends":[
+        {"period":"2026-01","sales_amount":"38.20万元","sales_amount_value":382000,"amount_mom":"--","amount_mom_ratio":null,"sales_volume":"560盒","sales_volume_value":560},
+        {"period":"2026-02","sales_amount":"40.10万元","sales_amount_value":401000,"amount_mom":"+4.97%","amount_mom_ratio":0.0497,"sales_volume":"600盒","sales_volume_value":600},
+        {"period":"2026-03","sales_amount":"50.20万元","sales_amount_value":502000,"amount_mom":"+25.19%","amount_mom_ratio":0.2519,"sales_volume":"690盒","sales_volume_value":690}
+      ],
       "risk_alerts":[],
       "opportunity_hints":[]
     }

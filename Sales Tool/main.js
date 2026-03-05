@@ -1083,9 +1083,14 @@ async function initializeApp() {
       },
       performance_overview: {
         sales_amount: "--",
+        sales_amount_value: null,
         amount_achievement: "--",
+        amount_achievement_ratio: null,
         latest_key_change: "--",
+        latest_key_change_ratio: null,
+        latest_key_change_code: "unknown",
         sales_volume: "--",
+        sales_volume_value: null,
       },
       key_business_signals: [],
       product_performance: [],
@@ -1104,18 +1109,21 @@ async function initializeApp() {
   }
 
   function formatAmountWanText(value) {
+    if (value === null || value === undefined || value === "") return "--";
     const amount = Number(value);
     if (!Number.isFinite(amount)) return "--";
     return `${(amount / 10000).toFixed(2)}万元`;
   }
 
   function formatPercentText(ratio) {
+    if (ratio === null || ratio === undefined || ratio === "") return "--";
     const value = Number(ratio);
     if (!Number.isFinite(value)) return "--";
     return `${(value * 100).toFixed(2)}%`;
   }
 
   function formatDeltaPercentText(ratio) {
+    if (ratio === null || ratio === undefined || ratio === "") return "--";
     const value = Number(ratio);
     if (!Number.isFinite(value)) return "--";
     const percentText = `${(Math.abs(value) * 100).toFixed(2)}%`;
@@ -1125,15 +1133,113 @@ async function initializeApp() {
   }
 
   function formatQuantityBoxText(value) {
+    if (value === null || value === undefined || value === "") return "--";
     const quantity = Number(value);
     if (!Number.isFinite(quantity)) return "--";
     return `${formatMoney(roundMoney(quantity))}盒`;
+  }
+
+  function normalizeNumericValue(value) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+
+  function calcGrowthRatio(current, baseline) {
+    const currentValue = Number(current);
+    const baselineValue = Number(baseline);
+    if (!Number.isFinite(currentValue) || !Number.isFinite(baselineValue) || baselineValue === 0) {
+      return null;
+    }
+    return Math.round((((currentValue - baselineValue) / Math.abs(baselineValue)) + Number.EPSILON) * 10000) / 10000;
   }
 
   function parseProductCodeFromKey(productKey) {
     const key = String(productKey || "").trim();
     if (!key.startsWith("id:")) return "";
     return String(key.slice(3) || "").trim();
+  }
+
+  function buildSnapshotProductKey(record) {
+    const productId = String(record?.productId || "").trim();
+    if (productId) return `id:${productId}`;
+    return `name:${normalizeText(record?.productName)}`;
+  }
+
+  function parseYmFromRecordDate(rawDate) {
+    const value = String(rawDate || "").trim();
+    const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) return "";
+
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    const day = Number(matched[3]);
+    if (!isValidDateParts(year, month, day)) return "";
+
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+  }
+
+  function buildProductAmountMomRatioMap(records, latestYm, previousYm) {
+    const ratioMap = new Map();
+    if (!Array.isArray(records) || records.length === 0) return ratioMap;
+    if (!isValidYm(latestYm) || !isValidYm(previousYm)) return ratioMap;
+
+    const totalsMap = new Map();
+    records.forEach((record) => {
+      const ym = parseYmFromRecordDate(record?.date);
+      if (ym !== latestYm && ym !== previousYm) return;
+
+      const amount = normalizeNumericValue(record?.amount);
+      if (amount === null) return;
+
+      const productKey = buildSnapshotProductKey(record);
+      if (!productKey) return;
+
+      const previous = totalsMap.get(productKey) || { latestAmount: 0, previousAmount: 0 };
+      if (ym === latestYm) {
+        previous.latestAmount += amount;
+      } else {
+        previous.previousAmount += amount;
+      }
+      totalsMap.set(productKey, previous);
+    });
+
+    totalsMap.forEach((totals, productKey) => {
+      const latestAmount = roundMoney(totals.latestAmount);
+      const previousAmount = roundMoney(totals.previousAmount);
+      ratioMap.set(productKey, calcGrowthRatio(latestAmount, previousAmount));
+    });
+
+    return ratioMap;
+  }
+
+  function resolveProductChangeMeta(row, productMomRatioMap) {
+    const yoyRatio = normalizeNumericValue(row?.amountYoy);
+    if (yoyRatio !== null) {
+      return {
+        changeMetric: "金额同比",
+        changeMetricCode: "amount_yoy",
+        changeValue: formatDeltaPercentText(yoyRatio),
+        changeValueRatio: yoyRatio,
+      };
+    }
+
+    const productKey = String(row?.productKey || "").trim();
+    const momRatio = productKey ? normalizeNumericValue(productMomRatioMap.get(productKey)) : null;
+    if (momRatio !== null) {
+      return {
+        changeMetric: "金额环比",
+        changeMetricCode: "amount_mom",
+        changeValue: formatDeltaPercentText(momRatio),
+        changeValueRatio: momRatio,
+      };
+    }
+
+    return {
+      changeMetric: "变化值",
+      changeMetricCode: "unknown",
+      changeValue: "--",
+      changeValueRatio: null,
+    };
   }
 
   function buildBusinessSnapshotPayload() {
@@ -1149,7 +1255,6 @@ async function initializeApp() {
     };
 
     if (!hasValidRange) {
-      snapshot.key_business_signals = ["当前分析区间无效或数据不足，请先在报表区设置有效起止月。"];
       return snapshot;
     }
 
@@ -1186,17 +1291,29 @@ async function initializeApp() {
 
     const latestMonthRow = monthRows.length > 0 ? monthRows[monthRows.length - 1] : null;
     let latestKeyChange = "--";
+    let latestKeyChangeCode = "unknown";
+    let latestKeyChangeRatio = null;
     if (latestMonthRow && Number.isFinite(Number(latestMonthRow.amountMom))) {
-      latestKeyChange = `最近月金额环比 ${formatDeltaPercentText(latestMonthRow.amountMom)}`;
+      latestKeyChangeCode = "amount_mom";
+      latestKeyChangeRatio = Number(latestMonthRow.amountMom);
+      latestKeyChange = `最近月金额环比 ${formatDeltaPercentText(latestKeyChangeRatio)}`;
     } else if (latestMonthRow && Number.isFinite(Number(latestMonthRow.amountYoy))) {
-      latestKeyChange = `最近月金额同比 ${formatDeltaPercentText(latestMonthRow.amountYoy)}`;
+      latestKeyChangeCode = "amount_yoy";
+      latestKeyChangeRatio = Number(latestMonthRow.amountYoy);
+      latestKeyChange = `最近月金额同比 ${formatDeltaPercentText(latestKeyChangeRatio)}`;
     }
 
+    const achievementRatio = !hasMissingTarget && targetAmountSum > 0 ? totalAmount / targetAmountSum : null;
     snapshot.performance_overview = {
       sales_amount: formatAmountWanText(totalAmount),
-      amount_achievement: !hasMissingTarget && targetAmountSum > 0 ? formatPercentText(totalAmount / targetAmountSum) : "--",
+      sales_amount_value: totalAmount,
+      amount_achievement: achievementRatio === null ? "--" : formatPercentText(achievementRatio),
+      amount_achievement_ratio: achievementRatio,
       latest_key_change: latestKeyChange,
+      latest_key_change_ratio: latestKeyChangeRatio,
+      latest_key_change_code: latestKeyChangeCode,
       sales_volume: formatQuantityBoxText(totalQuantity),
+      sales_volume_value: totalQuantity,
     };
 
     const keySignals = [];
@@ -1210,8 +1327,6 @@ async function initializeApp() {
         const yoy = Number(latestMonthRow.amountYoy);
         const trend = yoy > 0 ? "上升" : yoy < 0 ? "下降" : "持平";
         keySignals.push(`最近月（${latestPeriod}）销售额同比${trend}，变动${formatDeltaPercentText(yoy)}。`);
-      } else {
-        keySignals.push(`最近月（${latestPeriod}）缺少可比基线，暂无法判断金额变化趋势。`);
       }
     }
 
@@ -1224,27 +1339,36 @@ async function initializeApp() {
     }
 
     snapshot.key_business_signals = keySignals.slice(0, 2);
-    if (snapshot.key_business_signals.length === 0) {
-      snapshot.key_business_signals = ["当前分析区间数据不足，暂无法提炼关键业务信号。"];
-    }
-    if (!reportSnapshot?.hasRangeRecords) {
-      snapshot.key_business_signals = ["当前分析区间暂无销售数据，暂无法形成完整业务结论。"];
-    }
 
-    snapshot.product_performance = productRows.slice(0, 2).map((row) => ({
-      product_name: String(row?.productName || "").trim() || "未命名产品",
-      product_code: parseProductCodeFromKey(row?.productKey),
-      sales_amount: formatAmountWanText(row?.amount),
-      sales_share: formatPercentText(row?.amountShare),
-      change_metric: "金额同比",
-      change_value: formatDeltaPercentText(row?.amountYoy),
-    }));
+    const latestTrendPeriod = String(monthRows[monthRows.length - 1]?.ym || "").trim();
+    const previousTrendPeriod = String(monthRows[monthRows.length - 2]?.ym || "").trim();
+    const productMomRatioMap = buildProductAmountMomRatioMap(reportRecords, latestTrendPeriod, previousTrendPeriod);
+    snapshot.product_performance = productRows.slice(0, 2).map((row) => {
+      const changeMeta = resolveProductChangeMeta(row, productMomRatioMap);
+      const salesAmountValue = normalizeNumericValue(row?.amount);
+      const salesShareRatio = normalizeNumericValue(row?.amountShare);
+      return {
+        product_name: String(row?.productName || "").trim() || "未命名产品",
+        product_code: parseProductCodeFromKey(row?.productKey),
+        sales_amount: formatAmountWanText(salesAmountValue),
+        sales_amount_value: salesAmountValue,
+        sales_share: formatPercentText(salesShareRatio),
+        sales_share_ratio: salesShareRatio,
+        change_metric: changeMeta.changeMetric,
+        change_metric_code: changeMeta.changeMetricCode,
+        change_value: changeMeta.changeValue,
+        change_value_ratio: changeMeta.changeValueRatio,
+      };
+    });
 
     snapshot.recent_trends = monthRows.slice(-3).map((row) => ({
       period: String(row?.ym || "").trim(),
       sales_amount: formatAmountWanText(row?.amount),
+      sales_amount_value: normalizeNumericValue(row?.amount),
       amount_mom: formatDeltaPercentText(row?.amountMom),
+      amount_mom_ratio: normalizeNumericValue(row?.amountMom),
       sales_volume: formatQuantityBoxText(row?.quantity),
+      sales_volume_value: normalizeNumericValue(row?.quantity),
     }));
 
     return snapshot;
