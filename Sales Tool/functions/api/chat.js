@@ -147,6 +147,7 @@ const ROUTE_REASON_CODES = Object.freeze({
   DETAIL_REQUESTED_BUT_INSUFFICIENT: "detail_requested_but_insufficient",
   PRODUCT_FULL_SCOPE_INSUFFICIENT: "product_full_scope_insufficient",
   PRODUCT_NAMED_SCOPE_INSUFFICIENT: "product_named_scope_insufficient",
+  PRODUCT_HOSPITAL_SCOPE_INSUFFICIENT: "product_hospital_scope_insufficient",
   HOSPITAL_NAMED_SCOPE_INSUFFICIENT: "hospital_named_scope_insufficient",
   DIMENSION_PARTIAL: "dimension_partial",
   GAP_HINT_NEEDED: "gap_hint_needed",
@@ -346,6 +347,20 @@ const HOSPITAL_MONTHLY_DETAIL_KEYWORDS = Object.freeze([
   "十二个月",
   "全年",
 ]);
+const PRODUCT_HOSPITAL_SCOPE_KEYWORDS = Object.freeze([
+  "医院",
+  "门诊",
+  "机构",
+  "诊所",
+  "终端",
+  "客户",
+  "哪些医院",
+  "哪家医院",
+  "医院贡献",
+  "医院销量",
+  "在哪些医院",
+  "在哪家医院",
+]);
 const FULL_PRODUCT_REQUEST_KEYWORDS = Object.freeze([
   "所有产品",
   "全部产品",
@@ -497,6 +512,21 @@ function isFullProductRequest(message, questionJudgment) {
   return containsAnyKeyword(text, FULL_PRODUCT_REQUEST_KEYWORDS);
 }
 
+function isProductHospitalRequest(message, questionJudgment, productNamedRequested) {
+  if (!productNamedRequested) {
+    return false;
+  }
+  const relevanceCode = trimString(questionJudgment?.relevance?.code);
+  if (relevanceCode !== QUESTION_JUDGMENT_CODES.relevance.RELEVANT) {
+    return false;
+  }
+  const text = normalizeQuestionText(message);
+  if (!text) {
+    return false;
+  }
+  return containsAnyKeyword(text, PRODUCT_HOSPITAL_SCOPE_KEYWORDS);
+}
+
 function containsAnyKeyword(text, keywords) {
   if (!text || !Array.isArray(keywords) || keywords.length === 0) {
     return false;
@@ -588,8 +618,26 @@ function buildEffectiveQuestionJudgment(questionJudgment, options = {}) {
   if (!base) {
     return buildQuestionJudgment("");
   }
-  if (!options?.productNamedRequested && !options?.hospitalNamedRequested) {
+  if (!options?.productFullRequested && !options?.productHospitalRequested && !options?.productNamedRequested && !options?.hospitalNamedRequested) {
     return base;
+  }
+  if (options?.productFullRequested) {
+    return {
+      ...base,
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: QUESTION_JUDGMENT_LABELS.primary_dimension[QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT],
+      },
+    };
+  }
+  if (options?.productHospitalRequested) {
+    return {
+      ...base,
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+        label: QUESTION_JUDGMENT_LABELS.primary_dimension[QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL],
+      },
+    };
   }
   if (options?.productNamedRequested) {
     return {
@@ -1485,6 +1533,34 @@ function resolveHospitalNamedRequestContext({
   };
 }
 
+function resolveProductHospitalRequestContext({
+  message,
+  questionJudgment,
+  productFullRequested,
+  productNamedRequested,
+  requestedProducts,
+}) {
+  const relevanceCode = trimString(questionJudgment?.relevance?.code);
+  if (
+    relevanceCode !== QUESTION_JUDGMENT_CODES.relevance.RELEVANT ||
+    productFullRequested ||
+    !productNamedRequested
+  ) {
+    return {
+      productHospitalRequested: false,
+    };
+  }
+  const safeRequestedProducts = Array.isArray(requestedProducts) ? requestedProducts : [];
+  if (safeRequestedProducts.length === 0) {
+    return {
+      productHospitalRequested: false,
+    };
+  }
+  return {
+    productHospitalRequested: isProductHospitalRequest(message, questionJudgment, productNamedRequested),
+  };
+}
+
 function resolveControlledRowLimit(existingRows, granularityCode, availableCount) {
   if (!Number.isInteger(availableCount) || availableCount <= 0) {
     return 0;
@@ -2023,6 +2099,27 @@ function resolveProductNamedSupportCode(snapshot, requestedProducts) {
   return "none";
 }
 
+function buildRequestedProductLookupKeySet(requestedProducts) {
+  const targets = Array.isArray(requestedProducts) ? requestedProducts : [];
+  const targetKeys = new Set();
+  targets.forEach((target) => {
+    const key = normalizeProductNameForMatch(target?.lookup_key || target?.product_name);
+    if (key) {
+      targetKeys.add(key);
+    }
+  });
+  return targetKeys;
+}
+
+function resolveProductHospitalSupportCode(snapshot) {
+  const overview = snapshot?.performance_overview;
+  const supportCode = trimString(overview?.product_hospital_support_code).toLocaleLowerCase();
+  if (supportCode === "full" || supportCode === "partial" || supportCode === "none") {
+    return supportCode;
+  }
+  return "none";
+}
+
 function resolveHospitalMonthlySupportCode(snapshot) {
   const rows = Array.isArray(snapshot?.hospital_performance) ? snapshot.hospital_performance : [];
   if (rows.length === 0) {
@@ -2099,12 +2196,47 @@ function buildRiskOpportunityHints(metrics) {
   };
 }
 
+function filterRecordsForProductHospital(records, requestedProducts) {
+  const sourceRecords = Array.isArray(records) ? records : [];
+  const requestedRows = Array.isArray(requestedProducts) ? requestedProducts : [];
+  const targetKeys = buildRequestedProductLookupKeySet(requestedProducts);
+  if (requestedRows.length === 0 || targetKeys.size === 0) {
+    return {
+      filtered_records: sourceRecords,
+      target_count: targetKeys.size,
+      matched_target_count: 0,
+      support_code: "none",
+      filter_applied: false,
+    };
+  }
+
+  const matchedTargetKeys = new Set();
+  const filteredRecords = sourceRecords.filter((record) => {
+    const productKey = normalizeProductNameForMatch(record?.product_name);
+    if (!productKey || !targetKeys.has(productKey)) {
+      return false;
+    }
+    matchedTargetKeys.add(productKey);
+    return true;
+  });
+
+  const supportCode = targetKeys.size < requestedRows.length ? "partial" : "full";
+  return {
+    filtered_records: filteredRecords,
+    target_count: targetKeys.size,
+    matched_target_count: matchedTargetKeys.size,
+    support_code: supportCode,
+    filter_applied: true,
+  };
+}
+
 async function buildDimensionEnhancementPayload(params) {
   const targetDimension = trimString(params?.targetDimension);
   const granularityCode = trimString(params?.granularityCode);
   const hospitalMonthlyDetailRequested = Boolean(params?.hospitalMonthlyDetailRequested);
   const hospitalNamedRequested = Boolean(params?.hospitalNamedRequested);
   const requestedHospitals = Array.isArray(params?.requestedHospitals) ? params.requestedHospitals : [];
+  const productHospitalRequested = Boolean(params?.productHospitalRequested);
   const productFullRequested = Boolean(params?.productFullRequested);
   const productNamedRequested = Boolean(params?.productNamedRequested);
   const requestedProducts = Array.isArray(params?.requestedProducts) ? params.requestedProducts : [];
@@ -2186,6 +2318,25 @@ async function buildDimensionEnhancementPayload(params) {
         requestedHospitals,
       },
     );
+    if (productHospitalRequested) {
+      const supportCode = trimString(params?.productHospitalSupportCode).toLocaleLowerCase();
+      const targetCount = normalizeNumericValue(params?.productHospitalTargetCount);
+      const safeSupportCode = supportCode === "full" || supportCode === "partial" || supportCode === "none" ? supportCode : "none";
+      payload.performance_overview = normalizeSnapshotObject({
+        ...payload.performance_overview,
+        product_hospital_support_code: safeSupportCode,
+        product_hospital_target_count_value: targetCount === null ? 0 : targetCount,
+        product_hospital_hospital_count_value: payload.hospital_performance.length,
+      });
+      if (payload.hospital_performance.length === 0) {
+        const productNames = requestedProducts
+          .map((item) => trimString(item?.product_name))
+          .filter((item) => item)
+          .slice(0, 3);
+        const nameText = productNames.length > 0 ? productNames.join("、") : "该产品";
+        payload.key_business_signals = [`${nameText}在当前范围内未产生医院销量贡献。`];
+      }
+    }
   }
 
   if (targetDimension === QUESTION_JUDGMENT_CODES.primary_dimension.RISK_OPPORTUNITY) {
@@ -2232,6 +2383,12 @@ function mergeSnapshotByTargetDimension(baseSnapshot, enhancementPayload, target
       }
       break;
     case QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL:
+      if (enhancement.performance_overview && Object.keys(enhancement.performance_overview).length > 0) {
+        merged.performance_overview = {
+          ...merged.performance_overview,
+          ...normalizeSnapshotObject(enhancement.performance_overview),
+        };
+      }
       if (Array.isArray(enhancement.hospital_performance)) {
         merged.hospital_performance = normalizeSnapshotObjectArray(enhancement.hospital_performance);
       }
@@ -2281,6 +2438,8 @@ async function buildOnDemandSnapshotEnhancement(params) {
 
   retrievalState.triggered = true;
   const targetDimension = resolveTargetDimensionForEnhancement(params?.questionJudgment?.primary_dimension?.code);
+  const productHospitalRequested = Boolean(params?.productHospitalRequested);
+  const requestedProducts = Array.isArray(params?.requestedProducts) ? params.requestedProducts : [];
   retrievalState.target_dimension = targetDimension;
 
   const windowInfo = resolveRetrievalWindowFromSnapshot(sourceSnapshot);
@@ -2302,23 +2461,38 @@ async function buildOnDemandSnapshotEnhancement(params) {
     };
   }
 
-  if (records.length === 0) {
+  const useProductHospitalFiltering =
+    targetDimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL && productHospitalRequested;
+  if (records.length === 0 && !useProductHospitalFiltering) {
     return {
       effectiveSnapshot: sourceSnapshot,
       retrievalState,
     };
   }
 
-  const metrics = buildAggregatedMetrics(records, windowInfo.month_keys);
+  let recordsForMetrics = records;
+  let productHospitalSupportCode = "none";
+  let productHospitalTargetCount = 0;
+  if (useProductHospitalFiltering) {
+    const filteredResult = filterRecordsForProductHospital(records, requestedProducts);
+    recordsForMetrics = filteredResult.filtered_records;
+    productHospitalSupportCode = filteredResult.support_code;
+    productHospitalTargetCount = filteredResult.target_count;
+  }
+
+  const metrics = buildAggregatedMetrics(recordsForMetrics, windowInfo.month_keys);
   const enhancementPayload = await buildDimensionEnhancementPayload({
     targetDimension,
     granularityCode: trimString(params?.questionJudgment?.granularity?.code),
     hospitalMonthlyDetailRequested: Boolean(params?.hospitalMonthlyDetailRequested),
     hospitalNamedRequested: Boolean(params?.hospitalNamedRequested),
     requestedHospitals: Array.isArray(params?.requestedHospitals) ? params.requestedHospitals : [],
+    productHospitalRequested,
+    productHospitalSupportCode,
+    productHospitalTargetCount,
     productFullRequested: Boolean(params?.productFullRequested),
     productNamedRequested: Boolean(params?.productNamedRequested),
-    requestedProducts: Array.isArray(params?.requestedProducts) ? params.requestedProducts : [],
+    requestedProducts,
     metrics,
     sourceSnapshot,
     authToken: params?.authToken,
@@ -2672,6 +2846,7 @@ function judgeBusinessDataAvailability(snapshot) {
 
 function judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessDataCode, options = {}) {
   const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  const productHospitalRequested = Boolean(options?.productHospitalRequested);
   const hospitalNamedRequested = Boolean(options?.hospitalNamedRequested);
   const requestedHospitals = Array.isArray(options?.requestedHospitals) ? options.requestedHospitals : [];
   const productFullRequested = Boolean(options?.productFullRequested);
@@ -2723,7 +2898,16 @@ function judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessDataC
       break;
     }
     case QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL: {
-      if (hospitalNamedRequested) {
+      if (productHospitalRequested) {
+        const productHospitalSupportCode = resolveProductHospitalSupportCode(snapshot);
+        if (productHospitalSupportCode === "full") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE;
+        } else if (productHospitalSupportCode === "partial") {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.PARTIAL;
+        } else {
+          code = DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE;
+        }
+      } else if (hospitalNamedRequested) {
         const hospitalNamedSupportCode = resolveHospitalNamedSupportCode(snapshot, requestedHospitals);
         if (hospitalNamedSupportCode === "full") {
           code = DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE;
@@ -2890,6 +3074,7 @@ function judgeGapHintNeeded(questionJudgment, hasBusinessDataCode, dimensionAvai
 
 function buildDataAvailability(snapshot, questionJudgment, options = {}) {
   const hospitalMonthlyDetailRequested = Boolean(options?.hospitalMonthlyDetailRequested);
+  const productHospitalRequested = Boolean(options?.productHospitalRequested);
   const hospitalNamedRequested = Boolean(options?.hospitalNamedRequested);
   const requestedHospitals = Array.isArray(options?.requestedHospitals) ? options.requestedHospitals : [];
   const productFullRequested = Boolean(options?.productFullRequested);
@@ -2897,6 +3082,7 @@ function buildDataAvailability(snapshot, questionJudgment, options = {}) {
   const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
   const hasBusinessData = judgeBusinessDataAvailability(snapshot);
   const dimensionAvailability = judgeDimensionAvailability(snapshot, questionJudgment, hasBusinessData.code, {
+    productHospitalRequested,
     hospitalNamedRequested,
     requestedHospitals,
     productFullRequested,
@@ -2922,12 +3108,15 @@ function buildDataAvailability(snapshot, questionJudgment, options = {}) {
       ? "hospital_monthly"
       : productFullRequested
         ? "product_full"
+        : productHospitalRequested
+          ? "product_hospital"
         : productNamedRequested
           ? "product_named"
           : hospitalNamedRequested
             ? "hospital_named"
         : "generic",
     hospital_monthly_support: hospitalMonthlyDetailRequested ? resolveHospitalMonthlySupportCode(snapshot) : "none",
+    product_hospital_support: productHospitalRequested ? resolveProductHospitalSupportCode(snapshot) : "none",
     hospital_named_support: hospitalNamedRequested ? resolveHospitalNamedSupportCode(snapshot, requestedHospitals) : "none",
     product_full_support: productFullRequested ? resolveProductFullSupportCode(snapshot) : "none",
     product_named_support: productNamedRequested ? resolveProductNamedSupportCode(snapshot, requestedProducts) : "none",
@@ -2957,6 +3146,8 @@ function buildRouteDecision(questionJudgment, dataAvailability, routeHints = {})
   const dimensionAvailabilityCode = trimString(dataAvailability?.dimension_availability?.code);
   const answerDepthCode = trimString(dataAvailability?.answer_depth?.code);
   const gapHintNeededCode = trimString(dataAvailability?.gap_hint_needed?.code);
+  const productHospitalRequested = Boolean(routeHints?.productHospitalRequested);
+  const productHospitalSupportCode = trimString(dataAvailability?.product_hospital_support);
   const hospitalNamedRequested = Boolean(routeHints?.hospitalNamedRequested);
   const hospitalNamedSupportCode = trimString(dataAvailability?.hospital_named_support);
   const productFullRequested = Boolean(routeHints?.productFullRequested);
@@ -2983,6 +3174,9 @@ function buildRouteDecision(questionJudgment, dataAvailability, routeHints = {})
     gapHintNeededCode === DATA_AVAILABILITY_CODES.gap_hint_needed.YES;
   if (isDetailRequestedButInsufficient) {
     pushReasonCode(needMoreDataReasons, ROUTE_REASON_CODES.DETAIL_REQUESTED_BUT_INSUFFICIENT);
+  }
+  if (productHospitalRequested && productHospitalSupportCode !== "full") {
+    pushReasonCode(needMoreDataReasons, ROUTE_REASON_CODES.PRODUCT_HOSPITAL_SCOPE_INSUFFICIENT);
   }
   if (
     productFullRequested &&
@@ -3045,6 +3239,7 @@ function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalData
   const primaryDimensionCode = trimString(finalQuestionJudgment?.primary_dimension?.code);
   const granularityCode = trimString(finalQuestionJudgment?.granularity?.code);
   const hospitalMonthlyDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "hospital_monthly";
+  const productHospitalDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_hospital";
   const hospitalNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "hospital_named";
   const productFullDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_full";
   const productNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_named";
@@ -3055,9 +3250,11 @@ function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalData
     boundary_needed: routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER,
     refuse_mode: routeCode === ROUTE_DECISION_CODES.REFUSE,
     hospital_monthly_detail_mode: hospitalMonthlyDetailMode,
+    product_hospital_detail_mode: productHospitalDetailMode,
     hospital_named_detail_mode: hospitalNamedDetailMode,
     product_full_detail_mode: productFullDetailMode,
     product_named_detail_mode: productNamedDetailMode,
+    product_hospital_support_code: trimString(finalDataAvailability?.product_hospital_support),
     hospital_named_support_code: trimString(finalDataAvailability?.hospital_named_support),
     product_full_support_code: trimString(finalDataAvailability?.product_full_support),
     product_named_support_code: trimString(finalDataAvailability?.product_named_support),
@@ -3086,6 +3283,7 @@ function toDataAvailabilityTrace(dataAvailability) {
     gap_hint_needed: trimString(dataAvailability?.gap_hint_needed?.code),
     detail_request_mode: trimString(dataAvailability?.detail_request_mode),
     hospital_monthly_support: trimString(dataAvailability?.hospital_monthly_support),
+    product_hospital_support: trimString(dataAvailability?.product_hospital_support),
     hospital_named_support: trimString(dataAvailability?.hospital_named_support),
     product_full_support: trimString(dataAvailability?.product_full_support),
     product_named_support: trimString(dataAvailability?.product_named_support),
@@ -3530,15 +3728,20 @@ function applyQualityControl(replyDraft, outputContext, routeDecision) {
 function buildOutputInstructionText(outputContext) {
   const routeCode = trimString(outputContext?.route_code);
   const hospitalMonthlyDetailMode = Boolean(outputContext?.hospital_monthly_detail_mode);
+  const productHospitalDetailMode = Boolean(outputContext?.product_hospital_detail_mode);
   const hospitalNamedDetailMode = Boolean(outputContext?.hospital_named_detail_mode);
   const productFullDetailMode = Boolean(outputContext?.product_full_detail_mode);
   const productNamedDetailMode = Boolean(outputContext?.product_named_detail_mode);
+  const productHospitalSupportCode = trimString(outputContext?.product_hospital_support_code);
   const hospitalNamedSupportCode = trimString(outputContext?.hospital_named_support_code);
   const productFullSupportCode = trimString(outputContext?.product_full_support_code);
   const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。`;
+    }
+    if (productHospitalDetailMode) {
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。`;
     }
     if (hospitalNamedDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。`;
@@ -3555,6 +3758,9 @@ function buildOutputInstructionText(outputContext) {
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：医院逐月明细场景下，先给逐月可得结论，再用业务口吻说明当前逐月覆盖边界。`;
+    }
+    if (productHospitalDetailMode) {
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：产品×医院交叉场景下，先给该产品的医院贡献结论，再说明当前医院覆盖范围（${productHospitalSupportCode || "partial"}）。`;
     }
     if (hospitalNamedDetailMode) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名医院场景下，先给可得结论，再说明当前已覆盖命名医院范围（${hospitalNamedSupportCode || "partial"}）。`;
@@ -3801,7 +4007,17 @@ export async function onRequestPost(context) {
   const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
     ? hospitalNamedContext.requestedHospitals
     : [];
+  const productHospitalContext = resolveProductHospitalRequestContext({
+    message,
+    questionJudgment,
+    productFullRequested,
+    productNamedRequested,
+    requestedProducts,
+  });
+  const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
   const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
+    productFullRequested,
+    productHospitalRequested,
     productNamedRequested,
     hospitalNamedRequested,
   });
@@ -3812,6 +4028,7 @@ export async function onRequestPost(context) {
   // Phase 2.2: 数据可用性层，仅在当前请求作用域内保留，供后续层接入复用。
   let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
     hospitalMonthlyDetailRequested,
+    productHospitalRequested,
     hospitalNamedRequested,
     requestedHospitals,
     productFullRequested,
@@ -3820,6 +4037,7 @@ export async function onRequestPost(context) {
   });
   // Phase 2.4: 路由层，仅在当前请求作用域内保留，供后续层接入复用。
   let routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+    productHospitalRequested,
     hospitalNamedRequested,
     productFullRequested,
     productNamedRequested,
@@ -3834,6 +4052,7 @@ export async function onRequestPost(context) {
       routeDecision,
       sessionState,
       hospitalMonthlyDetailRequested,
+      productHospitalRequested,
       hospitalNamedRequested,
       requestedHospitals,
       productFullRequested,
@@ -3848,6 +4067,7 @@ export async function onRequestPost(context) {
 
     dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
       hospitalMonthlyDetailRequested,
+      productHospitalRequested,
       hospitalNamedRequested,
       requestedHospitals,
       productFullRequested,
@@ -3855,6 +4075,7 @@ export async function onRequestPost(context) {
       requestedProducts,
     });
     routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+      productHospitalRequested,
       hospitalNamedRequested,
       productFullRequested,
       productNamedRequested,
