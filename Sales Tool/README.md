@@ -122,9 +122,12 @@
 │   └── chat/
 │       ├── shared.js          # AI 共享常量、格式化与基础工具
 │       ├── judgment.js        # 问题判定层
-│       ├── availability.js    # 数据可用性层
+│       ├── availability-core.js    # 数据可用性通用判定
+│       ├── availability-support.js # 模式化 support code 解析
+│       ├── availability.js    # 数据可用性层兼容出口
 │       ├── session.js         # 会话状态层
-│       ├── routing.js         # 路由层
+│       ├── routing-rules.js   # 路由 reason 与决策表
+│       ├── routing.js         # 路由层兼容出口
 │       ├── retrieval-context.js     # 命名识别与检索上下文解析
 │       ├── retrieval-data.js        # 按需补强数据拉取与窗口解析
 │       ├── retrieval-enhancement.js # 按需补强聚合与快照增强
@@ -142,6 +145,7 @@
 ├── tests/
 │   ├── phase2-domain.test.js  # Phase 2 纯函数回归测试
 │   ├── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
+│   ├── fallback-decision.test.js # fallback support/routing 决策回归测试
 │   └── tool-runtime.test.js   # Tool-first 运行时与工具编排回归测试
 ├── package.json
 ├── package-lock.json
@@ -742,6 +746,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 2. 对于相关业务问题，优先使用 Gemini `function calling`
 3. tool-first 失败、空回复、工具异常、超限时，只回退 legacy Phase 2 一次
 4. `/api/chat` 对外请求/响应结构不变，前端 UI 不需要改造
+5. 新增业务语义默认优先进入 tool executors；legacy fallback 只做保底，不再作为主扩展面
 
 V1 首批仅开放 5 类受控业务工具：
 
@@ -769,3 +774,13 @@ V1 首批仅开放 5 类受控业务工具：
 
 - 只要 tool-first 未形成稳定最终文本，就回退到 legacy Phase 2 一次
 - 若 tool-first 和 fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`
+
+### 11.15 Legacy Fallback 收敛
+
+- `availability` 已拆为两层：
+  - `availability-core.js`：通用判定（`has_business_data / dimension_availability / answer_depth / gap_hint_needed`）
+  - `availability-support.js`：模式化支撑解析（`product_full / product_named / hospital_named / product_hospital / hospital_monthly`）
+- `routing` 已拆为：
+  - `routing-rules.js`：reason code 与优先级决策表
+  - `routing.js`：最终 `routeDecision` 组装
+- `product_hospital` 与 `product_named` 的 fallback 判据保持互斥；当 `detail_request_mode=product_hospital` 时，路由主看 `product_hospital_support`，不会再被 `product_named_support` 误收敛。

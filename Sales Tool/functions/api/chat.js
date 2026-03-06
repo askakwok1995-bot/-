@@ -274,6 +274,9 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     let toolRuntimeState = createInitialToolRuntimeStateImpl();
     let toolCallTrace = [];
     let toolFallbackReason = "";
+    if (!toolWindow.valid) {
+      toolFallbackReason = "invalid_analysis_range";
+    }
     if (toolWindow.valid) {
       stage = "tool";
       const toolFirstResult = await runToolFirstChatImpl({
@@ -288,7 +291,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       });
       toolRuntimeState = toolFirstResult.toolRuntimeState || toolRuntimeState;
       toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
-      toolFallbackReason = trimString(toolFirstResult.fallbackReason);
+      toolFallbackReason = trimString(toolFirstResult.fallbackReason) || "tool_first_failed";
       if (toolFirstResult.ok) {
         stage = "qc";
         const routeDecision = {
@@ -311,6 +314,9 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         );
       }
     }
+
+    // Legacy fallback is a single保底链路：仅在 analysis_range 无效、tool-first 失败/超限/异常
+    // 或未形成稳定最终回答时进入。新业务能力应优先进入 tool executors，而不是继续扩 fallback。
 
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
