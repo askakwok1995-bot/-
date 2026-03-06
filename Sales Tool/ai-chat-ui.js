@@ -382,6 +382,7 @@ export function initAiChatUi(options = {}) {
   let sendHandler = null;
   let isSending = false;
   let sessionHistory = [];
+  let sessionConversationState = null;
   let consecutiveFailureCount = 0;
   let cooldownUntilMs = 0;
   let cooldownTimerId = 0;
@@ -608,8 +609,15 @@ export function initAiChatUi(options = {}) {
     return sessionHistory.map((item) => ({ ...item }));
   }
 
+  function getConversationState() {
+    return sessionConversationState && typeof sessionConversationState === "object"
+      ? { ...sessionConversationState }
+      : null;
+  }
+
   function clearSessionHistory() {
     sessionHistory = [];
+    sessionConversationState = null;
     clearStatus();
   }
 
@@ -868,6 +876,7 @@ export function initAiChatUi(options = {}) {
       toText(payload.text);
     const responseAction = normalizeResponseAction(payload.responseAction);
     const businessIntent = toText(payload.businessIntent) || (responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED ? normalizeMode(payload.mode) : "chat");
+    const answer = payload.answer && typeof payload.answer === "object" ? payload.answer : null;
     const structured = normalizeStructuredPayload(payload.structured);
     const internalStructured = payload.internalStructured && typeof payload.internalStructured === "object" ? payload.internalStructured : null;
     const mode = normalizeMode(payload.mode || currentMode);
@@ -896,6 +905,7 @@ export function initAiChatUi(options = {}) {
       reply,
       surfaceReply: reply,
       structured,
+      answer,
       internalStructured,
       responseAction,
       businessIntent,
@@ -904,6 +914,8 @@ export function initAiChatUi(options = {}) {
       requestId,
       meta,
       fallbackNotice: toText(payload.fallbackNotice),
+      conversationState:
+        answer?.conversation_state && typeof answer.conversation_state === "object" ? answer.conversation_state : null,
     };
   }
 
@@ -938,6 +950,7 @@ export function initAiChatUi(options = {}) {
         sendHandler(text, {
           mode: currentMode,
           history: getSessionHistory(),
+          conversationState: getConversationState(),
           onThinking: (message) => {
             updateThinkingLabel(liveMessage, message);
           },
@@ -963,9 +976,13 @@ export function initAiChatUi(options = {}) {
         removeLiveMessage(liveMessage);
       }
 
+      if (normalized.conversationState) {
+        sessionConversationState = { ...normalized.conversationState };
+      }
+
       const assistantHistoryText = normalized.structured
-        ? toText(normalized.structured.summary || normalized.reply)
-        : toText(normalized.reply);
+        ? toText(normalized.structured.summary || normalized.answer?.summary || normalized.reply)
+        : toText(normalized.answer?.summary || normalized.reply);
       if (assistantHistoryText) {
         pushHistory("assistant", assistantHistoryText);
       }

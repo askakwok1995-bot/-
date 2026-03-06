@@ -335,6 +335,7 @@ export async function runToolFirstChat({
         reply: replyText,
         model: geminiResponse.model,
         outputContext,
+        toolResult: lastToolResult?.result || null,
         toolRuntimeState: state,
         toolCallTrace,
       };

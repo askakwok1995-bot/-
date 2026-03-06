@@ -2,6 +2,7 @@ import {
   AUTH_UPSTREAM_TIMEOUT_MS,
   CHAT_ERROR_CODES,
   MAX_MESSAGE_LENGTH,
+  QUESTION_JUDGMENT_LABELS,
   ROUTE_DECISION_CODES,
   SUPABASE_AUTH_USER_PATH,
   fetchWithTimeout,
@@ -38,6 +39,14 @@ import {
 import { createInitialToolRuntimeState, runToolFirstChat } from "../chat/tool-runtime.js";
 import { buildDeterministicToolRoute } from "../chat/tool-router.js";
 import { runDirectToolChat } from "../chat/tool-direct.js";
+import {
+  buildConversationState,
+  normalizeConversationState,
+  resolveConversationContext,
+  resolveConversationEntityScope,
+} from "../chat/conversation-state.js";
+import { normalizeChatMode } from "../chat/contracts.js";
+import { buildChatSuccessPayload, buildEvidenceBundleFromSnapshot, buildEvidenceBundleFromToolResult } from "../chat/render.js";
 import {
   applyRequestedTimeWindowToSnapshot,
   buildComparisonTimeWindowOutputContextFields,
@@ -292,6 +301,112 @@ function buildTimeBoundaryRouteDecision() {
   };
 }
 
+function overrideQuestionJudgmentPrimaryDimension(questionJudgment, primaryDimensionCode) {
+  const safeCode = trimString(primaryDimensionCode);
+  const base = questionJudgment && typeof questionJudgment === "object" ? questionJudgment : null;
+  if (!base || !safeCode || safeCode === trimString(base?.primary_dimension?.code)) {
+    return base;
+  }
+  return {
+    ...base,
+    primary_dimension: {
+      code: safeCode,
+      label: QUESTION_JUDGMENT_LABELS.primary_dimension[safeCode] || trimString(base?.primary_dimension?.label),
+    },
+  };
+}
+
+function buildSuccessChatResponse({
+  mode,
+  businessSnapshot,
+  questionJudgment,
+  dataAvailability,
+  sessionState,
+  routeDecision,
+  retrievalState,
+  outputContext,
+  replyText,
+  model,
+  requestId,
+  env,
+  toolRouteMode = "",
+  toolRouteType = "",
+  toolRouteName = "",
+  toolRouteFallbackReason = "",
+  forcedBounded = false,
+  toolResult = null,
+  requestedProducts = [],
+  requestedHospitals = [],
+  requestedTimeWindow = null,
+  comparisonTimeWindow = null,
+  timeCompareMode = "none",
+  normalizeOutputReplyImpl = normalizeOutputReply,
+  applyQualityControlImpl = applyQualityControl,
+  buildPhase2TraceImpl = buildPhase2Trace,
+  logPhase2TraceImpl = logPhase2Trace,
+}) {
+  const replyDraft = normalizeOutputReplyImpl(replyText);
+  const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
+  const finalReply = qcResult.finalReplyText;
+  const evidenceBundle = toolResult
+    ? buildEvidenceBundleFromToolResult({
+        toolResult,
+        outputContext,
+        questionJudgment,
+        routeDecision,
+        requestedProducts,
+        requestedHospitals,
+      })
+    : buildEvidenceBundleFromSnapshot({
+        businessSnapshot,
+        outputContext,
+        questionJudgment,
+        routeDecision,
+        requestedProducts,
+        requestedHospitals,
+      });
+  const conversationState = buildConversationState({
+    questionJudgment,
+    requestedTimeWindow,
+    comparisonTimeWindow,
+    timeCompareMode,
+    requestedProducts,
+    requestedHospitals,
+    routeDecision,
+    outputContext,
+  });
+  const phase2Trace = buildPhase2TraceImpl({
+    requestId,
+    questionJudgment,
+    dataAvailability,
+    sessionState,
+    routeDecision,
+    retrievalState,
+    outputContext,
+    forcedBounded,
+    qcState: qcResult.qcState,
+    toolRouteMode,
+    toolRouteType,
+    toolRouteName,
+    toolRouteFallbackReason,
+  });
+  logPhase2TraceImpl(phase2Trace, env);
+  return jsonResponse(
+    buildChatSuccessPayload({
+      mode,
+      replyText: finalReply,
+      evidenceBundle,
+      questionJudgment,
+      routeDecision,
+      model,
+      requestId,
+      conversationState,
+    }),
+    200,
+    requestId,
+  );
+}
+
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
   const buildQuestionJudgmentImpl = deps.buildQuestionJudgment || buildQuestionJudgment;
@@ -350,6 +465,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     const message = trimString(body?.message);
+    const mode = normalizeChatMode(body?.mode);
+    const incomingConversationState = normalizeConversationState(body?.conversation_state);
     if (!message) {
       return errorResponse(CHAT_ERROR_CODES.MESSAGE_REQUIRED, "message 不能为空。", 400, requestId);
     }
@@ -363,13 +480,13 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     stage = "judgment";
-    const questionJudgment = buildQuestionJudgmentImpl(message);
+    const rawQuestionJudgment = buildQuestionJudgmentImpl(message);
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
     const timeIntent = parseTimeIntentImpl(message, {
       analysisRange: normalizedBusinessSnapshot?.analysis_range,
     });
-    const requestedTimeWindow = timeIntent?.requested_time_window || {
+    let requestedTimeWindow = timeIntent?.requested_time_window || {
       kind: "none",
       label: "",
       start_month: "",
@@ -377,7 +494,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       period: "",
       anchor_mode: "none",
     };
-    const comparisonTimeWindow = timeIntent?.comparison_time_window || {
+    let comparisonTimeWindow = timeIntent?.comparison_time_window || {
       kind: "none",
       label: "",
       start_month: "",
@@ -385,7 +502,23 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       period: "",
       anchor_mode: "none",
     };
-    const timeCompareMode = trimString(timeIntent?.time_compare_mode) || "none";
+    let timeCompareMode = trimString(timeIntent?.time_compare_mode) || "none";
+    const sessionState = buildSessionStateImpl(message, historyWindow, rawQuestionJudgment);
+    const conversationContext = resolveConversationContext({
+      conversationState: incomingConversationState,
+      sessionState,
+      questionJudgment: rawQuestionJudgment,
+      requestedTimeWindow,
+      comparisonTimeWindow,
+      timeCompareMode,
+    });
+    const questionJudgment = overrideQuestionJudgmentPrimaryDimension(
+      rawQuestionJudgment,
+      conversationContext.primary_dimension_code,
+    );
+    requestedTimeWindow = conversationContext.requested_time_window;
+    comparisonTimeWindow = conversationContext.comparison_time_window;
+    timeCompareMode = conversationContext.time_compare_mode;
     const timeWindowCoverage = buildTimeWindowCoverageImpl(requestedTimeWindow, normalizedBusinessSnapshot);
     const comparisonTimeWindowCoverage =
       timeCompareMode !== "none"
@@ -396,31 +529,35 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
             available_end_month: trimString(normalizedBusinessSnapshot?.analysis_range?.end_month),
             available_period: trimString(normalizedBusinessSnapshot?.analysis_range?.period),
           };
-    const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
       const routeDecision = {
         route: { code: ROUTE_DECISION_CODES.REFUSE, label: "拒绝/收住" },
         reason_codes: ["irrelevant"],
       };
-      stage = "output";
-      const outputContext = buildOutputContextImpl(routeDecision, questionJudgment, {});
-      const modelReplyText = buildRefuseReplyTemplateImpl(outputContext);
-      stage = "qc";
-      const replyDraft = normalizeOutputReplyImpl(modelReplyText);
-      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-      return jsonResponse(
-        {
-          reply: qcResult.finalReplyText,
-          surfaceReply: qcResult.finalReplyText,
-          responseAction: "natural_answer",
-          businessIntent: "chat",
-          model: "local-template-refuse",
-          requestId,
-        },
-        200,
+      const dataAvailability = {};
+      const outputContext = buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability);
+      return buildSuccessChatResponse({
+        mode,
+        businessSnapshot: normalizedBusinessSnapshot,
+        questionJudgment,
+        dataAvailability,
+        sessionState,
+        routeDecision,
+        retrievalState: createInitialRetrievalStateImpl(),
+        outputContext,
+        replyText: buildRefuseReplyTemplateImpl(outputContext),
+        model: "local-template-refuse",
         requestId,
-      );
+        env: context.env,
+        requestedTimeWindow,
+        comparisonTimeWindow,
+        timeCompareMode,
+        normalizeOutputReplyImpl,
+        applyQualityControlImpl,
+        buildPhase2TraceImpl,
+        logPhase2TraceImpl,
+      });
     }
 
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
@@ -458,55 +595,49 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     ) {
       const routeDecision = buildTimeBoundaryRouteDecision();
       const dataAvailability = buildTimeBoundaryDataAvailability();
-      stage = "output";
       const outputContext = {
         ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
         ...requestedTimeWindowFields,
         ...comparisonTimeWindowFields,
         local_response_mode: "time_boundary",
       };
-      const replyDraft = normalizeOutputReplyImpl(
-        buildTimeCompareBoundaryReplyImpl({
-          requestedTimeWindow,
-          comparisonTimeWindow,
-          primaryCoverage: timeWindowCoverage,
-          comparisonCoverage: comparisonTimeWindowCoverage,
-          timeCompareMode,
-        }),
-      );
-      stage = "qc";
-      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-      const phase2Trace = buildPhase2TraceImpl({
-        requestId,
+      return buildSuccessChatResponse({
+        mode,
+        businessSnapshot: normalizedBusinessSnapshot,
         questionJudgment,
         dataAvailability,
         sessionState,
         routeDecision,
         retrievalState: createInitialRetrievalStateImpl(),
         outputContext,
-        forcedBounded: false,
-        qcState: qcResult.qcState,
+        replyText: buildTimeCompareBoundaryReplyImpl({
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          primaryCoverage: timeWindowCoverage,
+          comparisonCoverage: comparisonTimeWindowCoverage,
+          timeCompareMode,
+        }),
+        model: "local-template-time-boundary",
+        requestId,
+        env: context.env,
         toolRouteMode: "legacy",
         toolRouteType: "none",
         toolRouteName: "",
         toolRouteFallbackReason:
-          (!requestedTimeWindowHasExecutableRange || !comparisonTimeWindowHasExecutableRange || requestedTimeWindowIsAmbiguous || comparisonTimeWindowIsAmbiguous)
+          (!requestedTimeWindowHasExecutableRange ||
+            !comparisonTimeWindowHasExecutableRange ||
+            requestedTimeWindowIsAmbiguous ||
+            comparisonTimeWindowIsAmbiguous)
             ? "time_compare_year_ambiguous"
             : "time_compare_not_fully_covered",
+        requestedTimeWindow,
+        comparisonTimeWindow,
+        timeCompareMode,
+        normalizeOutputReplyImpl,
+        applyQualityControlImpl,
+        buildPhase2TraceImpl,
+        logPhase2TraceImpl,
       });
-      logPhase2TraceImpl(phase2Trace, context.env);
-      return jsonResponse(
-        {
-          reply: qcResult.finalReplyText,
-          surfaceReply: qcResult.finalReplyText,
-          responseAction: "natural_answer",
-          businessIntent: "chat",
-          model: "local-template-time-boundary",
-          requestId,
-        },
-        200,
-        requestId,
-      );
     }
 
     if (
@@ -517,31 +648,28 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     ) {
       const routeDecision = buildTimeBoundaryRouteDecision();
       const dataAvailability = buildTimeBoundaryDataAvailability();
-      stage = "output";
       const outputContext = {
         ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
         ...requestedTimeWindowFields,
         ...comparisonTimeWindowFields,
         local_response_mode: "time_boundary",
       };
-      const replyDraft = normalizeOutputReplyImpl(
-        buildTimeWindowBoundaryReplyImpl({
-          requestedTimeWindow,
-          coverage: timeWindowCoverage,
-        }),
-      );
-      stage = "qc";
-      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-      const phase2Trace = buildPhase2TraceImpl({
-        requestId,
+      return buildSuccessChatResponse({
+        mode,
+        businessSnapshot: normalizedBusinessSnapshot,
         questionJudgment,
         dataAvailability,
         sessionState,
         routeDecision,
         retrievalState: createInitialRetrievalStateImpl(),
         outputContext,
-        forcedBounded: false,
-        qcState: qcResult.qcState,
+        replyText: buildTimeWindowBoundaryReplyImpl({
+          requestedTimeWindow,
+          coverage: timeWindowCoverage,
+        }),
+        model: "local-template-time-boundary",
+        requestId,
+        env: context.env,
         toolRouteMode: "legacy",
         toolRouteType: "none",
         toolRouteName: "",
@@ -549,20 +677,14 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           requestedTimeWindowKind !== "none" && (!requestedTimeWindowHasExecutableRange || requestedTimeWindowIsAmbiguous)
             ? "time_window_year_ambiguous"
             : "time_window_not_fully_covered",
+        requestedTimeWindow,
+        comparisonTimeWindow,
+        timeCompareMode,
+        normalizeOutputReplyImpl,
+        applyQualityControlImpl,
+        buildPhase2TraceImpl,
+        logPhase2TraceImpl,
       });
-      logPhase2TraceImpl(phase2Trace, context.env);
-      return jsonResponse(
-        {
-          reply: qcResult.finalReplyText,
-          surfaceReply: qcResult.finalReplyText,
-          responseAction: "natural_answer",
-          businessIntent: "chat",
-          model: "local-template-time-boundary",
-          requestId,
-        },
-        200,
-        requestId,
-      );
     }
 
     const scopedBusinessSnapshot =
@@ -578,8 +700,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       token: authResult.token,
       env: context.env,
     });
-    const productNamedRequested = Boolean(productNamedContext.productNamedRequested);
-    const requestedProducts = Array.isArray(productNamedContext.requestedProducts)
+    let productNamedRequested = Boolean(productNamedContext.productNamedRequested);
+    let requestedProducts = Array.isArray(productNamedContext.requestedProducts)
       ? productNamedContext.requestedProducts
       : [];
     const productNamedMatchMode = trimString(productNamedContext.productNamedMatchMode).toLocaleLowerCase() || "none";
@@ -589,10 +711,22 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       productFullRequested,
       productNamedRequested,
     });
-    const hospitalNamedRequested = Boolean(hospitalNamedContext.hospitalNamedRequested);
-    const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
+    let hospitalNamedRequested = Boolean(hospitalNamedContext.hospitalNamedRequested);
+    let requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
       ? hospitalNamedContext.requestedHospitals
       : [];
+    const conversationEntityScope = resolveConversationEntityScope({
+      conversationState: incomingConversationState,
+      sessionState,
+      requestedProducts,
+      requestedHospitals,
+      productNamedRequested,
+      hospitalNamedRequested,
+    });
+    productNamedRequested = conversationEntityScope.product_named_requested;
+    hospitalNamedRequested = conversationEntityScope.hospital_named_requested;
+    requestedProducts = conversationEntityScope.requested_products;
+    requestedHospitals = conversationEntityScope.requested_hospitals;
     const productHospitalContext = resolveProductHospitalRequestContextImpl({
       message,
       questionJudgment,
@@ -601,6 +735,17 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       requestedProducts,
     });
     const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
+    const effectiveProductNamedContext = {
+      ...productNamedContext,
+      productNamedRequested,
+      requestedProducts,
+    };
+    const effectiveHospitalNamedContext = {
+      ...hospitalNamedContext,
+      hospitalNamedRequested,
+      requestedHospitals,
+    };
+    const planningQuestionJudgment = questionJudgment;
 
     const toolWindow = resolveRetrievalWindowFromSnapshotImpl(scopedBusinessSnapshot);
     let toolRuntimeState = createInitialToolRuntimeStateImpl();
@@ -611,7 +756,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     let toolRouteName = "";
     const deterministicToolRoute = buildDeterministicToolRouteImpl({
       message,
-      questionJudgment,
+      questionJudgment: planningQuestionJudgment,
       requestedTimeWindow,
       comparisonTimeWindow,
       timeCompareMode,
@@ -619,8 +764,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       comparisonWindowCoverageCode: trimString(comparisonTimeWindowCoverage?.code),
       productFullRequested,
       hospitalMonthlyDetailRequested,
-      productNamedContext,
-      hospitalNamedContext,
+      productNamedContext: effectiveProductNamedContext,
+      hospitalNamedContext: effectiveHospitalNamedContext,
       productHospitalContext,
     });
     if (deterministicToolRoute.matched) {
@@ -639,7 +784,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           requestedTimeWindow,
           comparisonTimeWindow,
           timeCompareMode,
-          questionJudgment,
+          questionJudgment: planningQuestionJudgment,
           authToken: authResult.token,
           env: context.env,
           requestId,
@@ -651,44 +796,41 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       toolCallTrace = Array.isArray(directToolResult.toolCallTrace) ? directToolResult.toolCallTrace : [];
       toolFallbackReason = trimString(directToolResult.fallbackReason) || "";
       if (directToolResult.ok) {
-        stage = "qc";
         const routeDecision = buildToolPathRouteDecision(directToolResult.outputContext);
-        const replyDraft = normalizeOutputReplyImpl(directToolResult.reply);
         const outputContext = {
           ...directToolResult.outputContext,
           ...requestedTimeWindowFields,
           ...comparisonTimeWindowFields,
           local_response_mode: trimString(directToolResult.outputContext?.local_response_mode) || "none",
         };
-        const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-        const phase2Trace = buildPhase2TraceImpl({
-          requestId,
-          questionJudgment,
+        return buildSuccessChatResponse({
+          mode,
+          businessSnapshot: scopedBusinessSnapshot,
+          questionJudgment: planningQuestionJudgment,
           dataAvailability: buildToolPathDataAvailability(outputContext),
           sessionState,
           routeDecision,
           retrievalState: buildToolPathRetrievalState(toolRuntimeState, toolRouteType),
           outputContext,
-          forcedBounded: false,
-          qcState: qcResult.qcState,
+          replyText: directToolResult.reply,
+          model: directToolResult.model,
+          requestId,
+          env: context.env,
           toolRouteMode,
           toolRouteType,
           toolRouteName,
           toolRouteFallbackReason: "",
+          toolResult: directToolResult.toolResult,
+          requestedProducts,
+          requestedHospitals,
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          timeCompareMode,
+          normalizeOutputReplyImpl,
+          applyQualityControlImpl,
+          buildPhase2TraceImpl,
+          logPhase2TraceImpl,
         });
-        logPhase2TraceImpl(phase2Trace, context.env);
-        return jsonResponse(
-          {
-            reply: qcResult.finalReplyText,
-            surfaceReply: qcResult.finalReplyText,
-            responseAction: "natural_answer",
-            businessIntent: "chat",
-            model: directToolResult.model,
-            requestId,
-          },
-          200,
-          requestId,
-        );
       }
       toolRouteMode = "legacy";
     } else if (toolWindow.valid) {
@@ -699,7 +841,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         historyWindow,
         businessSnapshot: scopedBusinessSnapshot,
         requestedTimeWindow,
-        questionJudgment,
+        questionJudgment: planningQuestionJudgment,
         authToken: authResult.token,
         env: context.env,
         requestId,
@@ -709,49 +851,44 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
       toolFallbackReason = trimString(toolFirstResult.fallbackReason) || "tool_first_failed";
       if (toolFirstResult.ok) {
-        stage = "qc";
         const routeDecision = buildToolPathRouteDecision(toolFirstResult.outputContext);
-        const replyDraft = normalizeOutputReplyImpl(toolFirstResult.reply);
         const outputContext = {
           ...toolFirstResult.outputContext,
           ...requestedTimeWindowFields,
           ...comparisonTimeWindowFields,
+          tool_route_mode: "auto",
+          tool_route_type: "none",
+          tool_route_name: "",
           local_response_mode: trimString(toolFirstResult.outputContext?.local_response_mode) || "none",
         };
-        const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-        const phase2Trace = buildPhase2TraceImpl({
-          requestId,
-          questionJudgment,
+        return buildSuccessChatResponse({
+          mode,
+          businessSnapshot: scopedBusinessSnapshot,
+          questionJudgment: planningQuestionJudgment,
           dataAvailability: buildToolPathDataAvailability(outputContext),
           sessionState,
           routeDecision,
           retrievalState: buildToolPathRetrievalState(toolRuntimeState, "generic"),
-          outputContext: {
-            ...outputContext,
-            tool_route_mode: "auto",
-            tool_route_type: "none",
-            tool_route_name: "",
-          },
-          forcedBounded: false,
-          qcState: qcResult.qcState,
+          outputContext,
+          replyText: toolFirstResult.reply,
+          model: toolFirstResult.model,
+          requestId,
+          env: context.env,
           toolRouteMode,
           toolRouteType,
           toolRouteName,
           toolRouteFallbackReason: "",
+          toolResult: toolFirstResult.toolResult,
+          requestedProducts,
+          requestedHospitals,
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          timeCompareMode,
+          normalizeOutputReplyImpl,
+          applyQualityControlImpl,
+          buildPhase2TraceImpl,
+          logPhase2TraceImpl,
         });
-        logPhase2TraceImpl(phase2Trace, context.env);
-        return jsonResponse(
-          {
-            reply: qcResult.finalReplyText,
-            surfaceReply: qcResult.finalReplyText,
-            responseAction: "natural_answer",
-            businessIntent: "chat",
-            model: toolFirstResult.model,
-            requestId,
-          },
-          200,
-          requestId,
-        );
       }
       toolRouteMode = "legacy";
     }
@@ -860,40 +997,34 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       modelReplyText = geminiResult.reply;
     }
 
-    stage = "qc";
-    const replyDraft = normalizeOutputReplyImpl(modelReplyText);
-    const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
-    const finalReply = qcResult.finalReplyText;
-
-    const phase2Trace = buildPhase2TraceImpl({
-      requestId,
-      questionJudgment,
+    return buildSuccessChatResponse({
+      mode,
+      businessSnapshot: effectiveBusinessSnapshot,
+      questionJudgment: effectiveQuestionJudgment,
       dataAvailability,
       sessionState,
       routeDecision,
       retrievalState,
       outputContext,
-      forcedBounded,
-      qcState: qcResult.qcState,
+      replyText: modelReplyText,
+      model: responseModel,
+      requestId,
+      env: context.env,
       toolRouteMode,
       toolRouteType,
       toolRouteName,
       toolRouteFallbackReason: toolFallbackReason,
+      forcedBounded,
+      requestedProducts,
+      requestedHospitals,
+      requestedTimeWindow,
+      comparisonTimeWindow,
+      timeCompareMode,
+      normalizeOutputReplyImpl,
+      applyQualityControlImpl,
+      buildPhase2TraceImpl,
+      logPhase2TraceImpl,
     });
-    logPhase2TraceImpl(phase2Trace, context.env);
-
-    return jsonResponse(
-      {
-        reply: finalReply,
-        surfaceReply: finalReply,
-        responseAction: "natural_answer",
-        businessIntent: "chat",
-        model: responseModel,
-        requestId,
-      },
-      200,
-      requestId,
-    );
   } catch (error) {
     logChatError({ requestId, stage, error });
     return errorResponse(

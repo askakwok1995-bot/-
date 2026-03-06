@@ -340,6 +340,8 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
       mode: trimString(options?.mode),
       history: Array.isArray(options?.history) ? options.history : [],
       business_snapshot: typeof getBusinessSnapshot === "function" ? getBusinessSnapshot() : createEmptyBusinessSnapshot(),
+      conversation_state:
+        options?.conversationState && typeof options.conversationState === "object" ? options.conversationState : null,
     };
 
     let response;
@@ -369,8 +371,12 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
     return {
       reply,
       surfaceReply: reply,
-      responseAction: "natural_answer",
-      businessIntent: "chat",
+      responseAction: trimString(payload?.responseAction) || "natural_answer",
+      businessIntent: trimString(payload?.businessIntent) || "chat",
+      mode: trimString(payload?.mode || options?.mode),
+      format: trimString(payload?.format),
+      structured: payload?.structured && typeof payload.structured === "object" ? payload.structured : null,
+      answer: payload?.answer && typeof payload.answer === "object" ? payload.answer : null,
       model: trimString(payload?.model),
       requestId: trimString(payload?.requestId || response.headers.get("x-request-id")),
     };
