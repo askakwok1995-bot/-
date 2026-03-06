@@ -12,6 +12,8 @@ export const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 export const MAX_MESSAGE_LENGTH = 4000;
 export const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 export const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
+export const TOOL_RUNTIME_MAX_CALLS = 3;
+export const TOOL_RUNTIME_MAX_ROUNDS = 2;
 
 export const CHAT_ERROR_CODES = Object.freeze({
   UNAUTHORIZED: "UNAUTHORIZED",

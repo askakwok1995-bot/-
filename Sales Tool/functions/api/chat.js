@@ -22,6 +22,7 @@ import {
   createInitialRetrievalState,
   normalizeBusinessSnapshot,
   resolveHospitalNamedRequestContext,
+  resolveRetrievalWindowFromSnapshot,
   resolveProductHospitalRequestContext,
   resolveProductNamedRequestContext,
 } from "../chat/retrieval.js";
@@ -34,6 +35,7 @@ import {
   logPhase2Trace,
   normalizeOutputReply,
 } from "../chat/output.js";
+import { createInitialToolRuntimeState, runToolFirstChat } from "../chat/tool-runtime.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
@@ -192,6 +194,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const resolveProductHospitalRequestContextImpl =
     deps.resolveProductHospitalRequestContext || resolveProductHospitalRequestContext;
   const normalizeBusinessSnapshotImpl = deps.normalizeBusinessSnapshot || normalizeBusinessSnapshot;
+  const resolveRetrievalWindowFromSnapshotImpl =
+    deps.resolveRetrievalWindowFromSnapshot || resolveRetrievalWindowFromSnapshot;
   const buildDataAvailabilityImpl = deps.buildDataAvailability || buildDataAvailability;
   const buildRouteDecisionImpl = deps.buildRouteDecision || buildRouteDecision;
   const createInitialRetrievalStateImpl = deps.createInitialRetrievalState || createInitialRetrievalState;
@@ -205,6 +209,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const applyQualityControlImpl = deps.applyQualityControl || applyQualityControl;
   const buildPhase2TraceImpl = deps.buildPhase2Trace || buildPhase2Trace;
   const logPhase2TraceImpl = deps.logPhase2Trace || logPhase2Trace;
+  const runToolFirstChatImpl = deps.runToolFirstChat || runToolFirstChat;
+  const createInitialToolRuntimeStateImpl = deps.createInitialToolRuntimeState || createInitialToolRuntimeState;
   let stage = "auth";
 
   try {
@@ -236,9 +242,78 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
 
     stage = "judgment";
     const questionJudgment = buildQuestionJudgmentImpl(message);
+    const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
+    const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
+
+    if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
+      const routeDecision = {
+        route: { code: ROUTE_DECISION_CODES.REFUSE, label: "拒绝/收住" },
+        reason_codes: ["irrelevant"],
+      };
+      stage = "output";
+      const outputContext = buildOutputContextImpl(routeDecision, questionJudgment, {});
+      const modelReplyText = buildRefuseReplyTemplateImpl(outputContext);
+      stage = "qc";
+      const replyDraft = normalizeOutputReplyImpl(modelReplyText);
+      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
+      return jsonResponse(
+        {
+          reply: qcResult.finalReplyText,
+          surfaceReply: qcResult.finalReplyText,
+          responseAction: "natural_answer",
+          businessIntent: "chat",
+          model: "local-template-refuse",
+          requestId,
+        },
+        200,
+        requestId,
+      );
+    }
+
+    const toolWindow = resolveRetrievalWindowFromSnapshotImpl(normalizedBusinessSnapshot);
+    let toolRuntimeState = createInitialToolRuntimeStateImpl();
+    let toolCallTrace = [];
+    let toolFallbackReason = "";
+    if (toolWindow.valid) {
+      stage = "tool";
+      const toolFirstResult = await runToolFirstChatImpl({
+        message,
+        historyWindow,
+        businessSnapshot: normalizedBusinessSnapshot,
+        questionJudgment,
+        authToken: authResult.token,
+        env: context.env,
+        requestId,
+        deps,
+      });
+      toolRuntimeState = toolFirstResult.toolRuntimeState || toolRuntimeState;
+      toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
+      toolFallbackReason = trimString(toolFirstResult.fallbackReason);
+      if (toolFirstResult.ok) {
+        stage = "qc";
+        const routeDecision = {
+          route: { code: trimString(toolFirstResult.outputContext?.route_code), label: "" },
+          reason_codes: [],
+        };
+        const replyDraft = normalizeOutputReplyImpl(toolFirstResult.reply);
+        const qcResult = applyQualityControlImpl(replyDraft, toolFirstResult.outputContext, routeDecision);
+        return jsonResponse(
+          {
+            reply: qcResult.finalReplyText,
+            surfaceReply: qcResult.finalReplyText,
+            responseAction: "natural_answer",
+            businessIntent: "chat",
+            model: toolFirstResult.model,
+            requestId,
+          },
+          200,
+          requestId,
+        );
+      }
+    }
+
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
-    const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     stage = "retrieval";
@@ -278,7 +353,6 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       productNamedRequested,
       hospitalNamedRequested,
     });
-    const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
 
     stage = "availability";
     let dataAvailability = buildDataAvailabilityImpl(normalizedBusinessSnapshot, effectiveQuestionJudgment, {

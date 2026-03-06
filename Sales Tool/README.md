@@ -129,6 +129,9 @@
 │       ├── retrieval-data.js        # 按需补强数据拉取与窗口解析
 │       ├── retrieval-enhancement.js # 按需补强聚合与快照增强
 │       ├── retrieval.js             # 按需补强层兼容出口
+│       ├── tool-registry.js         # Tool calling 工具声明
+│       ├── tool-executors.js        # Tool calling 工具执行器
+│       ├── tool-runtime.js          # Tool-first 运行时与 fallback 编排
 │       └── output.js          # 输出层、QC、trace
 ├── config.example.js          # Supabase 配置模板
 ├── config.js                  # 运行时配置（构建生成，已 gitignore）
@@ -138,7 +141,8 @@
 │   └── build-pages.js         # 生成 dist/ 并写入 dist/config.js（部署）
 ├── tests/
 │   ├── phase2-domain.test.js  # Phase 2 纯函数回归测试
-│   └── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
+│   ├── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
+│   └── tool-runtime.test.js   # Tool-first 运行时与工具编排回归测试
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -727,3 +731,41 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `pass_through`：无问题原样返回。  
 - `minimal_patch`：就地补丁（去内部词、补示例、补边界句、去尾部重复）。  
 - `safe_fallback`：严重异常或补丁后仍不稳定时，按 route 走最小安全模板。  
+
+### 11.14 Tool-first（Hybrid V1）
+
+当前聊天后端已引入 `tool-first + legacy fallback` 的混合路径：
+
+1. 轻量前置判断只保留两类用途：
+   - `relevance=irrelevant` 时直接走现有 `refuse`
+   - `analysis_range` 无效时跳过 tool-first，回退现有 Phase 2 保底链路
+2. 对于相关业务问题，优先使用 Gemini `function calling`
+3. tool-first 失败、空回复、工具异常、超限时，只回退 legacy Phase 2 一次
+4. `/api/chat` 对外请求/响应结构不变，前端 UI 不需要改造
+
+V1 首批仅开放 5 类受控业务工具：
+
+- `get_overall_summary`
+- `get_product_summary`
+- `get_hospital_summary`
+- `get_product_hospital_contribution`
+- `get_trend_summary`
+
+固定约束：
+
+- 工具只能绑定当前 `analysis_range`
+- 不开放自由 SQL
+- 同一请求最多 3 次工具调用、最多 2 轮 tool loop
+- `refuse` 仍不调用 Gemini
+- tool-first 成功后继续走现有 `normalizeOutputReply + QC`
+
+实现原则：
+
+- 工具执行层优先复用 `domain/report-snapshot.js`、`domain/entity-matchers.js` 以及现有 `infra/*-repository.js`
+- 不重新发明第三套统计口径
+- `product_full / product_named / hospital_named / product_hospital / hospital_monthly` 的现有成熟匹配规则继续复用，只是从“静态补强优先”迁移为“工具执行器优先”
+
+回退规则：
+
+- 只要 tool-first 未形成稳定最终文本，就回退到 legacy Phase 2 一次
+- 若 tool-first 和 fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`

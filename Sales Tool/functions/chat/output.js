@@ -172,9 +172,9 @@ export function logPhase2Trace(tracePayload, env) {
   }
 }
 
-function logGeminiCallBreadcrumb(eventName, payload) {
+function logGeminiCallBreadcrumb(prefix, eventName, payload) {
   try {
-    console.log(`[gemini.call.${eventName}]`, JSON.stringify(payload));
+    console.log(`[gemini.${prefix}.${eventName}]`, JSON.stringify(payload));
   } catch (_error) {
     // Gemini breadcrumb logging should never affect primary request flow.
   }
@@ -644,7 +644,7 @@ export function buildGeminiPayload(message, businessSnapshot, outputContext) {
   };
 }
 
-function extractGeminiReply(payload) {
+export function extractGeminiReply(payload) {
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
   for (const candidate of candidates) {
     const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
@@ -660,11 +660,11 @@ function extractGeminiReply(payload) {
   return "";
 }
 
-export async function callGemini(message, businessSnapshot, outputContext, env, requestId = "") {
+export async function requestGeminiGenerateContent(payload, env, requestId = "", breadcrumbPrefix = "call") {
   const model = sanitizeModelName(getEnvString(env, "GEMINI_MODEL"));
   const apiKey = getEnvString(env, "GEMINI_API_KEY");
   if (!apiKey) {
-    logGeminiCallBreadcrumb("result", {
+    logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
       requestId: trimString(requestId),
       model,
       ok: false,
@@ -676,11 +676,12 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
       code: CHAT_ERROR_CODES.CONFIG_MISSING,
       message: "服务端未配置 GEMINI_API_KEY。",
       status: 500,
+      model,
     };
   }
 
   const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  logGeminiCallBreadcrumb("start", {
+  logGeminiCallBreadcrumb(breadcrumbPrefix, "start", {
     requestId: trimString(requestId),
     model,
   });
@@ -693,15 +694,15 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify(buildGeminiPayload(message, businessSnapshot, outputContext)),
+        body: JSON.stringify(payload),
       },
       GEMINI_UPSTREAM_TIMEOUT_MS,
     );
 
-    const payload = await parseJsonSafe(response);
+    const responsePayload = await parseJsonSafe(response);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        logGeminiCallBreadcrumb("result", {
+        logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
           requestId: trimString(requestId),
           model,
           ok: false,
@@ -713,10 +714,12 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
           code: CHAT_ERROR_CODES.UPSTREAM_AUTH_ERROR,
           message: "Gemini Key 无效或无权限，请检查服务端密钥配置。",
           status: 502,
+          model,
+          payload: responsePayload,
         };
       }
       if (response.status === 429) {
-        logGeminiCallBreadcrumb("result", {
+        logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
           requestId: trimString(requestId),
           model,
           ok: false,
@@ -728,10 +731,12 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
           code: CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT,
           message: "Gemini 请求过于频繁或配额受限，请稍后重试。",
           status: 429,
+          model,
+          payload: responsePayload,
         };
       }
-      const upstreamMessage = trimString(payload?.error?.message);
-      logGeminiCallBreadcrumb("result", {
+      const upstreamMessage = trimString(responsePayload?.error?.message);
+      logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
         requestId: trimString(requestId),
         model,
         ok: false,
@@ -743,27 +748,12 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
         code: CHAT_ERROR_CODES.UPSTREAM_ERROR,
         message: upstreamMessage || `Gemini 服务异常（HTTP ${response.status}）。`,
         status: response.status >= 500 ? 502 : 400,
-      };
-    }
-
-    const reply = extractGeminiReply(payload);
-    if (!reply) {
-      logGeminiCallBreadcrumb("result", {
-        requestId: trimString(requestId),
         model,
-        ok: false,
-        status: 502,
-        error_code: CHAT_ERROR_CODES.EMPTY_REPLY,
-      });
-      return {
-        ok: false,
-        code: CHAT_ERROR_CODES.EMPTY_REPLY,
-        message: "Gemini 返回为空，请稍后重试。",
-        status: 502,
+        payload: responsePayload,
       };
     }
 
-    logGeminiCallBreadcrumb("result", {
+    logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
       requestId: trimString(requestId),
       model,
       ok: true,
@@ -772,12 +762,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
     });
     return {
       ok: true,
-      reply,
       model,
+      payload: responsePayload,
+      status: response.status,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      logGeminiCallBreadcrumb("result", {
+      logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
         requestId: trimString(requestId),
         model,
         ok: false,
@@ -789,9 +780,10 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
         code: CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
         message: "Gemini 请求超时，请稍后重试。",
         status: 504,
+        model,
       };
     }
-    logGeminiCallBreadcrumb("result", {
+    logGeminiCallBreadcrumb(breadcrumbPrefix, "result", {
       requestId: trimString(requestId),
       model,
       ok: false,
@@ -803,6 +795,41 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
       code: CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
       message: `Gemini 网络请求失败：${error instanceof Error ? error.message : "请稍后重试"}`,
       status: 502,
+      model,
     };
   }
+}
+
+export async function callGemini(message, businessSnapshot, outputContext, env, requestId = "") {
+  const response = await requestGeminiGenerateContent(
+    buildGeminiPayload(message, businessSnapshot, outputContext),
+    env,
+    requestId,
+    "call",
+  );
+  if (!response.ok) {
+    return response;
+  }
+  const reply = extractGeminiReply(response.payload);
+  if (!reply) {
+    logGeminiCallBreadcrumb("call", "result", {
+      requestId: trimString(requestId),
+      model: response.model,
+      ok: false,
+      status: 502,
+      error_code: CHAT_ERROR_CODES.EMPTY_REPLY,
+    });
+    return {
+      ok: false,
+      code: CHAT_ERROR_CODES.EMPTY_REPLY,
+      message: "Gemini 返回为空，请稍后重试。",
+      status: 502,
+      model: response.model,
+    };
+  }
+  return {
+    ok: true,
+    reply,
+    model: response.model,
+  };
 }

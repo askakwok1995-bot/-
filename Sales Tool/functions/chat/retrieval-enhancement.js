@@ -55,7 +55,7 @@ function resolveControlledTrendLimit(existingRows, granularityCode, availableCou
   return Math.min(availableCount, target);
 }
 
-function buildAggregatedMetrics(records, monthKeys) {
+export function buildAggregatedMetrics(records, monthKeys) {
   const monthSet = new Set(monthKeys);
   const monthTotals = new Map();
   const productMap = new Map();
@@ -146,7 +146,7 @@ function buildAggregatedMetrics(records, monthKeys) {
   };
 }
 
-function buildPerformanceOverviewFromMetrics(metrics) {
+export function buildPerformanceOverviewFromMetrics(metrics) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestRow = monthlyRows.length > 0 ? monthlyRows[monthlyRows.length - 1] : null;
 
@@ -176,7 +176,7 @@ function buildPerformanceOverviewFromMetrics(metrics) {
   };
 }
 
-function buildRecentTrendsFromMetrics(metrics, limit) {
+export function buildRecentTrendsFromMetrics(metrics, limit) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : monthlyRows.length;
   return monthlyRows.slice(-safeLimit).map((row) => ({
@@ -190,7 +190,7 @@ function buildRecentTrendsFromMetrics(metrics, limit) {
   }));
 }
 
-function buildKeyBusinessSignals(metrics, options = {}) {
+export function buildKeyBusinessSignals(metrics, options = {}) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const productRows = Array.isArray(metrics?.product_rows) ? metrics.product_rows : [];
   const hospitalRows = Array.isArray(metrics?.hospital_rows) ? metrics.hospital_rows : [];
@@ -240,7 +240,7 @@ function calcEntityRatioByYm(monthlyMap, currentYm, deltaMonths) {
   return calcGrowthRatio(current.amount, base.amount);
 }
 
-function buildProductPerformanceRows(metrics, limit, options = {}) {
+export function buildProductPerformanceRows(metrics, limit, options = {}) {
   const sourceRows = Array.isArray(metrics?.product_rows) ? metrics.product_rows : [];
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestYm = trimString(monthlyRows[monthlyRows.length - 1]?.ym);
@@ -406,7 +406,7 @@ function buildProductPerformanceRows(metrics, limit, options = {}) {
   });
 }
 
-function buildHospitalPerformanceRows(metrics, limit, options = {}) {
+export function buildHospitalPerformanceRows(metrics, limit, options = {}) {
   let rows = Array.isArray(metrics?.hospital_rows) ? metrics.hospital_rows : [];
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestYm = trimString(monthlyRows[monthlyRows.length - 1]?.ym);
@@ -503,7 +503,7 @@ function resolveProductCoverageCode(catalogCountValue, snapshotCountValue) {
   return "none";
 }
 
-function buildRiskOpportunityHints(metrics) {
+export function buildRiskOpportunityHints(metrics) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const productRows = Array.isArray(metrics?.product_rows) ? metrics.product_rows : [];
   const hospitalRows = Array.isArray(metrics?.hospital_rows) ? metrics.hospital_rows : [];
@@ -553,7 +553,7 @@ function buildRequestedProductLookupKeySet(requestedProducts) {
   return targetKeys;
 }
 
-function filterRecordsForProductHospital(records, requestedProducts) {
+export function filterRecordsForProductHospital(records, requestedProducts) {
   const sourceRecords = Array.isArray(records) ? records : [];
   const requestedRows = Array.isArray(requestedProducts) ? requestedProducts : [];
   const targetKeys = buildRequestedProductLookupKeySet(requestedProducts);

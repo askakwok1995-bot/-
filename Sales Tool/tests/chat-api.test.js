@@ -165,3 +165,149 @@ test("handleChatRequest collapses need_more_data into bounded_answer after singl
   assert.equal(observedRouteCode, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
   assert.equal(payload.model, "stub-model");
 });
+
+test("handleChatRequest returns tool-first answer without entering legacy fallback", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "这个月整体怎么样",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let legacyAvailabilityCalled = false;
+  let legacyGeminiCalled = false;
+  const response = await handleChatRequest(context, "req-tool-first-success", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async () => ({
+      ok: true,
+      reply: "当前整体销售保持增长，达成率稳定，近两个月的销售趋势延续向上，建议继续关注核心驱动因素。",
+      model: "tool-model",
+      outputContext: {
+        route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        boundary_needed: false,
+        refuse_mode: false,
+      },
+      toolRuntimeState: {
+        attempted: true,
+        used_tools: ["get_overall_summary"],
+        tool_call_count: 1,
+        rounds: 1,
+        final_route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        success: true,
+        fallback_reason: "",
+      },
+      toolCallTrace: [],
+    }),
+    buildDataAvailability: () => {
+      legacyAvailabilityCalled = true;
+      return {};
+    },
+    callGemini: async () => {
+      legacyGeminiCalled = true;
+      return { ok: true, reply: "legacy", model: "legacy-model" };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "tool-model");
+  assert.equal(
+    payload.reply,
+    "当前整体销售保持增长，达成率稳定，近两个月的销售趋势延续向上，建议继续关注核心驱动因素。",
+  );
+  assert.equal(legacyAvailabilityCalled, false);
+  assert.equal(legacyGeminiCalled, false);
+});
+
+test("handleChatRequest falls back to legacy phase2 when tool-first fails", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "这个月整体怎么样",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let legacyAvailabilityCalled = false;
+  let legacyGeminiCalled = false;
+  const response = await handleChatRequest(context, "req-tool-first-fallback", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async () => ({
+      ok: false,
+      fallbackReason: "tool_execution_failed",
+      toolRuntimeState: {
+        attempted: true,
+        used_tools: ["get_overall_summary"],
+        tool_call_count: 1,
+        rounds: 1,
+        final_route_code: "",
+        success: false,
+        fallback_reason: "tool_execution_failed",
+      },
+      toolCallTrace: [],
+    }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, label: "整体" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    buildDataAvailability: () => {
+      legacyAvailabilityCalled = true;
+      return {
+        has_business_data: { code: DATA_AVAILABILITY_CODES.has_business_data.AVAILABLE, label: "有" },
+        dimension_availability: { code: DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE, label: "具备" },
+        answer_depth: { code: DATA_AVAILABILITY_CODES.answer_depth.FOCUSED, label: "重点分析" },
+        gap_hint_needed: { code: DATA_AVAILABILITY_CODES.gap_hint_needed.NO, label: "否" },
+        detail_request_mode: "generic",
+        hospital_monthly_support: "none",
+        product_hospital_support: "none",
+        hospital_named_support: "none",
+        product_full_support: "none",
+        product_named_support: "none",
+        product_named_match_mode: "none",
+        requested_product_count_value: 0,
+      };
+    },
+    buildRouteDecision: () => ({
+      route: { code: ROUTE_DECISION_CODES.DIRECT_ANSWER, label: "直接回答" },
+      reason_codes: ["sufficient"],
+    }),
+    callGemini: async () => {
+      legacyGeminiCalled = true;
+      return {
+        ok: true,
+        reply: "当前整体销售表现稳定，现有业务信号显示核心产品和医院贡献仍然集中，建议继续跟踪重点对象的变化。",
+        model: "legacy-model",
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "legacy-model");
+  assert.equal(
+    payload.reply,
+    "当前整体销售表现稳定，现有业务信号显示核心产品和医院贡献仍然集中，建议继续跟踪重点对象的变化。",
+  );
+  assert.equal(legacyAvailabilityCalled, true);
+  assert.equal(legacyGeminiCalled, true);
+});
