@@ -6,6 +6,7 @@ import { createEmptyBusinessSnapshot, QUESTION_JUDGMENT_CODES } from '../functio
 import { buildQuestionJudgment, buildEffectiveQuestionJudgment } from '../functions/chat/judgment.js';
 import { buildDataAvailability } from '../functions/chat/availability.js';
 import { buildRouteDecision } from '../functions/chat/routing.js';
+import { resolveHospitalNamedRequestContext } from '../functions/chat/retrieval.js';
 
 test('product family key collapses规格后缀', () => {
   assert.equal(normalizeProductFamilyKey('Botox50'), 'botox');
@@ -71,4 +72,18 @@ test('product named request without snapshot support enters need_more_data', () 
   assert.equal(dataAvailability.detail_request_mode, 'product_named');
   assert.equal(routeDecision.route.code, 'need_more_data');
   assert.ok(routeDecision.reason_codes.includes('product_named_scope_insufficient'));
+});
+
+test('hospital named request context no longer throws when message uses hospital-like wording', () => {
+  const questionJudgment = buildQuestionJudgment('华美这家机构近三个月怎么样');
+  const result = resolveHospitalNamedRequestContext({
+    message: '华美这家机构近三个月怎么样',
+    questionJudgment,
+    productFullRequested: false,
+    productNamedRequested: false,
+  });
+
+  assert.equal(result.hospitalNamedRequested, true);
+  assert.ok(Array.isArray(result.requestedHospitals));
+  assert.ok(result.requestedHospitals.length >= 1);
 });

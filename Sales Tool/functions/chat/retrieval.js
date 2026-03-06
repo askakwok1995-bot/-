@@ -27,6 +27,7 @@ import {
   normalizeNumericValue,
   normalizeProductFamilyKey,
   normalizeProductNameForMatch,
+  normalizeQuestionText,
   normalizeSnapshotObject,
   normalizeSnapshotObjectArray,
   normalizeSnapshotStringArray,
