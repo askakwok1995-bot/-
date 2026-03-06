@@ -1084,8 +1084,8 @@ export function renderRecords(nextState, nextDom, nextDeps) {
           <td>${deps.escapeHtml(record.date)}</td>
           <td>${deps.escapeHtml(record.productName)}</td>
           <td>${deps.escapeHtml(record.hospital)}</td>
-          <td>${deps.escapeHtml(String(record.quantity))} 盒</td>
-          <td>${deps.escapeHtml(deps.formatMoney(record.amount))}</td>
+          <td>${deps.escapeHtml(formatRecordQuantityText(record.quantity))}</td>
+          <td>${deps.escapeHtml(formatRecordAmountText(record.amount))}</td>
           <td>${deps.escapeHtml(record.delivery)}</td>
         </tr>
       `;
@@ -1096,8 +1096,8 @@ export function renderRecords(nextState, nextDom, nextDeps) {
         <td>${deps.escapeHtml(record.date)}</td>
         <td>${deps.escapeHtml(record.productName)}</td>
         <td>${deps.escapeHtml(record.hospital)}</td>
-        <td>${deps.escapeHtml(String(record.quantity))} 盒</td>
-        <td>${deps.escapeHtml(deps.formatMoney(record.amount))}</td>
+        <td>${deps.escapeHtml(formatRecordQuantityText(record.quantity))}</td>
+        <td>${deps.escapeHtml(formatRecordAmountText(record.amount))}</td>
         <td>${deps.escapeHtml(record.delivery)}</td>
         <td>
           <div class="action-group">
@@ -1109,6 +1109,14 @@ export function renderRecords(nextState, nextDom, nextDeps) {
     `;
     })
     .join("");
+}
+
+export function formatRecordQuantityText(quantity) {
+  return Number.isInteger(quantity) && quantity !== 0 ? `${quantity} 盒` : "--";
+}
+
+export function formatRecordAmountText(amount) {
+  return Number.isFinite(amount) ? deps.formatMoney(amount) : "--";
 }
 
 function renderRecordsHead(pageRecords) {
@@ -1411,9 +1419,11 @@ function renderEditingRow(record) {
   const selectedProductId = state.products.some((item) => item.id === record.productId) ? record.productId : "";
   const productOptions = buildProductOptions(selectedProductId);
   const currentProduct = state.products.find((item) => item.id === selectedProductId);
-  const amountText = currentProduct
-    ? deps.formatMoney(deps.roundMoney(currentProduct.unitPrice * record.quantity))
-    : "-";
+  const amountText =
+    currentProduct && Number.isInteger(record.quantity) && record.quantity !== 0
+      ? deps.formatMoney(deps.roundMoney(currentProduct.unitPrice * record.quantity))
+      : "--";
+  const quantityText = Number.isInteger(record.quantity) && record.quantity !== 0 ? String(record.quantity) : "";
 
   return `
     <tr data-editing="true">
@@ -1429,7 +1439,7 @@ function renderEditingRow(record) {
         <input class="row-edit-input" data-field="hospital" type="text" value="${deps.escapeHtml(record.hospital)}" />
       </td>
       <td>
-        <input class="row-edit-input row-edit-quantity" data-field="quantity" type="text" inputmode="decimal" value="${deps.escapeHtml(String(record.quantity))}" />
+        <input class="row-edit-input row-edit-quantity" data-field="quantity" type="text" inputmode="decimal" value="${deps.escapeHtml(quantityText)}" />
       </td>
       <td>
         <span class="row-edit-amount">${deps.escapeHtml(amountText)}</span>
