@@ -145,9 +145,20 @@ test("handleChatRequest skips tool-first and goes legacy fallback when analysis_
   };
 
   let toolCalled = false;
+  let directToolCalled = false;
   let legacyGeminiCalled = false;
   const response = await handleChatRequest(context, "req-invalid-range-fallback", {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "product_full",
+      tool_name: "get_product_summary",
+      tool_args: { include_all_products: true, limit: 50 },
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return { ok: false, fallbackReason: "should-not-run" };
+    },
     runToolFirstChat: async () => {
       toolCalled = true;
       return { ok: false, fallbackReason: "should-not-run" };
@@ -184,6 +195,7 @@ test("handleChatRequest skips tool-first and goes legacy fallback when analysis_
 
   const payload = await response.json();
   assert.equal(response.status, 200);
+  assert.equal(directToolCalled, false);
   assert.equal(toolCalled, false);
   assert.equal(legacyGeminiCalled, true);
   assert.equal(payload.model, "legacy-model");

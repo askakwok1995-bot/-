@@ -36,6 +36,8 @@ import {
   normalizeOutputReply,
 } from "../chat/output.js";
 import { createInitialToolRuntimeState, runToolFirstChat } from "../chat/tool-runtime.js";
+import { buildDeterministicToolRoute } from "../chat/tool-router.js";
+import { runDirectToolChat } from "../chat/tool-direct.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
@@ -182,6 +184,76 @@ async function verifySupabaseAccessToken(request, env) {
   }
 }
 
+function createEmptySessionStateTraceValue() {
+  return {
+    is_followup: false,
+    inherit_primary_dimension: false,
+    inherit_scope: false,
+    topic_shift_detected: false,
+  };
+}
+
+function buildToolPathDataAvailability(outputContext = {}) {
+  return {
+    has_business_data: { code: "available", label: "有" },
+    dimension_availability: {
+      code: trimString(outputContext?.route_code) === ROUTE_DECISION_CODES.BOUNDED_ANSWER ? "partial" : "available",
+      label: "",
+    },
+    answer_depth: { code: trimString(outputContext?.answer_depth_code) || "focused", label: "" },
+    gap_hint_needed: {
+      code: Boolean(outputContext?.boundary_needed) ? "yes" : "no",
+      label: "",
+    },
+    detail_request_mode: Boolean(outputContext?.product_hospital_detail_mode)
+      ? "product_hospital"
+      : Boolean(outputContext?.hospital_monthly_detail_mode)
+        ? "hospital_monthly"
+        : Boolean(outputContext?.hospital_named_detail_mode)
+          ? "hospital_named"
+          : Boolean(outputContext?.product_full_detail_mode)
+            ? "product_full"
+            : Boolean(outputContext?.product_named_detail_mode)
+              ? "product_named"
+              : "generic",
+    hospital_monthly_support: Boolean(outputContext?.hospital_monthly_detail_mode) ? "full" : "none",
+    product_hospital_support: trimString(outputContext?.product_hospital_support_code),
+    hospital_named_support: trimString(outputContext?.hospital_named_support_code),
+    product_full_support: trimString(outputContext?.product_full_support_code),
+    product_named_support: trimString(outputContext?.product_named_support_code),
+    product_named_match_mode: "",
+    requested_product_count_value: Array.isArray(outputContext?.tool_result_matched_products)
+      ? outputContext.tool_result_matched_products.length
+      : 0,
+    product_hospital_hospital_count_value: outputContext?.product_hospital_hospital_count_value ?? 0,
+    product_hospital_zero_result: Boolean(outputContext?.product_hospital_zero_result_mode) ? "yes" : "no",
+  };
+}
+
+function buildToolPathRouteDecision(outputContext = {}) {
+  const routeCode = trimString(outputContext?.route_code) || ROUTE_DECISION_CODES.DIRECT_ANSWER;
+  return {
+    route: { code: routeCode, label: "" },
+    reason_codes: routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER ? ["sufficient"] : [],
+  };
+}
+
+function buildToolPathRetrievalState(toolRuntimeState = {}, toolRouteType = "") {
+  let targetDimension = "";
+  if (toolRouteType === "product_hospital" || toolRouteType === "hospital_named" || toolRouteType === "hospital_monthly") {
+    targetDimension = "hospital";
+  } else if (toolRouteType === "product_full") {
+    targetDimension = "product";
+  }
+  return {
+    triggered: Boolean(toolRuntimeState?.attempted),
+    target_dimension: targetDimension,
+    success: Boolean(toolRuntimeState?.success),
+    window_capped: false,
+    degraded_to_bounded: false,
+  };
+}
+
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
   const buildQuestionJudgmentImpl = deps.buildQuestionJudgment || buildQuestionJudgment;
@@ -211,6 +283,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const logPhase2TraceImpl = deps.logPhase2Trace || logPhase2Trace;
   const runToolFirstChatImpl = deps.runToolFirstChat || runToolFirstChat;
   const createInitialToolRuntimeStateImpl = deps.createInitialToolRuntimeState || createInitialToolRuntimeState;
+  const buildDeterministicToolRouteImpl = deps.buildDeterministicToolRoute || buildDeterministicToolRoute;
+  const runDirectToolChatImpl = deps.runDirectToolChat || runDirectToolChat;
   let stage = "auth";
 
   try {
@@ -244,6 +318,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const questionJudgment = buildQuestionJudgmentImpl(message);
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
+    const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
       const routeDecision = {
@@ -270,57 +345,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       );
     }
 
-    const toolWindow = resolveRetrievalWindowFromSnapshotImpl(normalizedBusinessSnapshot);
-    let toolRuntimeState = createInitialToolRuntimeStateImpl();
-    let toolCallTrace = [];
-    let toolFallbackReason = "";
-    if (!toolWindow.valid) {
-      toolFallbackReason = "invalid_analysis_range";
-    }
-    if (toolWindow.valid) {
-      stage = "tool";
-      const toolFirstResult = await runToolFirstChatImpl({
-        message,
-        historyWindow,
-        businessSnapshot: normalizedBusinessSnapshot,
-        questionJudgment,
-        authToken: authResult.token,
-        env: context.env,
-        requestId,
-        deps,
-      });
-      toolRuntimeState = toolFirstResult.toolRuntimeState || toolRuntimeState;
-      toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
-      toolFallbackReason = trimString(toolFirstResult.fallbackReason) || "tool_first_failed";
-      if (toolFirstResult.ok) {
-        stage = "qc";
-        const routeDecision = {
-          route: { code: trimString(toolFirstResult.outputContext?.route_code), label: "" },
-          reason_codes: [],
-        };
-        const replyDraft = normalizeOutputReplyImpl(toolFirstResult.reply);
-        const qcResult = applyQualityControlImpl(replyDraft, toolFirstResult.outputContext, routeDecision);
-        return jsonResponse(
-          {
-            reply: qcResult.finalReplyText,
-            surfaceReply: qcResult.finalReplyText,
-            responseAction: "natural_answer",
-            businessIntent: "chat",
-            model: toolFirstResult.model,
-            requestId,
-          },
-          200,
-          requestId,
-        );
-      }
-    }
-
-    // Legacy fallback is a single保底链路：仅在 analysis_range 无效、tool-first 失败/超限/异常
-    // 或未形成稳定最终回答时进入。新业务能力应优先进入 tool executors，而不是继续扩 fallback。
-
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
-    const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     stage = "retrieval";
     const productNamedContext = await resolveProductNamedRequestContextImpl({
@@ -353,6 +379,142 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       requestedProducts,
     });
     const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
+
+    const toolWindow = resolveRetrievalWindowFromSnapshotImpl(normalizedBusinessSnapshot);
+    let toolRuntimeState = createInitialToolRuntimeStateImpl();
+    let toolCallTrace = [];
+    let toolFallbackReason = "";
+    let toolRouteMode = "legacy";
+    let toolRouteType = "none";
+    let toolRouteName = "";
+    const deterministicToolRoute = buildDeterministicToolRouteImpl({
+      message,
+      questionJudgment,
+      productFullRequested,
+      hospitalMonthlyDetailRequested,
+      productNamedContext,
+      hospitalNamedContext,
+      productHospitalContext,
+    });
+    if (deterministicToolRoute.matched) {
+      toolRouteType = trimString(deterministicToolRoute.route_type);
+      toolRouteName = trimString(deterministicToolRoute.tool_name);
+    }
+    if (!toolWindow.valid) {
+      toolFallbackReason = "invalid_analysis_range";
+    } else if (deterministicToolRoute.matched) {
+      toolRouteMode = "deterministic";
+      stage = "tool";
+      const directToolResult = await runDirectToolChatImpl(
+        {
+          message,
+          businessSnapshot: normalizedBusinessSnapshot,
+          questionJudgment,
+          authToken: authResult.token,
+          env: context.env,
+          requestId,
+          deterministicToolRoute,
+        },
+        deps,
+      );
+      toolRuntimeState = directToolResult.toolRuntimeState || toolRuntimeState;
+      toolCallTrace = Array.isArray(directToolResult.toolCallTrace) ? directToolResult.toolCallTrace : [];
+      toolFallbackReason = trimString(directToolResult.fallbackReason) || "";
+      if (directToolResult.ok) {
+        stage = "qc";
+        const routeDecision = buildToolPathRouteDecision(directToolResult.outputContext);
+        const replyDraft = normalizeOutputReplyImpl(directToolResult.reply);
+        const qcResult = applyQualityControlImpl(replyDraft, directToolResult.outputContext, routeDecision);
+        const phase2Trace = buildPhase2TraceImpl({
+          requestId,
+          questionJudgment,
+          dataAvailability: buildToolPathDataAvailability(directToolResult.outputContext),
+          sessionState,
+          routeDecision,
+          retrievalState: buildToolPathRetrievalState(toolRuntimeState, toolRouteType),
+          outputContext: directToolResult.outputContext,
+          forcedBounded: false,
+          qcState: qcResult.qcState,
+          toolRouteMode,
+          toolRouteType,
+          toolRouteName,
+          toolRouteFallbackReason: "",
+        });
+        logPhase2TraceImpl(phase2Trace, context.env);
+        return jsonResponse(
+          {
+            reply: qcResult.finalReplyText,
+            surfaceReply: qcResult.finalReplyText,
+            responseAction: "natural_answer",
+            businessIntent: "chat",
+            model: directToolResult.model,
+            requestId,
+          },
+          200,
+          requestId,
+        );
+      }
+      toolRouteMode = "legacy";
+    } else if (toolWindow.valid) {
+      toolRouteMode = "auto";
+      stage = "tool";
+      const toolFirstResult = await runToolFirstChatImpl({
+        message,
+        historyWindow,
+        businessSnapshot: normalizedBusinessSnapshot,
+        questionJudgment,
+        authToken: authResult.token,
+        env: context.env,
+        requestId,
+        deps,
+      });
+      toolRuntimeState = toolFirstResult.toolRuntimeState || toolRuntimeState;
+      toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
+      toolFallbackReason = trimString(toolFirstResult.fallbackReason) || "tool_first_failed";
+      if (toolFirstResult.ok) {
+        stage = "qc";
+        const routeDecision = buildToolPathRouteDecision(toolFirstResult.outputContext);
+        const replyDraft = normalizeOutputReplyImpl(toolFirstResult.reply);
+        const qcResult = applyQualityControlImpl(replyDraft, toolFirstResult.outputContext, routeDecision);
+        const phase2Trace = buildPhase2TraceImpl({
+          requestId,
+          questionJudgment,
+          dataAvailability: buildToolPathDataAvailability(toolFirstResult.outputContext),
+          sessionState,
+          routeDecision,
+          retrievalState: buildToolPathRetrievalState(toolRuntimeState, "generic"),
+          outputContext: {
+            ...toolFirstResult.outputContext,
+            tool_route_mode: "auto",
+            tool_route_type: "none",
+            tool_route_name: "",
+          },
+          forcedBounded: false,
+          qcState: qcResult.qcState,
+          toolRouteMode,
+          toolRouteType,
+          toolRouteName,
+          toolRouteFallbackReason: "",
+        });
+        logPhase2TraceImpl(phase2Trace, context.env);
+        return jsonResponse(
+          {
+            reply: qcResult.finalReplyText,
+            surfaceReply: qcResult.finalReplyText,
+            responseAction: "natural_answer",
+            businessIntent: "chat",
+            model: toolFirstResult.model,
+            requestId,
+          },
+          200,
+          requestId,
+        );
+      }
+      toolRouteMode = "legacy";
+    }
+
+    // Legacy fallback is a single保底链路：仅在 analysis_range 无效、tool-first 失败/超限/异常
+    // 或未形成稳定最终回答时进入。新业务能力应优先进入 tool executors，而不是继续扩 fallback。
     const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
       productFullRequested,
       productHospitalRequested,
@@ -466,6 +628,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       outputContext,
       forcedBounded,
       qcState: qcResult.qcState,
+      toolRouteMode,
+      toolRouteType,
+      toolRouteName,
+      toolRouteFallbackReason: toolFallbackReason,
     });
     logPhase2TraceImpl(phase2Trace, context.env);
 

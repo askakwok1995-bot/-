@@ -146,6 +146,8 @@
 │   ├── phase2-domain.test.js  # Phase 2 纯函数回归测试
 │   ├── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
 │   ├── fallback-decision.test.js # fallback support/routing 决策回归测试
+│   ├── output-tool-consistency.test.js # deterministic tool 输出一致性与 QC 回归测试
+│   ├── tool-router.test.js    # 高置信问题确定性工具路由测试
 │   └── tool-runtime.test.js   # Tool-first 运行时与工具编排回归测试
 ├── package.json
 ├── package-lock.json
@@ -593,7 +595,7 @@ Prompt 接入方式：
 Trace 规则（仅 server log）：
 
 - 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_hospital_support/hospital_named_support/product_full_support/product_named_support/product_named_match_mode/requested_product_count_value)/sessionState/routeDecision/retrievalState/outputContext/forced_bounded/qc(applied+action+reason_codes)`。
+- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_hospital_support/hospital_named_support/product_full_support/product_named_support/product_named_match_mode/requested_product_count_value)/sessionState/routeDecision/retrievalState/outputContext/toolRouteMode/toolRouteType/toolRouteName/toolRouteFallbackReason/forced_bounded/qc(applied+action+reason_codes)`。
 - 不打印 token、不打印业务明细、不打印原始 records。
 - 不打印 `message` 原文、不打印 `history` 原文。
 
@@ -775,7 +777,48 @@ V1 首批仅开放 5 类受控业务工具：
 - 只要 tool-first 未形成稳定最终文本，就回退到 legacy Phase 2 一次
 - 若 tool-first 和 fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`
 
-### 11.15 Legacy Fallback 收敛
+### 11.15 高置信问题确定性工具路由（Phase T1）
+
+在 Hybrid V1 的 `tool-first + legacy fallback` 之上，当前已新增一层确定性工具路由，用于解决“同一个高置信结构化问题有时调工具、有时不调”的不稳定问题。
+
+固定优先级：
+
+- `product_hospital`
+- `hospital_monthly`
+- `product_full`
+- `hospital_named`
+
+命中后行为：
+
+- 不再进入 Gemini `AUTO function calling`
+- 后端直接指定并执行唯一工具
+- direct-tool 路径一次只执行 1 个工具，不做二次 tool loop
+- direct-tool 成功时，以工具结果作为唯一主事实源，再调用 Gemini 只负责自然语言表达
+- direct-tool 失败或 `analysis_range` 无效时，回退 legacy fallback 一次
+
+当前纳入确定性工具路由的高置信问法：
+
+- `Botox50在哪些医院贡献最多` -> `get_product_hospital_contribution`
+- `botox主要是哪些医院贡献的销量` -> `get_product_hospital_contribution`
+- `哪家医院最重要，按近一年逐月说明` -> `get_hospital_summary(include_monthly=true)`
+- `分析所有产品表现` -> `get_product_summary(include_all_products=true)`
+- `华美这家机构近三个月怎么样` -> `get_hospital_summary`
+
+当前不纳入 T1 的问法：
+
+- 普通整体摘要
+- 普通趋势摘要
+- 普通命名产品摘要（如“诺和盈1mg怎么样”）
+
+这些问题仍继续走现有 `AUTO tool-first`，避免确定性路由扩范围过大。
+
+输出一致性约束：
+
+- 当 deterministic tool 结果 `coverage=full` 且 `rows>0` 时，最终回答不得写成“数据不足/未提供细分/无法判断”。
+- 当 deterministic `product_hospital` 结果 `rows>=3` 时，回复至少体现多家医院，不应只说 Top1。
+- 当 deterministic `product_hospital` 结果 `coverage=full` 且 `rows=0` 时，必须明确写成“当前范围内贡献为0/未产生贡献”，而不是“缺数据”。
+
+### 11.16 Legacy Fallback 收敛
 
 - `availability` 已拆为两层：
   - `availability-core.js`：通用判定（`has_business_data / dimension_availability / answer_depth / gap_hint_needed`）

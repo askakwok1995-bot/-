@@ -154,11 +154,16 @@ function deriveFinalRouteCode(lastToolResult) {
   return ROUTE_DECISION_CODES.DIRECT_ANSWER;
 }
 
-function buildToolOutputContext(questionJudgment, lastToolResult) {
+export function buildToolOutputContext(questionJudgment, lastToolResult) {
   const routeCode = deriveFinalRouteCode(lastToolResult);
   const detailRequestMode = trimString(lastToolResult?.meta?.detail_request_mode);
   const matchedHospitals = Array.isArray(lastToolResult?.meta?.matched_hospitals) ? lastToolResult.meta.matched_hospitals : [];
   const matchedProducts = Array.isArray(lastToolResult?.meta?.matched_products) ? lastToolResult.meta.matched_products : [];
+  const rows = Array.isArray(lastToolResult?.result?.rows) ? lastToolResult.result.rows : [];
+  const rowNames = rows
+    .map((row) => trimString(row?.hospital_name || row?.product_name || row?.period))
+    .filter((item) => item)
+    .slice(0, 5);
   return {
     route_code: routeCode,
     primary_dimension_code: trimString(questionJudgment?.primary_dimension?.code),
@@ -189,10 +194,14 @@ function buildToolOutputContext(questionJudgment, lastToolResult) {
     tool_matched_hospital_count_value: matchedHospitals.length,
     tool_matched_product_count_value: matchedProducts.length,
     product_hospital_zero_result_mode: trimString(lastToolResult?.meta?.product_hospital_zero_result) === "yes",
+    tool_result_coverage_code: trimString(lastToolResult?.result?.coverage?.code),
+    tool_result_row_count_value: rows.length,
+    tool_result_row_names: rowNames,
+    tool_result_matched_products: matchedProducts.slice(0, 5),
   };
 }
 
-function buildToolCallTraceEntry(call, executionResult) {
+export function buildToolCallTraceEntry(call, executionResult) {
   return {
     tool_name: trimString(call?.name),
     coverage_code: trimString(executionResult?.result?.coverage?.code),

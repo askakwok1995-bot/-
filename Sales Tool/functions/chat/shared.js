@@ -172,6 +172,8 @@ export const QC_REASON_CODES = Object.freeze({
   BOUNDED_MISSING_BOUNDARY_SENTENCE: "bounded_missing_boundary_sentence",
   HIGH_DUPLICATION: "high_duplication",
   IRRELEVANT_REFUSE_MISMATCH: "irrelevant_refuse_mismatch",
+  TOOL_RESULT_CONTRADICTION: "tool_result_contradiction",
+  TOOL_RESULT_UNDERLISTED: "tool_result_underlisted",
 });
 
 export const QC_ACTIONS = Object.freeze({

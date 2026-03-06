@@ -311,3 +311,172 @@ test("handleChatRequest falls back to legacy phase2 when tool-first fails", asyn
   assert.equal(legacyAvailabilityCalled, true);
   assert.equal(legacyGeminiCalled, true);
 });
+
+test("handleChatRequest uses deterministic direct-tool route before AUTO tool-first", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Botox50在哪些医院贡献最多",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let autoToolCalled = false;
+  let directToolCalled = false;
+  const response = await handleChatRequest(context, "req-deterministic-tool", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    resolveProductNamedRequestContext: async () => ({
+      productNamedRequested: true,
+      requestedProducts: [{ product_name: "Botox50" }],
+      productNamedMatchMode: "exact",
+    }),
+    resolveHospitalNamedRequestContext: () => ({ hospitalNamedRequested: false, requestedHospitals: [] }),
+    resolveProductHospitalRequestContext: () => ({ productHospitalRequested: true }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "product_hospital",
+      tool_name: "get_product_hospital_contribution",
+      tool_args: { product_names: ["Botox50"], limit: 10 },
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return {
+        ok: true,
+        reply: "Botox50 的主要贡献医院包括广东韩妃整形外科医院有限公司、广州华美医疗美容医院有限公司和广东祈福医院有限公司。",
+        model: "deterministic-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          boundary_needed: false,
+          refuse_mode: false,
+          product_hospital_detail_mode: true,
+          product_hospital_support_code: "full",
+          product_hospital_zero_result_mode: false,
+          tool_route_mode: "deterministic",
+          tool_route_type: "product_hospital",
+          tool_route_name: "get_product_hospital_contribution",
+          tool_result_coverage_code: "full",
+          tool_result_row_count_value: 3,
+          tool_result_row_names: [
+            "广东韩妃整形外科医院有限公司",
+            "广州华美医疗美容医院有限公司",
+            "广东祈福医院有限公司",
+          ],
+          tool_result_matched_products: ["Botox50"],
+        },
+        toolRuntimeState: { attempted: true, success: true },
+        toolCallTrace: [],
+      };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false, fallbackReason: "should-not-run" };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(directToolCalled, true);
+  assert.equal(autoToolCalled, false);
+  assert.equal(payload.model, "deterministic-model");
+});
+
+test("handleChatRequest falls back once to legacy when deterministic direct-tool fails", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Botox50在哪些医院贡献最多",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let autoToolCalled = false;
+  let legacyGeminiCalled = false;
+  const response = await handleChatRequest(context, "req-deterministic-fallback", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    resolveProductNamedRequestContext: async () => ({
+      productNamedRequested: true,
+      requestedProducts: [{ product_name: "Botox50" }],
+      productNamedMatchMode: "exact",
+    }),
+    resolveHospitalNamedRequestContext: () => ({ hospitalNamedRequested: false, requestedHospitals: [] }),
+    resolveProductHospitalRequestContext: () => ({ productHospitalRequested: true }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "product_hospital",
+      tool_name: "get_product_hospital_contribution",
+      tool_args: { product_names: ["Botox50"], limit: 10 },
+    }),
+    runDirectToolChat: async () => ({
+      ok: false,
+      fallbackReason: "deterministic_tool_execution_failed",
+      toolRuntimeState: { attempted: true, success: false },
+      toolCallTrace: [],
+    }),
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false, fallbackReason: "should-not-run" };
+    },
+    buildDataAvailability: () => ({
+      has_business_data: { code: DATA_AVAILABILITY_CODES.has_business_data.AVAILABLE, label: "有" },
+      dimension_availability: { code: DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE, label: "具备" },
+      answer_depth: { code: DATA_AVAILABILITY_CODES.answer_depth.FOCUSED, label: "重点分析" },
+      gap_hint_needed: { code: DATA_AVAILABILITY_CODES.gap_hint_needed.NO, label: "否" },
+      detail_request_mode: "product_hospital",
+      hospital_monthly_support: "none",
+      product_hospital_support: "full",
+      hospital_named_support: "none",
+      product_full_support: "none",
+      product_named_support: "full",
+      product_named_match_mode: "exact",
+      requested_product_count_value: 1,
+      product_hospital_hospital_count_value: 3,
+      product_hospital_zero_result: "no",
+    }),
+    buildRouteDecision: () => ({
+      route: { code: ROUTE_DECISION_CODES.DIRECT_ANSWER, label: "直接回答" },
+      reason_codes: ["sufficient"],
+    }),
+    callGemini: async () => {
+      legacyGeminiCalled = true;
+      return {
+        ok: true,
+        reply: "当前可见范围内，Botox50 的主要贡献医院包括广东韩妃整形外科医院有限公司和广州华美医疗美容医院有限公司。",
+        model: "legacy-model",
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(autoToolCalled, false);
+  assert.equal(legacyGeminiCalled, true);
+  assert.equal(payload.model, "legacy-model");
+});

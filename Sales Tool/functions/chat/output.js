@@ -57,6 +57,14 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     product_named_support_code: trimString(finalDataAvailability?.product_named_support),
     dimension_availability_code: trimString(finalDataAvailability?.dimension_availability?.code),
     answer_depth_code: trimString(finalDataAvailability?.answer_depth?.code),
+    product_hospital_zero_result_mode: trimString(finalDataAvailability?.product_hospital_zero_result) === "yes",
+    tool_route_mode: "legacy",
+    tool_route_type: "none",
+    tool_route_name: "",
+    tool_result_coverage_code: "",
+    tool_result_row_count_value: 0,
+    tool_result_row_names: [],
+    tool_result_matched_products: [],
   };
 }
 
@@ -86,6 +94,8 @@ function toDataAvailabilityTrace(dataAvailability) {
     product_named_support: trimString(dataAvailability?.product_named_support),
     product_named_match_mode: trimString(dataAvailability?.product_named_match_mode),
     requested_product_count_value: normalizeNumericValue(dataAvailability?.requested_product_count_value) ?? 0,
+    product_hospital_hospital_count_value: normalizeNumericValue(dataAvailability?.product_hospital_hospital_count_value) ?? 0,
+    product_hospital_zero_result: trimString(dataAvailability?.product_hospital_zero_result),
   };
 }
 
@@ -147,6 +157,10 @@ export function buildPhase2Trace({
   outputContext,
   forcedBounded,
   qcState,
+  toolRouteMode = "",
+  toolRouteType = "",
+  toolRouteName = "",
+  toolRouteFallbackReason = "",
 }) {
   return {
     requestId: trimString(requestId),
@@ -156,6 +170,10 @@ export function buildPhase2Trace({
     routeDecision: toRouteDecisionTrace(routeDecision),
     retrievalState: toRetrievalStateTrace(retrievalState),
     outputContext: toOutputContextTrace(outputContext),
+    toolRouteMode: trimString(toolRouteMode),
+    toolRouteType: trimString(toolRouteType),
+    toolRouteName: trimString(toolRouteName),
+    toolRouteFallbackReason: trimString(toolRouteFallbackReason),
     forced_bounded: Boolean(forcedBounded),
     qc: toQcStateTrace(qcState),
   };
@@ -255,6 +273,44 @@ function containsInternalProcessWords(text) {
   return containsAnyKeywordIgnoreCase(text, INTERNAL_PROCESS_WORDS);
 }
 
+function containsDataInsufficientWording(text) {
+  return containsAnyKeywordIgnoreCase(text, ["数据不足", "未提供细分", "无法直接判断", "无法直接给出", "未包含", "无法提供"]);
+}
+
+function countMentionedToolRowNames(text, outputContext) {
+  const normalizedText = trimString(text);
+  const rowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
+  if (!normalizedText || rowNames.length === 0) {
+    return 0;
+  }
+  let count = 0;
+  rowNames.forEach((name) => {
+    const safeName = trimString(name);
+    if (safeName && normalizedText.includes(safeName)) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
+function buildDeterministicProductHospitalSummary(outputContext) {
+  const productNames = Array.isArray(outputContext?.tool_result_matched_products) ? outputContext.tool_result_matched_products : [];
+  const topRowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
+  const productLabel = productNames.length > 0 ? productNames.join("、") : "该产品";
+  if (Boolean(outputContext?.product_hospital_zero_result_mode)) {
+    return `在当前分析范围内，${productLabel}未产生医院销量贡献（贡献为0）。`;
+  }
+  if (topRowNames.length === 0) {
+    return "";
+  }
+  return `在当前分析范围内，${productLabel}的主要贡献医院包括${topRowNames.slice(0, 3).join("、")}。`;
+}
+
+function buildDeterministicProductHospitalList(outputContext) {
+  const topRowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
+  return topRowNames.slice(0, 3).map((name, index) => `${index + 1}. ${name}`).join("\n");
+}
+
 function hasHighDuplication(text) {
   const sentences = splitTextByQcSentenceRule(text);
   if (sentences.length < QC_HIGH_DUP_SENTENCE_MIN) {
@@ -341,6 +397,24 @@ function evaluateReplyQuality(reply, outputContext, routeDecision) {
   }
   if (isStrongRouteMismatch(text, routeCode)) {
     findings.push(QC_REASON_CODES.IRRELEVANT_REFUSE_MISMATCH);
+  }
+  const deterministicToolRoute = trimString(outputContext?.tool_route_mode) === "deterministic";
+  const toolCoverageCode = trimString(outputContext?.tool_result_coverage_code);
+  const toolRowCount = normalizeNumericValue(outputContext?.tool_result_row_count_value) ?? 0;
+  if (deterministicToolRoute && toolCoverageCode === "full") {
+    if (
+      (toolRowCount > 0 && containsDataInsufficientWording(text)) ||
+      (toolRowCount === 0 && (containsDataInsufficientWording(text) || !containsAnyKeywordIgnoreCase(text, ["贡献为0", "未产生医院销量贡献", "无贡献"])))
+    ) {
+      findings.push(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION);
+    }
+    if (
+      Boolean(outputContext?.product_hospital_detail_mode) &&
+      toolRowCount >= 3 &&
+      countMentionedToolRowNames(text, outputContext) < 2
+    ) {
+      findings.push(QC_REASON_CODES.TOOL_RESULT_UNDERLISTED);
+    }
   }
 
   const dedupedFindings = [];
@@ -444,12 +518,20 @@ function applyMinimalPatch(reply, findings, outputContext) {
   let patched = trimString(reply);
   const routeCode = trimString(outputContext?.route_code);
   const findingSet = new Set(Array.isArray(findings) ? findings : []);
+  const deterministicProductHospitalPatch =
+    Boolean(outputContext?.product_hospital_detail_mode) &&
+    (findingSet.has(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION) || findingSet.has(QC_REASON_CODES.TOOL_RESULT_UNDERLISTED));
 
   if (findingSet.has(QC_REASON_CODES.CONTAINS_INTERNAL_PROCESS_WORDS)) {
     patched = scrubInternalProcessWords(patched);
   }
   if (findingSet.has(QC_REASON_CODES.HIGH_DUPLICATION)) {
     patched = removeTailDuplicatedContent(patched);
+  }
+  if (deterministicProductHospitalPatch) {
+    const summaryText = buildDeterministicProductHospitalSummary(outputContext);
+    const listText = buildDeterministicProductHospitalList(outputContext);
+    patched = trimString([summaryText, listText].filter((item) => trimString(item)).join("\n"));
   }
   if (routeCode === ROUTE_DECISION_CODES.REFUSE && findingSet.has(QC_REASON_CODES.REFUSE_MISSING_EXAMPLES)) {
     patched = appendRefuseExamplesText(patched);
@@ -482,6 +564,15 @@ function buildQualityFallbackReply(routeCode, outputContext) {
 
 export function applyQualityControl(replyDraft, outputContext, routeDecision) {
   const initial = evaluateReplyQuality(replyDraft, outputContext, routeDecision);
+  const deterministicToolConsistencyPatch =
+    trimString(outputContext?.tool_route_mode) === "deterministic" &&
+    initial.findings.some(
+      (code) => code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION || code === QC_REASON_CODES.TOOL_RESULT_UNDERLISTED,
+    );
+  const severeFindingsAllowDeterministicPatch =
+    deterministicToolConsistencyPatch &&
+    initial.severe_findings.length > 0 &&
+    initial.severe_findings.every((code) => code === QC_REASON_CODES.EMPTY_OR_TOO_SHORT);
   if (initial.findings.length === 0) {
     return {
       finalReplyText: replyDraft,
@@ -493,7 +584,7 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
     };
   }
 
-  if (initial.severe_findings.length > 0) {
+  if (initial.severe_findings.length > 0 && !severeFindingsAllowDeterministicPatch) {
     return {
       finalReplyText: buildQualityFallbackReply(trimString(routeDecision?.route?.code), outputContext),
       qcState: {
@@ -506,6 +597,19 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
 
   const patchedReply = applyMinimalPatch(replyDraft, initial.findings, outputContext);
   const rechecked = evaluateReplyQuality(patchedReply, outputContext, routeDecision);
+  const remainingDeterministicToolFindings = rechecked.findings.filter(
+    (code) => code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION || code === QC_REASON_CODES.TOOL_RESULT_UNDERLISTED,
+  );
+  if (deterministicToolConsistencyPatch && rechecked.severe_findings.length === 0 && remainingDeterministicToolFindings.length === 0) {
+    return {
+      finalReplyText: patchedReply,
+      qcState: {
+        applied: true,
+        reason_codes: initial.findings,
+        action: QC_ACTIONS.MINIMAL_PATCH,
+      },
+    };
+  }
   const shouldFallback =
     rechecked.severe_findings.length > 0 ||
     (initial.non_severe_findings.length >= QC_NON_SEVERE_FALLBACK_MIN && rechecked.findings.length >= 1);
@@ -545,6 +649,8 @@ export function buildOutputInstructionText(outputContext) {
   const productNamedDetailMode = Boolean(outputContext?.product_named_detail_mode);
   const productHospitalSupportCode = trimString(outputContext?.product_hospital_support_code);
   const productHospitalHospitalCountValue = normalizeNumericValue(outputContext?.product_hospital_hospital_count_value) ?? 0;
+  const toolResultCoverageCode = trimString(outputContext?.tool_result_coverage_code);
+  const toolResultRowCountValue = normalizeNumericValue(outputContext?.tool_result_row_count_value) ?? 0;
   const hospitalNamedSupportCode = trimString(outputContext?.hospital_named_support_code);
   const productFullSupportCode = trimString(outputContext?.product_full_support_code);
   const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
@@ -554,10 +660,18 @@ export function buildOutputInstructionText(outputContext) {
     }
     if (productHospitalDetailMode) {
       const listConstraint =
-        productHospitalHospitalCountValue >= 3
+        (toolResultRowCountValue || productHospitalHospitalCountValue) >= 3
           ? "若医院条目不少于3家，至少列出Top3医院贡献点（不要只给Top1）。"
           : "若医院条目不足3家，按实际可见条目逐条说明。";
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。${listConstraint}`;
+      const contradictionConstraint =
+        toolResultCoverageCode === "full" && (toolResultRowCountValue || productHospitalHospitalCountValue) > 0
+          ? "当前工具结果已完整覆盖该产品的医院贡献，不得写成“数据不足/未提供细分明细/无法判断”。"
+          : "";
+      const zeroResultConstraint =
+        toolResultCoverageCode === "full" && Boolean(outputContext?.product_hospital_zero_result_mode)
+          ? "当前工具结果明确为0贡献，必须写成“当前范围内该产品医院贡献为0/未产生贡献”，不得写成“缺数据”。"
+          : "";
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。${listConstraint}${contradictionConstraint}${zeroResultConstraint}`;
     }
     if (hospitalNamedDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。`;
@@ -638,7 +752,40 @@ export function buildGeminiPayload(message, businessSnapshot, outputContext) {
       },
     ],
     generationConfig: {
-      temperature: 0.7,
+      temperature: 0.3,
+      maxOutputTokens: 1024,
+    },
+  };
+}
+
+export function buildGeminiPayloadFromToolResult(message, toolResult, outputContext) {
+  const systemInstructionText = buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION);
+  const outputInstructionText = buildOutputInstructionText(outputContext);
+  const mergedSystemInstructionText = outputInstructionText
+    ? `${systemInstructionText}\n\n${outputInstructionText}\n\n请严格以 tool_result 为本轮回答的主要事实来源，不要被 seed context 或既往快照覆盖。`
+    : `${systemInstructionText}\n\n请严格以 tool_result 为本轮回答的主要事实来源，不要被 seed context 或既往快照覆盖。`;
+  const toolResultPromptText = [
+    "以下是当前问题对应的工具执行结果（tool_result），请将其作为本轮回答的主事实依据。",
+    "如 tool_result.coverage=full 且 rows 非空，请直接给出明确结论，不要写成“数据不足”。",
+    "如 tool_result.coverage=full 且 rows 为空，请直接说明当前范围内贡献为0/未产生贡献。",
+    "",
+    "tool_result:",
+    JSON.stringify(toolResult ?? {}, null, 2),
+    "",
+    `用户问题：${message}`,
+  ].join("\n");
+  return {
+    systemInstruction: {
+      parts: [{ text: mergedSystemInstructionText }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: toolResultPromptText }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
       maxOutputTokens: 1024,
     },
   };
@@ -813,6 +960,40 @@ export async function callGemini(message, businessSnapshot, outputContext, env, 
   const reply = extractGeminiReply(response.payload);
   if (!reply) {
     logGeminiCallBreadcrumb("call", "result", {
+      requestId: trimString(requestId),
+      model: response.model,
+      ok: false,
+      status: 502,
+      error_code: CHAT_ERROR_CODES.EMPTY_REPLY,
+    });
+    return {
+      ok: false,
+      code: CHAT_ERROR_CODES.EMPTY_REPLY,
+      message: "Gemini 返回为空，请稍后重试。",
+      status: 502,
+      model: response.model,
+    };
+  }
+  return {
+    ok: true,
+    reply,
+    model: response.model,
+  };
+}
+
+export async function callGeminiWithToolResult(message, toolResult, outputContext, env, requestId = "") {
+  const response = await requestGeminiGenerateContent(
+    buildGeminiPayloadFromToolResult(message, toolResult, outputContext),
+    env,
+    requestId,
+    "direct",
+  );
+  if (!response.ok) {
+    return response;
+  }
+  const reply = extractGeminiReply(response.payload);
+  if (!reply) {
+    logGeminiCallBreadcrumb("direct", "result", {
       requestId: trimString(requestId),
       model: response.model,
       ok: false,
