@@ -302,7 +302,9 @@ function splitQuarterCompareOperands(message) {
 }
 
 function normalizeQuarterCompareOperand(rawValue) {
-  return trimString(rawValue).replace(/(?:的?情况|情况|表现|走势|销售情况)$/u, "");
+  return trimString(rawValue)
+    .replace(/(?:的?(?:销售|业绩)?情况|表现|走势)$/u, "")
+    .replace(/的$/u, "");
 }
 
 function parseQuarterCompareIntent(message, analysisRange) {

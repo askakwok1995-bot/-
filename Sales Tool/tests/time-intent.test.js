@@ -124,6 +124,28 @@ test("parseTimeIntent strips generic suffixes in quarter compare operands", () =
   assert.equal(q3VsQ2WithPunctuation.time_compare_mode, "quarter_compare");
   assert.equal(q3VsQ2WithPunctuation.requested_time_window.period, "2025-07~2025-09");
   assert.equal(q3VsQ2WithPunctuation.comparison_time_window.period, "2025-04~2025-06");
+
+  const q4VsQ3SalesContext = parseTimeIntent("25年Q4对比Q3的销售情况怎么样", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(q4VsQ3SalesContext.time_compare_mode, "quarter_compare");
+  assert.equal(q4VsQ3SalesContext.requested_time_window.period, "2025-10~2025-12");
+  assert.equal(q4VsQ3SalesContext.comparison_time_window.period, "2025-07~2025-09");
+
+  const q3VsQ2SalesContext = parseTimeIntent("25年Q3对比Q2的销售情况怎么样", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(q3VsQ2SalesContext.time_compare_mode, "quarter_compare");
+  assert.equal(q3VsQ2SalesContext.requested_time_window.period, "2025-07~2025-09");
+  assert.equal(q3VsQ2SalesContext.comparison_time_window.period, "2025-04~2025-06");
 });
 
 test("buildTimeWindowCoverage distinguishes full partial and none", () => {
