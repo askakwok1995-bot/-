@@ -863,6 +863,56 @@ V1 已支持：
 - 只要命中了时间意图，最终回答必须显式写出绝对时间区间
 - 若回复把相对时间自动重解释为报表尾部月份，QC 会直接回退到统一时间边界模板
 
+### 11.16.1 裸季度表达与 deterministic 本地降级（Phase T1.2）
+
+在 Phase T1.1 的基础上，当前已继续补齐两类体验问题：
+
+1. `Q4季度销售情况如何` 这类未写年份的裸季度表达
+2. deterministic tool 已有有效结果，但 Gemini 上游高负载/超时/上游错误时的本地降级
+
+裸季度表达当前已支持：
+
+- `Q1` / `Q2` / `Q3` / `Q4`
+- `Q1季度` / `Q4季度`
+- `第一季度` / `第四季度`
+- `1季度` / `4季度`
+
+固定解释规则：
+
+- 若 `analysis_range` 为单一年份完整区间（如 `2025-01~2025-12`），则裸季度默认按当前数据年份解释  
+  例如：`Q4季度` -> `2025-10~2025-12`
+- 若 `analysis_range` 不是单一年份完整区间，则不自动猜年份，直接进入时间边界说明
+- 显式年份表达仍优先：`2024年Q4`、`2024年第四季度`
+
+内部补充字段：
+
+- `requested_time_window.anchor_mode = explicit|analysis_year|none`
+- `local_response_mode = none|tool_result_fallback|time_boundary`
+
+当前时间边界规则继续保持收口：
+
+- 裸季度命中但无唯一年份锚点时，不进入 deterministic tool、不进入 AUTO tool-first、不进入 legacy fallback 业务回答
+- 必须明确说明“用户提到的是未写年份的季度，当前可用区间无法唯一确定所属年份”
+- 可补一句“若你希望，我可以按当前报表所在年份的 Q4 来分析”，但不自动替用户选年份
+
+deterministic tool 本地降级规则：
+
+- 仅覆盖 deterministic route，不扩到全部 AUTO tool-first
+- 当 deterministic tool 已拿到有效 `toolResult`，但 Gemini 返回：
+  - `UPSTREAM_TIMEOUT`
+  - `UPSTREAM_ERROR`
+  - `UPSTREAM_RATE_LIMIT`
+  - `UPSTREAM_NETWORK_ERROR`
+- 则优先基于工具结果返回本地模板回答，不再把英文 high demand / upstream error 直接暴露给用户
+
+本地模板约束：
+
+- 必须显式写出绝对时间区间
+- 若季度是按当前数据年份锚定出来的，需明确写成：
+  - `按当前数据年份口径，这里将 Q4季度 解释为 2025年Q4（2025-10~2025-12）`
+- `product_hospital` 在 `rows=0` 时必须明确写“当前范围内该产品医院贡献为0/未产生贡献”
+- 本地降级文本仍继续经过 `normalizeOutputReply + QC`
+
 ### 11.17 Legacy Fallback 收敛
 
 - `availability` 已拆为两层：

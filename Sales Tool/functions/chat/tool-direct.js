@@ -1,7 +1,15 @@
 import { trimString } from "./shared.js";
 import { buildToolOutputContext, buildToolCallTraceEntry, createInitialToolRuntimeState } from "./tool-runtime.js";
 import { createToolRuntimeContext, executeToolByName } from "./tool-executors.js";
-import { callGeminiWithToolResult } from "./output.js";
+import { buildLocalDeterministicToolReply, callGeminiWithToolResult } from "./output.js";
+import { buildTimeWindowOutputContextFields } from "./time-intent.js";
+
+const DIRECT_TOOL_LOCAL_FALLBACK_CODES = new Set([
+  "UPSTREAM_TIMEOUT",
+  "UPSTREAM_ERROR",
+  "UPSTREAM_RATE_LIMIT",
+  "UPSTREAM_NETWORK_ERROR",
+]);
 
 export async function runDirectToolChat(
   {
@@ -32,6 +40,9 @@ export async function runDirectToolChat(
   const createToolRuntimeContextImpl = deps.createToolRuntimeContext || createToolRuntimeContext;
   const executeToolByNameImpl = deps.executeToolByName || executeToolByName;
   const callGeminiWithToolResultImpl = deps.callGeminiWithToolResult || callGeminiWithToolResult;
+  const buildLocalDeterministicToolReplyImpl = deps.buildLocalDeterministicToolReply || buildLocalDeterministicToolReply;
+  const buildTimeWindowOutputContextFieldsImpl =
+    deps.buildTimeWindowOutputContextFields || buildTimeWindowOutputContextFields;
 
   const runtimeContext = createToolRuntimeContextImpl(
     {
@@ -83,6 +94,15 @@ export async function runDirectToolChat(
 
   const outputContext = {
     ...buildToolOutputContext(questionJudgment, toolExecutionResult),
+    ...buildTimeWindowOutputContextFieldsImpl(requestedTimeWindow, {
+      code: "full",
+      available_start_month: trimString(windowInfo?.effective_start_month),
+      available_end_month: trimString(windowInfo?.effective_end_month),
+      available_period:
+        trimString(windowInfo?.effective_start_month) && trimString(windowInfo?.effective_end_month)
+          ? `${trimString(windowInfo?.effective_start_month)}~${trimString(windowInfo?.effective_end_month)}`
+          : "",
+    }),
     tool_route_mode: "deterministic",
     tool_route_type: trimString(route.route_type),
     tool_route_name: trimString(route.tool_name),
@@ -96,6 +116,25 @@ export async function runDirectToolChat(
     requestId,
   );
   if (!geminiResult.ok) {
+    if (DIRECT_TOOL_LOCAL_FALLBACK_CODES.has(trimString(geminiResult.code))) {
+      const localReply = trimString(buildLocalDeterministicToolReplyImpl(toolExecutionResult.result, outputContext));
+      if (localReply) {
+        state.success = true;
+        state.final_route_code = trimString(outputContext.route_code);
+        return {
+          ok: true,
+          reply: localReply,
+          model: "local-template-tool-fallback",
+          outputContext: {
+            ...outputContext,
+            local_response_mode: "tool_result_fallback",
+          },
+          toolRuntimeState: state,
+          toolCallTrace,
+          toolResult: toolExecutionResult.result,
+        };
+      }
+    }
     return {
       ok: false,
       fallbackReason: trimString(geminiResult.code) || "deterministic_tool_gemini_failed",

@@ -71,10 +71,12 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     requested_time_window_start_month: "",
     requested_time_window_end_month: "",
     requested_time_window_period: "",
+    requested_time_window_anchor_mode: "none",
     time_window_coverage_code: "none",
     available_time_window_start_month: "",
     available_time_window_end_month: "",
     available_time_window_period: "",
+    local_response_mode: "none",
   };
 }
 
@@ -143,6 +145,7 @@ function toOutputContextTrace(outputContext) {
     route_code: trimString(outputContext?.route_code),
     boundary_needed: Boolean(outputContext?.boundary_needed),
     refuse_mode: Boolean(outputContext?.refuse_mode),
+    local_response_mode: trimString(outputContext?.local_response_mode),
   };
 }
 
@@ -338,6 +341,203 @@ function buildDeterministicProductHospitalSummary(outputContext) {
 function buildDeterministicProductHospitalList(outputContext) {
   const topRowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
   return topRowNames.slice(0, 3).map((name, index) => `${index + 1}. ${name}`).join("\n");
+}
+
+function buildAnchoredQuarterPrefix(outputContext) {
+  const anchorMode = trimString(outputContext?.requested_time_window_anchor_mode);
+  const requestedLabel = trimString(outputContext?.requested_time_window_label);
+  const requestedPeriod = trimString(outputContext?.requested_time_window_period);
+  const requestedStart = trimString(outputContext?.requested_time_window_start_month);
+  if (anchorMode !== "analysis_year" || !requestedLabel || !requestedPeriod || !requestedStart) {
+    return "";
+  }
+  const year = requestedStart.slice(0, 4);
+  const quarterMatch = requestedLabel.match(/[Qq]\s*([1-4])|([1-4])季度|第([一二三四])季度|([一二三四])季度/);
+  let quarterLabel = "";
+  if (quarterMatch) {
+    quarterLabel = quarterMatch[1]
+      ? `Q${quarterMatch[1]}`
+      : quarterMatch[2]
+        ? `Q${quarterMatch[2]}`
+        : quarterMatch[3] === "一" || quarterMatch[4] === "一"
+          ? "Q1"
+          : quarterMatch[3] === "二" || quarterMatch[4] === "二"
+            ? "Q2"
+            : quarterMatch[3] === "三" || quarterMatch[4] === "三"
+              ? "Q3"
+              : quarterMatch[3] === "四" || quarterMatch[4] === "四"
+                ? "Q4"
+                : "";
+  }
+  if (!year || !quarterLabel) {
+    return "";
+  }
+  return `按当前数据年份口径，这里将 ${requestedLabel} 解释为 ${year}年${quarterLabel}（${requestedPeriod}）。`;
+}
+
+function buildExplicitTimePrefix(outputContext) {
+  const anchoredQuarterPrefix = buildAnchoredQuarterPrefix(outputContext);
+  if (anchoredQuarterPrefix) {
+    return anchoredQuarterPrefix;
+  }
+  const requestedPeriod = trimString(outputContext?.requested_time_window_period);
+  if (!requestedPeriod) {
+    return "";
+  }
+  return `本轮分析时间区间为 ${requestedPeriod}。`;
+}
+
+function toWanTextFromValue(rawValue) {
+  const numeric = normalizeNumericValue(rawValue);
+  if (typeof numeric !== "number" || !Number.isFinite(numeric)) {
+    return "--";
+  }
+  return `${(numeric / 10000).toFixed(2)}万元`;
+}
+
+function toRatioText(rawValue) {
+  const numeric = normalizeNumericValue(rawValue);
+  if (typeof numeric !== "number" || !Number.isFinite(numeric)) {
+    return "--";
+  }
+  return `${(numeric * 100).toFixed(2)}%`;
+}
+
+function toSignedRatioText(rawValue) {
+  const numeric = normalizeNumericValue(rawValue);
+  if (typeof numeric !== "number" || !Number.isFinite(numeric)) {
+    return "--";
+  }
+  const sign = numeric > 0 ? "+" : "";
+  return `${sign}${(numeric * 100).toFixed(2)}%`;
+}
+
+function buildLocalProductHospitalReply(toolResult, outputContext) {
+  const productNames = Array.isArray(toolResult?.matched_entities?.products) ? toolResult.matched_entities.products : [];
+  const rows = Array.isArray(toolResult?.rows) ? toolResult.rows : [];
+  const productLabel = productNames.length > 0 ? productNames.join("、") : "该产品";
+  const lines = [];
+  const timePrefix = buildExplicitTimePrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+  if (rows.length === 0) {
+    lines.push(`在当前分析范围内，${productLabel}未产生医院销量贡献（贡献为0）。`);
+    lines.push("建议优先确认该产品在目标医院的铺货和采购触达情况，再评估后续放量空间。");
+    return lines.join("\n");
+  }
+  const topRows = rows.slice(0, 3);
+  const topNames = topRows.map((row) => trimString(row?.hospital_name)).filter((item) => item);
+  if (topNames.length > 0) {
+    lines.push(`${productLabel}的主要贡献医院集中在${topNames.join("、")}。`);
+  }
+  topRows.forEach((row, index) => {
+    const hospitalName = trimString(row?.hospital_name) || `医院${index + 1}`;
+    const amountText = trimString(row?.sales_amount) || toWanTextFromValue(row?.sales_amount_value);
+    const shareText = trimString(row?.sales_share) || toRatioText(row?.sales_share_ratio);
+    const changeText = trimString(row?.change_value) || trimString(row?.amount_mom) || toSignedRatioText(row?.amount_mom_ratio);
+    const changeSuffix = changeText && changeText !== "--" ? `，最近变化 ${changeText}` : "";
+    lines.push(`${index + 1}. ${hospitalName}：销售额 ${amountText}，占比 ${shareText}${changeSuffix}。`);
+  });
+  lines.push(`建议优先复盘${topRows[0] && trimString(topRows[0].hospital_name) ? trimString(topRows[0].hospital_name) : "核心医院"}的贡献驱动，并对比其他重点医院的持续性。`);
+  return lines.join("\n");
+}
+
+function buildLocalHospitalNamedReply(toolResult, outputContext) {
+  const hospitals = Array.isArray(toolResult?.matched_entities?.hospitals) ? toolResult.matched_entities.hospitals : [];
+  const summary = toolResult?.summary && typeof toolResult.summary === "object" ? toolResult.summary : {};
+  const hospitalLabel = hospitals.length > 0 ? hospitals.join("、") : "该机构";
+  const lines = [];
+  const timePrefix = buildExplicitTimePrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+  const amountText = trimString(summary?.sales_amount) || toWanTextFromValue(summary?.sales_amount_value);
+  const volumeText = trimString(summary?.sales_volume) || (
+    typeof normalizeNumericValue(summary?.sales_volume_value) === "number"
+      ? `${normalizeNumericValue(summary.sales_volume_value)}盒`
+      : "--"
+  );
+  const changeText =
+    trimString(summary?.latest_key_change) ||
+    trimString(summary?.amount_mom) ||
+    toSignedRatioText(summary?.latest_key_change_ratio) ||
+    toSignedRatioText(summary?.amount_mom_ratio);
+  lines.push(`${hospitalLabel}在当前分析区间内整体表现${amountText !== "--" ? `较为明确，销售额为 ${amountText}` : "已有可参考业务信号"}${volumeText !== "--" ? `，销量 ${volumeText}` : ""}。`);
+  if (changeText && changeText !== "--") {
+    lines.push(`近期变化方面，关键指标变动为 ${changeText}。`);
+  }
+  lines.push(`建议继续跟踪${hospitalLabel}的采购节奏和波动月份，判断当前增长或回落是否具备持续性。`);
+  return lines.join("\n");
+}
+
+function buildLocalProductFullReply(toolResult, outputContext) {
+  const rows = Array.isArray(toolResult?.rows) ? toolResult.rows : [];
+  const lines = [];
+  const timePrefix = buildExplicitTimePrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+  if (rows.length === 0) {
+    lines.push("当前分析区间内未看到可列示的产品贡献结果。");
+    lines.push("建议优先确认当前筛选范围内是否已覆盖目标产品，并再判断是否需要按产品线拆分查看。");
+    return lines.join("\n");
+  }
+  const topRows = rows.slice(0, 3);
+  lines.push(`当前产品表现可先聚焦${topRows.map((row) => trimString(row?.product_name)).filter((item) => item).join("、")}等核心产品。`);
+  topRows.forEach((row, index) => {
+    const productName = trimString(row?.product_name) || `产品${index + 1}`;
+    const amountText = trimString(row?.sales_amount) || toWanTextFromValue(row?.sales_amount_value);
+    const shareText = trimString(row?.sales_share) || toRatioText(row?.sales_share_ratio);
+    lines.push(`${index + 1}. ${productName}：销售额 ${amountText}，占比 ${shareText}。`);
+  });
+  if (rows.length > 3) {
+    lines.push(`当前回答优先覆盖前 ${Math.min(rows.length, 3)} 个重点产品，其余产品可继续按当前区间补充展开。`);
+  }
+  return lines.join("\n");
+}
+
+function buildLocalHospitalMonthlyReply(toolResult, outputContext) {
+  const rows = Array.isArray(toolResult?.rows) ? toolResult.rows : [];
+  const lines = [];
+  const timePrefix = buildExplicitTimePrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+  if (rows.length === 0) {
+    lines.push("当前分析区间内未形成可列示的医院月度摘要。");
+    lines.push("建议先确认当前时间范围内是否已有月度医院记录，再继续逐月分析。");
+    return lines.join("\n");
+  }
+  const firstRow = rows[0];
+  const hospitalLabel = trimString(firstRow?.hospital_name) || "该机构";
+  const monthlyPoints = Array.isArray(firstRow?.monthly_points) ? firstRow.monthly_points : [];
+  lines.push(`${hospitalLabel}在当前分析区间内存在明显的月度波动。`);
+  monthlyPoints.slice(0, 3).forEach((point, index) => {
+    const period = trimString(point?.period);
+    const amountText = trimString(point?.sales_amount) || toWanTextFromValue(point?.sales_amount_value);
+    const changeText = trimString(point?.amount_mom) || toSignedRatioText(point?.amount_mom_ratio);
+    lines.push(`${index + 1}. ${period}：销售额 ${amountText}${changeText && changeText !== "--" ? `，环比 ${changeText}` : ""}。`);
+  });
+  lines.push(`建议重点关注${hospitalLabel}波动较大的月份，并结合采购节奏判断后续稳定性。`);
+  return lines.join("\n");
+}
+
+export function buildLocalDeterministicToolReply(toolResult, outputContext) {
+  const routeType = trimString(outputContext?.tool_route_type);
+  if (routeType === "product_hospital") {
+    return buildLocalProductHospitalReply(toolResult, outputContext);
+  }
+  if (routeType === "hospital_named") {
+    return buildLocalHospitalNamedReply(toolResult, outputContext);
+  }
+  if (routeType === "product_full") {
+    return buildLocalProductFullReply(toolResult, outputContext);
+  }
+  if (routeType === "hospital_monthly") {
+    return buildLocalHospitalMonthlyReply(toolResult, outputContext);
+  }
+  return "";
 }
 
 function hasHighDuplication(text) {
@@ -734,11 +934,17 @@ export function buildOutputInstructionText(outputContext) {
   const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
   const requestedTimeWindowKind = trimString(outputContext?.requested_time_window_kind);
   const requestedTimeWindowPeriod = trimString(outputContext?.requested_time_window_period);
+  const requestedTimeWindowAnchorMode = trimString(outputContext?.requested_time_window_anchor_mode);
+  const requestedTimeWindowLabel = trimString(outputContext?.requested_time_window_label);
   const timeWindowCoverageCode = trimString(outputContext?.time_window_coverage_code);
   const availableTimeWindowPeriod = trimString(outputContext?.available_time_window_period);
   const timeWindowInstructionText =
     requestedTimeWindowKind !== "none" && requestedTimeWindowPeriod
       ? `时间口径约束：本轮回答必须显式写出实际采用的时间区间 ${requestedTimeWindowPeriod}，不要只写“本月/近三个月”。${
+          requestedTimeWindowAnchorMode === "analysis_year" && requestedTimeWindowLabel
+            ? `并明确说明这是按当前数据年份口径将“${requestedTimeWindowLabel}”解释为该区间。`
+            : ""
+        }${
           timeWindowCoverageCode === "partial" || timeWindowCoverageCode === "none"
             ? `当前可用区间为 ${availableTimeWindowPeriod}，不得把请求时间偷换成报表尾部月份。`
             : ""

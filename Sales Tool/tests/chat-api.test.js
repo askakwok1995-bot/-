@@ -372,6 +372,54 @@ test("handleChatRequest returns time boundary reply when requested real-world wi
   assert.match(payload.reply, /2025-01~2025-12/u);
 });
 
+test("handleChatRequest returns year-ambiguous quarter boundary reply before tool paths", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Q4季度销售情况如何",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-04", end_month: "2025-12", period: "2025-04~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let directToolCalled = false;
+  let autoToolCalled = false;
+  const response = await handleChatRequest(context, "req-quarter-ambiguous", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    parseRequestedTimeWindow: () => ({
+      kind: "absolute",
+      label: "Q4季度",
+      start_month: "",
+      end_month: "",
+      period: "",
+      anchor_mode: "none",
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return { ok: false };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "local-template-time-boundary");
+  assert.equal(directToolCalled, false);
+  assert.equal(autoToolCalled, false);
+  assert.match(payload.reply, /未写年份的季度|无法唯一确定/u);
+});
+
 test("handleChatRequest passes requested subwindow snapshot into deterministic tool route when coverage is full", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
@@ -520,6 +568,94 @@ test("handleChatRequest uses deterministic direct-tool route before AUTO tool-fi
   assert.equal(directToolCalled, true);
   assert.equal(autoToolCalled, false);
   assert.equal(payload.model, "deterministic-model");
+});
+
+test("handleChatRequest uses local deterministic fallback reply when Gemini direct generation times out", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Botox50在哪些医院贡献最多",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  const response = await handleChatRequest(context, "req-direct-local-fallback", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    resolveProductNamedRequestContext: async () => ({
+      productNamedRequested: true,
+      requestedProducts: [{ product_name: "Botox50" }],
+      productNamedMatchMode: "exact",
+    }),
+    resolveHospitalNamedRequestContext: () => ({ hospitalNamedRequested: false, requestedHospitals: [] }),
+    resolveProductHospitalRequestContext: () => ({ productHospitalRequested: true }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "product_hospital",
+      tool_name: "get_product_hospital_contribution",
+      tool_args: { product_names: ["Botox50"], limit: 10 },
+    }),
+    runDirectToolChat: async () => ({
+      ok: true,
+      reply: [
+        "本轮分析时间区间为 2025-10~2025-12。",
+        "Botox50的主要贡献医院集中在广东韩妃整形外科医院有限公司、广州华美医疗美容医院有限公司、广东祈福医院有限公司。",
+        "1. 广东韩妃整形外科医院有限公司：销售额 189.76万元，占比 17.50%。",
+        "2. 广州华美医疗美容医院有限公司：销售额 149.39万元，占比 13.78%。",
+        "3. 广东祈福医院有限公司：销售额 112.64万元，占比 10.39%。",
+        "建议优先复盘广东韩妃整形外科医院有限公司的贡献驱动，并对比其他重点医院的持续性。",
+      ].join("\n"),
+      model: "local-template-tool-fallback",
+      outputContext: {
+        route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        boundary_needed: false,
+        refuse_mode: false,
+        product_hospital_detail_mode: true,
+        product_hospital_support_code: "full",
+        product_hospital_zero_result_mode: false,
+        tool_route_mode: "deterministic",
+        tool_route_type: "product_hospital",
+        tool_route_name: "get_product_hospital_contribution",
+        tool_result_coverage_code: "full",
+        tool_result_row_count_value: 3,
+        tool_result_row_names: [
+          "广东韩妃整形外科医院有限公司",
+          "广州华美医疗美容医院有限公司",
+          "广东祈福医院有限公司",
+        ],
+        tool_result_matched_products: ["Botox50"],
+        requested_time_window_kind: "absolute",
+        requested_time_window_label: "Q4季度",
+        requested_time_window_start_month: "2025-10",
+        requested_time_window_end_month: "2025-12",
+        requested_time_window_period: "2025-10~2025-12",
+        requested_time_window_anchor_mode: "analysis_year",
+        local_response_mode: "tool_result_fallback",
+      },
+      toolRuntimeState: { attempted: true, success: true },
+      toolCallTrace: [],
+    }),
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "local-template-tool-fallback");
+  assert.match(payload.reply, /2025-10~2025-12/u);
+  assert.match(payload.reply, /广东韩妃整形外科医院有限公司/u);
+  assert.doesNotMatch(payload.reply, /high demand|超时|暂时无法完成/u);
 });
 
 test("handleChatRequest falls back once to legacy when deterministic direct-tool fails", async () => {

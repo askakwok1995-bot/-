@@ -15,6 +15,7 @@ function createEmptyRequestedTimeWindow() {
     start_month: "",
     end_month: "",
     period: "",
+    anchor_mode: "none",
   };
 }
 
@@ -91,16 +92,29 @@ function buildRelativeWindow(label, startMonth, endMonth) {
     start_month: startMonth,
     end_month: endMonth,
     period: buildPeriod(startMonth, endMonth),
+    anchor_mode: "none",
   };
 }
 
-function buildAbsoluteWindow(label, startMonth, endMonth) {
+function buildAbsoluteWindow(label, startMonth, endMonth, anchorMode = "explicit") {
   return {
     kind: "absolute",
     label,
     start_month: startMonth,
     end_month: endMonth,
     period: buildPeriod(startMonth, endMonth),
+    anchor_mode: anchorMode,
+  };
+}
+
+function buildBareQuarterAmbiguousWindow(label) {
+  return {
+    kind: "absolute",
+    label,
+    start_month: "",
+    end_month: "",
+    period: "",
+    anchor_mode: "none",
   };
 }
 
@@ -149,7 +163,47 @@ function buildPreviousYearWindow(label, currentYm) {
   return buildRelativeWindow(label, formatYm(parsed.year - 1, 1), formatYm(parsed.year - 1, 12));
 }
 
-function parseAbsoluteTimeWindow(message) {
+function parseBareQuarterNumber(rawValue) {
+  const value = String(rawValue || "").trim().toUpperCase();
+  const digitMatch = value.match(/[1-4]/);
+  if (digitMatch) {
+    return Number(digitMatch[0]);
+  }
+  const mapping = {
+    第一: 1,
+    第二: 2,
+    第三: 3,
+    第四: 4,
+    第一季度: 1,
+    第二季度: 2,
+    第三季度: 3,
+    第四季度: 4,
+    一季度: 1,
+    二季度: 2,
+    三季度: 3,
+    四季度: 4,
+  };
+  return mapping[value] || null;
+}
+
+function resolveAnalysisRangeYearAnchor(rawAnalysisRange) {
+  const startMonth = trimString(rawAnalysisRange?.start_month);
+  const endMonth = trimString(rawAnalysisRange?.end_month);
+  const parsedStart = parseYm(startMonth);
+  const parsedEnd = parseYm(endMonth);
+  if (!parsedStart || !parsedEnd) {
+    return null;
+  }
+  if (parsedStart.year !== parsedEnd.year) {
+    return null;
+  }
+  if (parsedStart.month !== 1 || parsedEnd.month !== 12) {
+    return null;
+  }
+  return parsedStart.year;
+}
+
+function parseAbsoluteTimeWindow(message, analysisRange) {
   const text = trimString(message);
   if (!text) {
     return createEmptyRequestedTimeWindow();
@@ -183,6 +237,32 @@ function parseAbsoluteTimeWindow(message) {
     const startMonth = formatYm(year, (quarter - 1) * 3 + 1);
     const endMonth = formatYm(year, quarter * 3);
     return buildAbsoluteWindow(`${year}年${quarter}季度`, startMonth, endMonth);
+  }
+
+  matched = text.match(/(\d{4})年\s*第?\s*([一二三四])季度/);
+  if (matched) {
+    const year = Number(matched[1]);
+    const quarter = parseBareQuarterNumber(`第${matched[2]}`);
+    const startMonth = formatYm(year, (quarter - 1) * 3 + 1);
+    const endMonth = formatYm(year, quarter * 3);
+    return buildAbsoluteWindow(`${year}年Q${quarter}`, startMonth, endMonth);
+  }
+
+  matched = text.match(/(?:^|[^\dA-Za-z])((?:Q\s*[1-4]\s*季度)|(?:Q\s*[1-4])|(?:[1-4]季度)|(?:第[一二三四]季度)|(?:[一二三四]季度))(?:$|[^\dA-Za-z])/i);
+  if (matched) {
+    const rawLabel = trimString(matched[1]);
+    const quarter = parseBareQuarterNumber(rawLabel);
+    const label = rawLabel.replace(/\s+/g, "");
+    const analysisYear = resolveAnalysisRangeYearAnchor(analysisRange);
+    if (!quarter) {
+      return createEmptyRequestedTimeWindow();
+    }
+    if (!analysisYear) {
+      return buildBareQuarterAmbiguousWindow(label || `Q${quarter}`);
+    }
+    const startMonth = formatYm(analysisYear, (quarter - 1) * 3 + 1);
+    const endMonth = formatYm(analysisYear, quarter * 3);
+    return buildAbsoluteWindow(label || `Q${quarter}`, startMonth, endMonth, "analysis_year");
   }
 
   return createEmptyRequestedTimeWindow();
@@ -231,7 +311,7 @@ function parseRelativeTimeWindow(message, currentYm) {
 export function parseRequestedTimeWindow(message, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const timeZone = trimString(options.timeZone) || DEFAULT_TIMEZONE;
-  const absoluteWindow = parseAbsoluteTimeWindow(message);
+  const absoluteWindow = parseAbsoluteTimeWindow(message, options.analysisRange);
   if (absoluteWindow.kind !== "none") {
     return absoluteWindow;
   }
@@ -322,6 +402,7 @@ export function buildTimeWindowOutputContextFields(requestedTimeWindow, coverage
     requested_time_window_start_month: trimString(requestedTimeWindow?.start_month),
     requested_time_window_end_month: trimString(requestedTimeWindow?.end_month),
     requested_time_window_period: trimString(requestedTimeWindow?.period),
+    requested_time_window_anchor_mode: trimString(requestedTimeWindow?.anchor_mode) || "none",
     time_window_coverage_code: trimString(coverage?.code) || "none",
     available_time_window_start_month: trimString(coverage?.available_start_month),
     available_time_window_end_month: trimString(coverage?.available_end_month),
@@ -333,6 +414,15 @@ export function buildTimeWindowBoundaryReply({ requestedTimeWindow, coverage }) 
   const label = trimString(requestedTimeWindow?.label) || "该时间范围";
   const requestedPeriod = trimString(requestedTimeWindow?.period);
   const availablePeriod = trimString(coverage?.available_period);
+  const requestedKind = trimString(requestedTimeWindow?.kind);
+  const anchorMode = trimString(requestedTimeWindow?.anchor_mode);
+  if (requestedKind !== "none" && !requestedPeriod && anchorMode === "none") {
+    return [
+      `你提到的是未写年份的季度（${label}）。`,
+      `当前可用分析区间为 ${availablePeriod || "当前报表区间"}，暂时无法唯一确定这个季度所属年份，因此我先不替你自动选年份。`,
+      "若你希望，我可以按当前报表所在年份的对应季度来分析。",
+    ].join("\n");
+  }
   if (!requestedPeriod || !availablePeriod) {
     return "当前时间范围无法与现有分析区间对齐，我先不直接改写时间口径来回答。若你希望，我可以按当前报表范围内的时间来分析。";
   }
@@ -346,8 +436,10 @@ export function buildTimeWindowBoundaryReply({ requestedTimeWindow, coverage }) 
 export function buildTimeWindowBoundaryReplyFromOutputContext(outputContext) {
   return buildTimeWindowBoundaryReply({
     requestedTimeWindow: {
+      kind: trimString(outputContext?.requested_time_window_kind),
       label: trimString(outputContext?.requested_time_window_label),
       period: trimString(outputContext?.requested_time_window_period),
+      anchor_mode: trimString(outputContext?.requested_time_window_anchor_mode),
     },
     coverage: {
       available_period: trimString(outputContext?.available_time_window_period),

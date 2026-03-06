@@ -358,7 +358,9 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const questionJudgment = buildQuestionJudgmentImpl(message);
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
-    const requestedTimeWindow = parseRequestedTimeWindowImpl(message);
+    const requestedTimeWindow = parseRequestedTimeWindowImpl(message, {
+      analysisRange: normalizedBusinessSnapshot?.analysis_range,
+    });
     const timeWindowCoverage = buildTimeWindowCoverageImpl(requestedTimeWindow, normalizedBusinessSnapshot);
     const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
@@ -391,13 +393,24 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const productFullRequested = isFullProductRequest(message, questionJudgment);
     const requestedTimeWindowFields = buildTimeWindowOutputContextFieldsImpl(requestedTimeWindow, timeWindowCoverage);
 
-    if (trimString(requestedTimeWindow?.kind) !== "none" && trimString(timeWindowCoverage?.code) !== "full") {
+    const requestedTimeWindowKind = trimString(requestedTimeWindow?.kind);
+    const requestedTimeWindowAnchorMode = trimString(requestedTimeWindow?.anchor_mode);
+    const requestedTimeWindowHasExecutableRange =
+      Boolean(trimString(requestedTimeWindow?.start_month)) && Boolean(trimString(requestedTimeWindow?.end_month));
+
+    if (
+      requestedTimeWindowKind !== "none" &&
+      (!requestedTimeWindowHasExecutableRange ||
+        requestedTimeWindowAnchorMode === "none" ||
+        trimString(timeWindowCoverage?.code) !== "full")
+    ) {
       const routeDecision = buildTimeBoundaryRouteDecision();
       const dataAvailability = buildTimeBoundaryDataAvailability();
       stage = "output";
       const outputContext = {
         ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
         ...requestedTimeWindowFields,
+        local_response_mode: "time_boundary",
       };
       const replyDraft = normalizeOutputReplyImpl(
         buildTimeWindowBoundaryReplyImpl({
@@ -420,7 +433,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         toolRouteMode: "legacy",
         toolRouteType: "none",
         toolRouteName: "",
-        toolRouteFallbackReason: "time_window_not_fully_covered",
+        toolRouteFallbackReason:
+          requestedTimeWindowKind !== "none" && !requestedTimeWindowHasExecutableRange
+            ? "time_window_year_ambiguous"
+            : "time_window_not_fully_covered",
       });
       logPhase2TraceImpl(phase2Trace, context.env);
       return jsonResponse(
@@ -438,7 +454,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     const scopedBusinessSnapshot =
-      trimString(requestedTimeWindow?.kind) !== "none" && trimString(timeWindowCoverage?.code) === "full"
+      requestedTimeWindowKind !== "none" && trimString(timeWindowCoverage?.code) === "full"
         ? applyRequestedTimeWindowToSnapshotImpl(normalizedBusinessSnapshot, requestedTimeWindow)
         : normalizedBusinessSnapshot;
 
@@ -522,6 +538,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         const outputContext = {
           ...directToolResult.outputContext,
           ...requestedTimeWindowFields,
+          local_response_mode: trimString(directToolResult.outputContext?.local_response_mode) || "none",
         };
         const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
         const phase2Trace = buildPhase2TraceImpl({
@@ -578,6 +595,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         const outputContext = {
           ...toolFirstResult.outputContext,
           ...requestedTimeWindowFields,
+          local_response_mode: trimString(toolFirstResult.outputContext?.local_response_mode) || "none",
         };
         const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
         const phase2Trace = buildPhase2TraceImpl({

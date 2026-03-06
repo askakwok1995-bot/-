@@ -30,6 +30,30 @@ test("parseRequestedTimeWindow supports absolute quarter expressions", () => {
   assert.equal(quarterWindow.period, "2024-10~2024-12");
 });
 
+test("parseRequestedTimeWindow anchors bare quarter to analysis year only when analysis_range is a full single year", () => {
+  const anchoredQuarter = parseRequestedTimeWindow("Q4季度销售情况如何", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(anchoredQuarter.kind, "absolute");
+  assert.equal(anchoredQuarter.period, "2025-10~2025-12");
+  assert.equal(anchoredQuarter.anchor_mode, "analysis_year");
+
+  const ambiguousQuarter = parseRequestedTimeWindow("第四季度销售情况如何", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-04",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(ambiguousQuarter.kind, "absolute");
+  assert.equal(ambiguousQuarter.period, "");
+  assert.equal(ambiguousQuarter.anchor_mode, "none");
+});
+
 test("buildTimeWindowCoverage distinguishes full partial and none", () => {
   const snapshot = {
     analysis_range: {
