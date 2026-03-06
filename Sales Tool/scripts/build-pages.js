@@ -17,7 +17,7 @@ const STATIC_FILES = [
   "ai-chat-ui.js",
 ];
 
-const STATIC_DIRS = ["vendor"];
+const STATIC_DIRS = ["app", "domain", "infra", "vendor"];
 
 function ensurePathExists(relativePath) {
   const absolutePath = path.resolve(process.cwd(), relativePath);
@@ -42,6 +42,7 @@ function copyStaticAssets() {
       recursive: true,
       dereference: true,
       force: true,
+      filter: (entryPath) => path.basename(entryPath) !== "package.json",
     });
   }
 }

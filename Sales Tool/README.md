@@ -97,19 +97,44 @@
 /Users/askakwok/Documents/Vibe Coding/Sales Tool
 ├── index.html                 # 页面结构与脚本入口
 ├── styles.css                 # 全站样式
-├── main.js                    # 应用启动、状态装配、云端数据访问封装
+├── main.js                    # 前端应用编排与模块装配
+├── app/
+│   ├── chat-client.js         # 聊天前端请求链路与业务快照装配
+│   ├── create-app-deps.js     # 前端 deps 装配兼容层
+│   └── smoke-tools.js         # Supabase smoke 调试工具
 ├── auth.js                    # 认证门禁、会话保持、注册/登录/退出
+├── domain/
+│   ├── entity-matchers.js     # 产品/医院命名归一化与匹配内核
+│   └── report-snapshot.js     # 共享报表/业务快照聚合内核
+├── infra/
+│   ├── supabase-auth-context.js  # Supabase 鉴权上下文适配器
+│   ├── products-repository.js    # 产品云端仓储
+│   ├── records-repository.js     # 记录云端仓储
+│   └── targets-repository.js     # 指标云端仓储
 ├── storage.js                 # 本地存储与数据规范化工具
 ├── products.js                # 产品维护与销售录入校验
 ├── records.js                 # 记录列表、多选、导入、云端读写
 ├── targets.js                 # 指标录入、分配、校验
-├── reports.js                 # 报表计算、图表渲染、导出
+├── reports.js                 # 报表渲染与导出（聚合核心已下沉到 domain）
+├── functions/
+│   ├── api/
+│   │   └── chat.js            # AI HTTP 入口与 phase 串联
+│   └── chat/
+│       ├── shared.js          # AI 共享常量、格式化与基础工具
+│       ├── judgment.js        # 问题判定层
+│       ├── availability.js    # 数据可用性层
+│       ├── session.js         # 会话状态层
+│       ├── routing.js         # 路由层
+│       ├── retrieval.js       # 按需补强层
+│       └── output.js          # 输出层、QC、trace
 ├── config.example.js          # Supabase 配置模板
 ├── config.js                  # 运行时配置（构建生成，已 gitignore）
 ├── dist/                      # Cloudflare Pages 静态产物目录（构建生成，已 gitignore）
 ├── scripts/
 │   ├── generate-config.js     # 按环境变量生成 config.js（本地）
 │   └── build-pages.js         # 生成 dist/ 并写入 dist/config.js（部署）
+├── tests/
+│   └── phase2-domain.test.js  # Phase 2 纯函数最小回归测试
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -181,7 +206,7 @@ window.__APP_CONFIG__ = {
 
 ## 8. 调试能力（开发期）
 
-`main.js` 会挂载一个 smoke 方法：
+`app/smoke-tools.js` 会挂载一个 smoke 方法（入口仍由 `main.js` 调用）：
 - `window.__SALES_TOOL_SUPABASE_SMOKE_WRITE__(options)`
 
 用途：插入一条测试记录并回读（可选自动清理），快速验证 Supabase 写链路。
@@ -202,7 +227,8 @@ window.__APP_CONFIG__ = {
 - 并发冲突策略仍为“最后写入生效”，暂未实现基于 `updated_at` 的乐观锁。
 - Excel 导入当前为“分块串行”策略，超大文件导入耗时仍可能较长。
 - 当批量写入出现网络/超时等状态不确定异常时，系统不会逐行重试；需刷新页面核对后再决定是否重试。
-- 当前缺少自动化测试（仅有语法检查），建议优先补 records/products/targets 的关键路径测试。
+- 当前已补一组 Phase 2 纯函数回归测试（命名匹配、有效主维度、交叉路由互斥）；业务 CRUD 与报表主链仍建议继续补自动化测试。
+- 当前前端入口已收敛为“应用编排层”，Supabase 访问与云端行映射已迁移到 `infra/` repository；`products.js / records.js / targets.js / reports.js` 仍通过 `deps` 兼容层访问能力。
 - 当导入后的产品同步失败时，系统会提示并尝试回拉云端产品；已写入的 records 不会回滚。
 
 ## 11. 聊天（阶段1：自然对话）
@@ -446,6 +472,7 @@ window.__APP_CONFIG__ = {
 - 命中“全产品问法”且当前仅 `partial` 覆盖时，会进入 `need_more_data`，并记录 `reason_code=product_full_scope_insufficient`。
 - 命中“命名产品问法”且 `product_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=product_named_scope_insufficient`。
 - 命中“产品×医院交叉问法”且 `product_hospital_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=product_hospital_scope_insufficient`。
+- 当 `detail_request_mode=product_hospital` 时，路由判定主看 `product_hospital_support`，不再以 `product_named_support` 触发 `need_more_data`（两者判据互斥）。
 - 命中“命名医院问法”且 `hospital_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=hospital_named_scope_insufficient`。
 - 全产品问法关键词已补充：`所有药品/全部药品/所有药/全部药/全药品清单`，与“所有产品/全部产品”同级处理。
 - 产品模式优先级固定为：`product_full > product_named > generic`。
