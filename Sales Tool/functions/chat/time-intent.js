@@ -277,7 +277,7 @@ function buildQuarterWindowFromExpression(expression, year, anchorMode = "explic
 }
 
 function splitQuarterCompareOperands(message) {
-  const text = trimString(message);
+  const text = trimString(message).replace(/[。！？?!]+$/u, "");
   if (!text) {
     return null;
   }

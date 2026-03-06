@@ -67,6 +67,17 @@ test("parseTimeIntent resolves quarter compare using explicit or analysis-year a
   assert.equal(explicitCompare.requested_time_window.period, "2025-10~2025-12");
   assert.equal(explicitCompare.comparison_time_window.period, "2025-07~2025-09");
 
+  const explicitCompareWithPunctuation = parseTimeIntent("25年Q4对比Q3情况如何？", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(explicitCompareWithPunctuation.time_compare_mode, "quarter_compare");
+  assert.equal(explicitCompareWithPunctuation.requested_time_window.period, "2025-10~2025-12");
+  assert.equal(explicitCompareWithPunctuation.comparison_time_window.period, "2025-07~2025-09");
+
   const analysisAnchoredCompare = parseTimeIntent("Q4对比Q3", {
     now: FIXED_NOW,
     analysisRange: {
