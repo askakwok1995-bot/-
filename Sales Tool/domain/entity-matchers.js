@@ -34,3 +34,78 @@ export function normalizeHospitalAliasKey(value) {
     "",
   );
 }
+
+export function buildHospitalNamedCandidates(rows) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  return sourceRows
+    .map((row) => {
+      const name = trimString(row?.name || row?.hospital_name);
+      const fullKey = normalizeHospitalNameForMatch(name);
+      const aliasKey = normalizeHospitalAliasKey(name);
+      if (!name || !fullKey) {
+        return null;
+      }
+      return {
+        name,
+        full_key: fullKey,
+        alias_key: aliasKey,
+        row,
+      };
+    })
+    .filter((item) => item !== null);
+}
+
+export function resolveHospitalNamedMatches(requestedHospitals, candidateRows) {
+  const requested = Array.isArray(requestedHospitals) ? requestedHospitals : [];
+  const candidates = Array.isArray(candidateRows) ? candidateRows : [];
+  if (requested.length === 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const resolved = [];
+  const usedCandidates = new Set();
+  requested.forEach((requestItem) => {
+    const mentionKey = normalizeHospitalNameForMatch(requestItem?.mention_key || requestItem?.mention_name);
+    const mentionAliasKey = normalizeHospitalAliasKey(requestItem?.mention_alias_key || requestItem?.mention_name);
+    if (!mentionKey || mentionKey.length < 2) {
+      return;
+    }
+
+    const exactMatches = candidates.filter((candidate) => {
+      return candidate.full_key === mentionKey || (mentionAliasKey && candidate.alias_key && candidate.alias_key === mentionAliasKey);
+    });
+
+    let selected = null;
+    if (exactMatches.length === 1) {
+      selected = exactMatches[0];
+    } else if (exactMatches.length === 0) {
+      const fuzzyMatches = candidates.filter((candidate) => {
+        if (candidate.full_key.includes(mentionKey)) {
+          return true;
+        }
+        if (mentionAliasKey && candidate.alias_key && candidate.alias_key.includes(mentionAliasKey)) {
+          return true;
+        }
+        if (mentionAliasKey && candidate.alias_key && mentionAliasKey.includes(candidate.alias_key) && candidate.alias_key.length >= 2) {
+          return true;
+        }
+        return false;
+      });
+      if (fuzzyMatches.length === 1) {
+        selected = fuzzyMatches[0];
+      }
+    }
+
+    if (!selected) {
+      return;
+    }
+    const dedupeKey = selected.full_key;
+    if (usedCandidates.has(dedupeKey)) {
+      return;
+    }
+    usedCandidates.add(dedupeKey);
+    resolved.push(selected);
+  });
+
+  return resolved;
+}

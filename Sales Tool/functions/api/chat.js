@@ -183,6 +183,28 @@ async function verifySupabaseAccessToken(request, env) {
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
   const buildQuestionJudgmentImpl = deps.buildQuestionJudgment || buildQuestionJudgment;
+  const normalizeSessionHistoryWindowImpl = deps.normalizeSessionHistoryWindow || normalizeSessionHistoryWindow;
+  const buildSessionStateImpl = deps.buildSessionState || buildSessionState;
+  const resolveProductNamedRequestContextImpl =
+    deps.resolveProductNamedRequestContext || resolveProductNamedRequestContext;
+  const resolveHospitalNamedRequestContextImpl =
+    deps.resolveHospitalNamedRequestContext || resolveHospitalNamedRequestContext;
+  const resolveProductHospitalRequestContextImpl =
+    deps.resolveProductHospitalRequestContext || resolveProductHospitalRequestContext;
+  const normalizeBusinessSnapshotImpl = deps.normalizeBusinessSnapshot || normalizeBusinessSnapshot;
+  const buildDataAvailabilityImpl = deps.buildDataAvailability || buildDataAvailability;
+  const buildRouteDecisionImpl = deps.buildRouteDecision || buildRouteDecision;
+  const createInitialRetrievalStateImpl = deps.createInitialRetrievalState || createInitialRetrievalState;
+  const buildOnDemandSnapshotEnhancementImpl =
+    deps.buildOnDemandSnapshotEnhancement || buildOnDemandSnapshotEnhancement;
+  const forceBoundedRouteDecisionImpl = deps.forceBoundedRouteDecision || forceBoundedRouteDecision;
+  const buildOutputContextImpl = deps.buildOutputContext || buildOutputContext;
+  const buildRefuseReplyTemplateImpl = deps.buildRefuseReplyTemplate || buildRefuseReplyTemplate;
+  const callGeminiImpl = deps.callGemini || callGemini;
+  const normalizeOutputReplyImpl = deps.normalizeOutputReply || normalizeOutputReply;
+  const applyQualityControlImpl = deps.applyQualityControl || applyQualityControl;
+  const buildPhase2TraceImpl = deps.buildPhase2Trace || buildPhase2Trace;
+  const logPhase2TraceImpl = deps.logPhase2Trace || logPhase2Trace;
   let stage = "auth";
 
   try {
@@ -216,11 +238,11 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const questionJudgment = buildQuestionJudgmentImpl(message);
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
-    const historyWindow = normalizeSessionHistoryWindow(body?.history);
-    const sessionState = buildSessionState(message, historyWindow, questionJudgment);
+    const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
+    const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     stage = "retrieval";
-    const productNamedContext = await resolveProductNamedRequestContext({
+    const productNamedContext = await resolveProductNamedRequestContextImpl({
       message,
       questionJudgment,
       productFullRequested,
@@ -232,7 +254,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       ? productNamedContext.requestedProducts
       : [];
     const productNamedMatchMode = trimString(productNamedContext.productNamedMatchMode).toLocaleLowerCase() || "none";
-    const hospitalNamedContext = resolveHospitalNamedRequestContext({
+    const hospitalNamedContext = resolveHospitalNamedRequestContextImpl({
       message,
       questionJudgment,
       productFullRequested,
@@ -242,7 +264,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
       ? hospitalNamedContext.requestedHospitals
       : [];
-    const productHospitalContext = resolveProductHospitalRequestContext({
+    const productHospitalContext = resolveProductHospitalRequestContextImpl({
       message,
       questionJudgment,
       productFullRequested,
@@ -256,10 +278,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       productNamedRequested,
       hospitalNamedRequested,
     });
-    const normalizedBusinessSnapshot = normalizeBusinessSnapshot(body?.business_snapshot);
+    const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
 
     stage = "availability";
-    let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
+    let dataAvailability = buildDataAvailabilityImpl(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
       hospitalMonthlyDetailRequested,
       productHospitalRequested,
       hospitalNamedRequested,
@@ -271,18 +293,18 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     });
 
     stage = "routing";
-    let routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+    let routeDecision = buildRouteDecisionImpl(effectiveQuestionJudgment, dataAvailability, {
       productHospitalRequested,
       hospitalNamedRequested,
       productFullRequested,
       productNamedRequested,
     });
     let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
-    let retrievalState = createInitialRetrievalState();
+    let retrievalState = createInitialRetrievalStateImpl();
 
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
       stage = "retrieval";
-      const enhancementResult = await buildOnDemandSnapshotEnhancement({
+      const enhancementResult = await buildOnDemandSnapshotEnhancementImpl({
         questionJudgment: effectiveQuestionJudgment,
         dataAvailability,
         routeDecision,
@@ -298,11 +320,11 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         authToken: authResult.token,
         env: context.env,
       });
-      effectiveBusinessSnapshot = normalizeBusinessSnapshot(enhancementResult.effectiveSnapshot);
+      effectiveBusinessSnapshot = normalizeBusinessSnapshotImpl(enhancementResult.effectiveSnapshot);
       retrievalState = enhancementResult.retrievalState;
 
       stage = "availability";
-      dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
+      dataAvailability = buildDataAvailabilityImpl(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
         hospitalMonthlyDetailRequested,
         productHospitalRequested,
         hospitalNamedRequested,
@@ -313,7 +335,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         requestedProducts,
       });
       stage = "routing";
-      routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+      routeDecision = buildRouteDecisionImpl(effectiveQuestionJudgment, dataAvailability, {
         productHospitalRequested,
         hospitalNamedRequested,
         productFullRequested,
@@ -321,27 +343,27 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       });
 
       if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
-        routeDecision = forceBoundedRouteDecision(dataAvailability);
+        routeDecision = forceBoundedRouteDecisionImpl(dataAvailability);
         retrievalState.degraded_to_bounded = true;
       }
     }
 
     let forcedBounded = false;
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
-      routeDecision = forceBoundedRouteDecision(dataAvailability);
+      routeDecision = forceBoundedRouteDecisionImpl(dataAvailability);
       forcedBounded = true;
     }
 
     stage = "output";
-    const outputContext = buildOutputContext(routeDecision, effectiveQuestionJudgment, dataAvailability);
+    const outputContext = buildOutputContextImpl(routeDecision, effectiveQuestionJudgment, dataAvailability);
     let modelReplyText = "";
     let responseModel = "local-template-refuse";
 
     if (outputContext.refuse_mode) {
-      modelReplyText = buildRefuseReplyTemplate(outputContext);
+      modelReplyText = buildRefuseReplyTemplateImpl(outputContext);
     } else {
       stage = "gemini";
-      const geminiResult = await callGemini(message, effectiveBusinessSnapshot, outputContext, context.env, requestId);
+      const geminiResult = await callGeminiImpl(message, effectiveBusinessSnapshot, outputContext, context.env, requestId);
       if (!geminiResult.ok) {
         return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
       }
@@ -350,11 +372,11 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     stage = "qc";
-    const replyDraft = normalizeOutputReply(modelReplyText);
-    const qcResult = applyQualityControl(replyDraft, outputContext, routeDecision);
+    const replyDraft = normalizeOutputReplyImpl(modelReplyText);
+    const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
     const finalReply = qcResult.finalReplyText;
 
-    const phase2Trace = buildPhase2Trace({
+    const phase2Trace = buildPhase2TraceImpl({
       requestId,
       questionJudgment,
       dataAvailability,
@@ -365,7 +387,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       forcedBounded,
       qcState: qcResult.qcState,
     });
-    logPhase2Trace(phase2Trace, context.env);
+    logPhase2TraceImpl(phase2Trace, context.env);
 
     return jsonResponse(
       {

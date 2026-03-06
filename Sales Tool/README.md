@@ -125,7 +125,10 @@
 │       ├── availability.js    # 数据可用性层
 │       ├── session.js         # 会话状态层
 │       ├── routing.js         # 路由层
-│       ├── retrieval.js       # 按需补强层
+│       ├── retrieval-context.js     # 命名识别与检索上下文解析
+│       ├── retrieval-data.js        # 按需补强数据拉取与窗口解析
+│       ├── retrieval-enhancement.js # 按需补强聚合与快照增强
+│       ├── retrieval.js             # 按需补强层兼容出口
 │       └── output.js          # 输出层、QC、trace
 ├── config.example.js          # Supabase 配置模板
 ├── config.js                  # 运行时配置（构建生成，已 gitignore）
@@ -134,7 +137,8 @@
 │   ├── generate-config.js     # 按环境变量生成 config.js（本地）
 │   └── build-pages.js         # 生成 dist/ 并写入 dist/config.js（部署）
 ├── tests/
-│   └── phase2-domain.test.js  # Phase 2 纯函数最小回归测试
+│   ├── phase2-domain.test.js  # Phase 2 纯函数回归测试
+│   └── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -228,7 +232,7 @@ window.__APP_CONFIG__ = {
 - 并发冲突策略仍为“最后写入生效”，暂未实现基于 `updated_at` 的乐观锁。
 - Excel 导入当前为“分块串行”策略，超大文件导入耗时仍可能较长。
 - 当批量写入出现网络/超时等状态不确定异常时，系统不会逐行重试；需刷新页面核对后再决定是否重试。
-- 当前已补一组 Phase 2 纯函数回归测试（命名匹配、有效主维度、交叉路由互斥）；业务 CRUD 与报表主链仍建议继续补自动化测试。
+- 当前已补一组 Phase 2 回归测试，覆盖命名匹配、有效主维度优先级、交叉路由互斥、`need_more_data` 收敛、`refuse` 不调用 Gemini、结构化错误兜底；业务 CRUD 与报表主链仍建议继续补自动化测试。
 - 当前前端入口已收敛为“应用编排层”，Supabase 访问与云端行映射已迁移到 `infra/` repository；`products.js / records.js / targets.js / reports.js` 仍通过 `deps` 兼容层访问能力。
 - 当导入后的产品同步失败时，系统会提示并尝试回拉云端产品；已写入的 records 不会回滚。
 
