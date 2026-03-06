@@ -500,6 +500,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const deterministicToolRoute = buildDeterministicToolRouteImpl({
       message,
       questionJudgment,
+      requestedTimeWindow,
       productFullRequested,
       hospitalMonthlyDetailRequested,
       productNamedContext,

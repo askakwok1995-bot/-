@@ -913,6 +913,50 @@ deterministic tool 本地降级规则：
 - `product_hospital` 在 `rows=0` 时必须明确写“当前范围内该产品医院贡献为0/未产生贡献”
 - 本地降级文本仍继续经过 `normalizeOutputReply + QC`
 
+### 11.16.2 整体时间窗口确定性工具路由（Phase T1.3）
+
+在 T1.2 的基础上，当前已把一类高置信“整体/趋势 + 时间窗口”问题纳入 deterministic route，避免这类问题继续落回 `AUTO tool-first`，从而在 Gemini 高负载或超时时出现同题不同答。
+
+当前新增 deterministic route：
+
+- `overall_time_window`
+
+典型问法：
+
+- `Q4季度销售情况如何`
+- `本月销售趋势如何`
+- `近三个月整体趋势如何`
+- `上月整体表现如何`
+
+固定规则：
+
+- 若命中 `requested_time_window.kind !== none` 且主维度为 `overall` 或 `trend`，并且未被更高优先级 deterministic route 抢占，则直接走：
+  - `get_overall_summary`
+  - 或 `get_trend_summary(dimension="overall")`
+- 命中 `overall_time_window` 后，不再进入 Gemini `AUTO function calling`
+- direct tool 成功后，最终回答必须以工具结果为主事实源，不再回退成全年汇总口径
+
+输出约束：
+
+- 回答必须显式写出绝对时间区间
+- 若季度是按当前数据年份锚定出的，需明确写成：
+  - `按当前数据年份口径，这里将 Q4季度 解释为 2025年Q4（2025-10~2025-12）`
+- 若已拿到有效整体/趋势结果，不允许再写“数据不足”或把问题重新解释成全年汇总
+
+当前 deterministic local fallback 也已覆盖 `overall_time_window`：
+
+- 若 `overall_time_window` 的 direct tool 已成功拿到有效 `toolResult`
+- 但 Gemini 上游返回：
+  - `UPSTREAM_TIMEOUT`
+  - `UPSTREAM_ERROR`
+  - `UPSTREAM_RATE_LIMIT`
+  - `UPSTREAM_NETWORK_ERROR`
+- 则优先使用本地模板回答：
+  - 写清采用的绝对时间区间
+  - 给出整体结论
+  - 摘要最近月份/季度关键变化
+  - 附 1 条简短建议
+
 ### 11.17 Legacy Fallback 收敛
 
 - `availability` 已拆为两层：

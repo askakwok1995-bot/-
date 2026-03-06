@@ -523,6 +523,56 @@ function buildLocalHospitalMonthlyReply(toolResult, outputContext) {
   return lines.join("\n");
 }
 
+function buildLocalOverallTimeWindowReply(toolResult, outputContext) {
+  const summary = toolResult?.summary && typeof toolResult.summary === "object" ? toolResult.summary : {};
+  const rows = Array.isArray(toolResult?.rows) ? toolResult.rows : [];
+  const lines = [];
+  const timePrefix = buildExplicitTimePrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+
+  const salesAmountText = trimString(summary?.sales_amount) || toWanTextFromValue(summary?.sales_amount_value);
+  const salesVolumeText =
+    trimString(summary?.sales_volume) ||
+    (typeof normalizeNumericValue(summary?.sales_volume_value) === "number"
+      ? `${normalizeNumericValue(summary?.sales_volume_value)}盒`
+      : "--");
+  const latestChangeText =
+    trimString(summary?.latest_key_change) || toSignedRatioText(summary?.latest_key_change_ratio);
+  const keySignals = Array.isArray(summary?.key_business_signals)
+    ? summary.key_business_signals.map((item) => trimString(item)).filter((item) => item)
+    : [];
+
+  if (salesAmountText !== "--") {
+    lines.push(`整体销售在该时间区间内已有明确结果，销售额为 ${salesAmountText}${salesVolumeText !== "--" ? `，销量 ${salesVolumeText}` : ""}。`);
+  } else if (keySignals.length > 0) {
+    lines.push(`整体销售在该时间区间内已有可参考的业务信号。`);
+  } else {
+    lines.push("当前时间区间内可参考的整体业务结果有限。");
+  }
+
+  if (latestChangeText && latestChangeText !== "--") {
+    lines.push(`关键变化方面，${latestChangeText}。`);
+  }
+
+  const topRows = rows.slice(-3);
+  if (topRows.length > 0) {
+    lines.push("时间区间内的关键月度表现如下：");
+    topRows.forEach((row, index) => {
+      const period = trimString(row?.period) || `月份${index + 1}`;
+      const amountText = trimString(row?.sales_amount) || toWanTextFromValue(row?.sales_amount_value);
+      const momText = trimString(row?.amount_mom) || toSignedRatioText(row?.amount_mom_ratio);
+      lines.push(`${index + 1}. ${period}：销售额 ${amountText}${momText && momText !== "--" ? `，环比 ${momText}` : ""}。`);
+    });
+  } else if (keySignals.length > 0) {
+    lines.push(`重点信号：${keySignals.slice(0, 2).join("；")}`);
+  }
+
+  lines.push("建议结合该时间区间内的波动月份，继续复盘增长驱动和回落原因，避免把阶段性表现误读为全年趋势。");
+  return lines.join("\n");
+}
+
 export function buildLocalDeterministicToolReply(toolResult, outputContext) {
   const routeType = trimString(outputContext?.tool_route_type);
   if (routeType === "product_hospital") {
@@ -536,6 +586,9 @@ export function buildLocalDeterministicToolReply(toolResult, outputContext) {
   }
   if (routeType === "hospital_monthly") {
     return buildLocalHospitalMonthlyReply(toolResult, outputContext);
+  }
+  if (routeType === "overall_time_window") {
+    return buildLocalOverallTimeWindowReply(toolResult, outputContext);
   }
   return "";
 }
@@ -977,6 +1030,9 @@ export function buildOutputInstructionText(outputContext) {
     }
     if (productNamedDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体产品时，优先逐条覆盖命名产品的结论与依据；无销售记录产品使用“本期无销售记录/贡献为0”的业务表达。${timeWindowInstructionText}`;
+    }
+    if (trimString(outputContext?.tool_route_type) === "overall_time_window") {
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题是在明确时间窗口内询问整体销售或趋势时，必须围绕该时间区间直接回答，不要退回到全年汇总口径。若存在月度行数据，优先概括该时间区间内的关键月份变化。${timeWindowInstructionText}`;
     }
     return timeWindowInstructionText ? `${OUTPUT_POLICY_DIRECT_ANSWER}\n${timeWindowInstructionText}` : OUTPUT_POLICY_DIRECT_ANSWER;
   }

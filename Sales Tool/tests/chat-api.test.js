@@ -570,6 +570,79 @@ test("handleChatRequest uses deterministic direct-tool route before AUTO tool-fi
   assert.equal(payload.model, "deterministic-model");
 });
 
+test("handleChatRequest routes full-covered Q4 overall question to deterministic overall_time_window before AUTO", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Q4季度销售情况如何",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let directToolCalled = false;
+  let autoToolCalled = false;
+  const response = await handleChatRequest(context, "req-overall-time-route", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, label: "整体" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    resolveProductNamedRequestContext: async () => ({
+      productNamedRequested: false,
+      requestedProducts: [],
+      productNamedMatchMode: "none",
+    }),
+    resolveHospitalNamedRequestContext: () => ({ hospitalNamedRequested: false, requestedHospitals: [] }),
+    resolveProductHospitalRequestContext: () => ({ productHospitalRequested: false }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return {
+        ok: true,
+        reply: "按当前数据年份口径，这里将 Q4季度 解释为 2025年Q4（2025-10~2025-12）。整体销售在该时间区间内已有明确结果，销售额为 300.00万元。",
+        model: "deterministic-overall-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          boundary_needed: false,
+          refuse_mode: false,
+          tool_route_mode: "deterministic",
+          tool_route_type: "overall_time_window",
+          tool_route_name: "get_overall_summary",
+          tool_result_coverage_code: "full",
+          requested_time_window_kind: "absolute",
+          requested_time_window_label: "Q4季度",
+          requested_time_window_start_month: "2025-10",
+          requested_time_window_end_month: "2025-12",
+          requested_time_window_period: "2025-10~2025-12",
+          requested_time_window_anchor_mode: "analysis_year",
+        },
+        toolRuntimeState: { attempted: true, success: true },
+        toolCallTrace: [],
+      };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false, fallbackReason: "should-not-run" };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(directToolCalled, true);
+  assert.equal(autoToolCalled, false);
+  assert.equal(payload.model, "deterministic-overall-model");
+  assert.match(payload.reply, /2025年Q4|2025-10~2025-12/u);
+});
+
 test("handleChatRequest uses local deterministic fallback reply when Gemini direct generation times out", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {

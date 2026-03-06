@@ -25,6 +25,8 @@ function normalizeRequestedHospitalNames(hospitalNamedContext) {
 }
 
 export function buildDeterministicToolRoute({
+  questionJudgment,
+  requestedTimeWindow,
   productFullRequested,
   hospitalMonthlyDetailRequested,
   productNamedContext,
@@ -33,6 +35,8 @@ export function buildDeterministicToolRoute({
 } = {}) {
   const productNames = normalizeRequestedProductNames(productNamedContext);
   const hospitalNames = normalizeRequestedHospitalNames(hospitalNamedContext);
+  const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  const requestedTimeWindowKind = trimString(requestedTimeWindow?.kind);
 
   if (Boolean(productHospitalContext?.productHospitalRequested) && productNames.length > 0) {
     return {
@@ -79,6 +83,24 @@ export function buildDeterministicToolRoute({
         hospital_names: hospitalNames,
         limit: 10,
       },
+    };
+  }
+
+  if (
+    requestedTimeWindowKind !== "none" &&
+    (primaryDimensionCode === "overall" || primaryDimensionCode === "trend")
+  ) {
+    const useTrendTool = primaryDimensionCode === "trend";
+    return {
+      matched: true,
+      route_type: "overall_time_window",
+      tool_name: useTrendTool ? TOOL_NAMES.GET_TREND_SUMMARY : TOOL_NAMES.GET_OVERALL_SUMMARY,
+      tool_args: useTrendTool
+        ? {
+            dimension: "overall",
+            granularity: "monthly",
+          }
+        : {},
     };
   }
 

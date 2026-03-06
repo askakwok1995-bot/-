@@ -81,3 +81,45 @@ test("tool-router routes product_full and hospital_named deterministically", () 
   assert.equal(hospitalNamedRoute.tool_name, "get_hospital_summary");
   assert.deepEqual(hospitalNamedRoute.tool_args.hospital_names, ["华美这家机构"]);
 });
+
+test("tool-router routes overall time-window questions deterministically after higher-priority routes", () => {
+  const overallQuarterRoute = buildDeterministicToolRoute({
+    questionJudgment: createQuestionJudgment(QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL),
+    requestedTimeWindow: {
+      kind: "absolute",
+      label: "Q4季度",
+      start_month: "2025-10",
+      end_month: "2025-12",
+      period: "2025-10~2025-12",
+    },
+    productFullRequested: false,
+    hospitalMonthlyDetailRequested: false,
+    productNamedContext: { productNamedRequested: false, requestedProducts: [] },
+    hospitalNamedContext: { hospitalNamedRequested: false, requestedHospitals: [] },
+    productHospitalContext: { productHospitalRequested: false },
+  });
+  assert.equal(overallQuarterRoute.route_type, "overall_time_window");
+  assert.equal(overallQuarterRoute.tool_name, "get_overall_summary");
+
+  const overallTrendRoute = buildDeterministicToolRoute({
+    questionJudgment: createQuestionJudgment(QUESTION_JUDGMENT_CODES.primary_dimension.TREND),
+    requestedTimeWindow: {
+      kind: "relative",
+      label: "近三个月",
+      start_month: "2025-10",
+      end_month: "2025-12",
+      period: "2025-10~2025-12",
+    },
+    productFullRequested: false,
+    hospitalMonthlyDetailRequested: false,
+    productNamedContext: { productNamedRequested: false, requestedProducts: [] },
+    hospitalNamedContext: { hospitalNamedRequested: false, requestedHospitals: [] },
+    productHospitalContext: { productHospitalRequested: false },
+  });
+  assert.equal(overallTrendRoute.route_type, "overall_time_window");
+  assert.equal(overallTrendRoute.tool_name, "get_trend_summary");
+  assert.deepEqual(overallTrendRoute.tool_args, {
+    dimension: "overall",
+    granularity: "monthly",
+  });
+});
