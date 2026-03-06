@@ -76,3 +76,43 @@ test("QC underlisted patch appends multiple hospitals when deterministic tool ha
   assert.match(result.finalReplyText, /广东韩妃整形外科医院有限公司/u);
   assert.match(result.finalReplyText, /广州华美医疗美容医院有限公司/u);
 });
+
+test("QC appends explicit absolute period when time intent is present but reply omits it", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    requested_time_window_kind: "relative",
+    requested_time_window_label: "近三个月",
+    requested_time_window_period: "2025-10~2025-12",
+    time_window_coverage_code: "full",
+    available_time_window_period: "2025-01~2025-12",
+  };
+
+  const result = applyQualityControl(
+    "整体趋势延续向上，核心医院贡献保持稳定。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.match(result.finalReplyText, /2025-10~2025-12/u);
+});
+
+test("QC falls back to boundary reply when relative time is silently reinterpreted to available range", () => {
+  const outputContext = {
+    route_code: "bounded_answer",
+    requested_time_window_kind: "relative",
+    requested_time_window_label: "近三个月",
+    requested_time_window_period: "2025-12~2026-02",
+    time_window_coverage_code: "partial",
+    available_time_window_period: "2025-01~2025-12",
+  };
+
+  const result = applyQualityControl(
+    "按 2025-01~2025-12 来看，这家机构整体表现较强。",
+    outputContext,
+    createRouteDecision("bounded_answer"),
+  );
+
+  assert.equal(result.qcState.action, "safe_fallback");
+  assert.match(result.finalReplyText, /2025-12~2026-02/u);
+  assert.match(result.finalReplyText, /2025-01~2025-12/u);
+});

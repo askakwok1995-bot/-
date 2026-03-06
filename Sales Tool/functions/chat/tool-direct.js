@@ -7,6 +7,7 @@ export async function runDirectToolChat(
   {
     message,
     businessSnapshot,
+    requestedTimeWindow = null,
     questionJudgment,
     authToken,
     env,
@@ -35,6 +36,7 @@ export async function runDirectToolChat(
   const runtimeContext = createToolRuntimeContextImpl(
     {
       businessSnapshot,
+      requestedTimeWindow,
       authToken,
       env,
     },

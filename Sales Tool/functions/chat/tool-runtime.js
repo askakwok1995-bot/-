@@ -47,17 +47,24 @@ export function createInitialToolRuntimeState() {
   };
 }
 
-function buildToolSeedPrompt(message, businessSnapshot) {
+function buildToolSeedPrompt(message, businessSnapshot, requestedTimeWindow = null) {
   const normalizedSnapshot = normalizeBusinessSnapshot(businessSnapshot);
-  return [
+  const promptLines = [
     "以下是当前分析范围内的轻量业务快照（seed context），可作为初始背景，但不是唯一数据来源。",
     "如需更具体的数据，请优先调用业务工具。",
+  ];
+  const requestedPeriod = trimString(requestedTimeWindow?.period);
+  if (requestedPeriod) {
+    promptLines.push(`本轮用户请求的实际时间区间为 ${requestedPeriod}，请严格按该区间理解“本月/近三个月”等时间表达，不要偷换成报表尾部月份。`);
+  }
+  promptLines.push(
     "",
     "seed_context:",
     JSON.stringify(normalizedSnapshot, null, 2),
     "",
     `用户问题：${message}`,
-  ].join("\n");
+  );
+  return promptLines.join("\n");
 }
 
 function mapHistoryRole(role) {
@@ -65,7 +72,7 @@ function mapHistoryRole(role) {
   return safeRole === "assistant" ? "model" : "user";
 }
 
-function buildInitialContents(historyWindow, message, businessSnapshot) {
+function buildInitialContents(historyWindow, message, businessSnapshot, requestedTimeWindow = null) {
   const contents = [];
   const safeHistory = Array.isArray(historyWindow) ? historyWindow : [];
   safeHistory.forEach((item) => {
@@ -80,7 +87,7 @@ function buildInitialContents(historyWindow, message, businessSnapshot) {
   });
   contents.push({
     role: "user",
-    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot) }],
+    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot, requestedTimeWindow) }],
   });
   return contents;
 }
@@ -237,6 +244,7 @@ export async function runToolFirstChat({
   message,
   historyWindow,
   businessSnapshot,
+  requestedTimeWindow = null,
   questionJudgment,
   authToken,
   env,
@@ -248,6 +256,7 @@ export async function runToolFirstChat({
   const runtimeContext = createToolRuntimeContext(
     {
       businessSnapshot,
+      requestedTimeWindow,
       authToken,
       env,
     },
@@ -257,7 +266,7 @@ export async function runToolFirstChat({
   const executeToolByNameImpl = deps.executeToolByName || executeToolByName;
   const requestGeminiGenerateContentImpl = deps.requestGeminiGenerateContent || requestGeminiGenerateContent;
 
-  const contents = buildInitialContents(historyWindow, message, businessSnapshot);
+  const contents = buildInitialContents(historyWindow, message, businessSnapshot, requestedTimeWindow);
   let lastToolResult = null;
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {

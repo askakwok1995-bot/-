@@ -38,6 +38,13 @@ import {
 import { createInitialToolRuntimeState, runToolFirstChat } from "../chat/tool-runtime.js";
 import { buildDeterministicToolRoute } from "../chat/tool-router.js";
 import { runDirectToolChat } from "../chat/tool-direct.js";
+import {
+  applyRequestedTimeWindowToSnapshot,
+  buildTimeWindowBoundaryReply,
+  buildTimeWindowCoverage,
+  buildTimeWindowOutputContextFields,
+  parseRequestedTimeWindow,
+} from "../chat/time-intent.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
@@ -254,6 +261,32 @@ function buildToolPathRetrievalState(toolRuntimeState = {}, toolRouteType = "") 
   };
 }
 
+function buildTimeBoundaryDataAvailability() {
+  return {
+    has_business_data: { code: "available", label: "有" },
+    dimension_availability: { code: "partial", label: "部分具备" },
+    answer_depth: { code: "overall", label: "总体判断" },
+    gap_hint_needed: { code: "yes", label: "是" },
+    detail_request_mode: "generic",
+    hospital_monthly_support: "none",
+    product_hospital_support: "none",
+    hospital_named_support: "none",
+    product_full_support: "none",
+    product_named_support: "none",
+    product_named_match_mode: "none",
+    requested_product_count_value: 0,
+    product_hospital_hospital_count_value: 0,
+    product_hospital_zero_result: "no",
+  };
+}
+
+function buildTimeBoundaryRouteDecision() {
+  return {
+    route: { code: ROUTE_DECISION_CODES.BOUNDED_ANSWER, label: "带边界回答" },
+    reason_codes: ["gap_hint_needed"],
+  };
+}
+
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
   const buildQuestionJudgmentImpl = deps.buildQuestionJudgment || buildQuestionJudgment;
@@ -285,6 +318,13 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const createInitialToolRuntimeStateImpl = deps.createInitialToolRuntimeState || createInitialToolRuntimeState;
   const buildDeterministicToolRouteImpl = deps.buildDeterministicToolRoute || buildDeterministicToolRoute;
   const runDirectToolChatImpl = deps.runDirectToolChat || runDirectToolChat;
+  const parseRequestedTimeWindowImpl = deps.parseRequestedTimeWindow || parseRequestedTimeWindow;
+  const buildTimeWindowCoverageImpl = deps.buildTimeWindowCoverage || buildTimeWindowCoverage;
+  const applyRequestedTimeWindowToSnapshotImpl =
+    deps.applyRequestedTimeWindowToSnapshot || applyRequestedTimeWindowToSnapshot;
+  const buildTimeWindowBoundaryReplyImpl = deps.buildTimeWindowBoundaryReply || buildTimeWindowBoundaryReply;
+  const buildTimeWindowOutputContextFieldsImpl =
+    deps.buildTimeWindowOutputContextFields || buildTimeWindowOutputContextFields;
   let stage = "auth";
 
   try {
@@ -318,6 +358,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const questionJudgment = buildQuestionJudgmentImpl(message);
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
+    const requestedTimeWindow = parseRequestedTimeWindowImpl(message);
+    const timeWindowCoverage = buildTimeWindowCoverageImpl(requestedTimeWindow, normalizedBusinessSnapshot);
     const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
@@ -347,6 +389,58 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
 
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
+    const requestedTimeWindowFields = buildTimeWindowOutputContextFieldsImpl(requestedTimeWindow, timeWindowCoverage);
+
+    if (trimString(requestedTimeWindow?.kind) !== "none" && trimString(timeWindowCoverage?.code) !== "full") {
+      const routeDecision = buildTimeBoundaryRouteDecision();
+      const dataAvailability = buildTimeBoundaryDataAvailability();
+      stage = "output";
+      const outputContext = {
+        ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
+        ...requestedTimeWindowFields,
+      };
+      const replyDraft = normalizeOutputReplyImpl(
+        buildTimeWindowBoundaryReplyImpl({
+          requestedTimeWindow,
+          coverage: timeWindowCoverage,
+        }),
+      );
+      stage = "qc";
+      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
+      const phase2Trace = buildPhase2TraceImpl({
+        requestId,
+        questionJudgment,
+        dataAvailability,
+        sessionState,
+        routeDecision,
+        retrievalState: createInitialRetrievalStateImpl(),
+        outputContext,
+        forcedBounded: false,
+        qcState: qcResult.qcState,
+        toolRouteMode: "legacy",
+        toolRouteType: "none",
+        toolRouteName: "",
+        toolRouteFallbackReason: "time_window_not_fully_covered",
+      });
+      logPhase2TraceImpl(phase2Trace, context.env);
+      return jsonResponse(
+        {
+          reply: qcResult.finalReplyText,
+          surfaceReply: qcResult.finalReplyText,
+          responseAction: "natural_answer",
+          businessIntent: "chat",
+          model: "local-template-time-boundary",
+          requestId,
+        },
+        200,
+        requestId,
+      );
+    }
+
+    const scopedBusinessSnapshot =
+      trimString(requestedTimeWindow?.kind) !== "none" && trimString(timeWindowCoverage?.code) === "full"
+        ? applyRequestedTimeWindowToSnapshotImpl(normalizedBusinessSnapshot, requestedTimeWindow)
+        : normalizedBusinessSnapshot;
 
     stage = "retrieval";
     const productNamedContext = await resolveProductNamedRequestContextImpl({
@@ -380,7 +474,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     });
     const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
 
-    const toolWindow = resolveRetrievalWindowFromSnapshotImpl(normalizedBusinessSnapshot);
+    const toolWindow = resolveRetrievalWindowFromSnapshotImpl(scopedBusinessSnapshot);
     let toolRuntimeState = createInitialToolRuntimeStateImpl();
     let toolCallTrace = [];
     let toolFallbackReason = "";
@@ -408,7 +502,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       const directToolResult = await runDirectToolChatImpl(
         {
           message,
-          businessSnapshot: normalizedBusinessSnapshot,
+          businessSnapshot: scopedBusinessSnapshot,
+          requestedTimeWindow,
           questionJudgment,
           authToken: authResult.token,
           env: context.env,
@@ -424,15 +519,19 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         stage = "qc";
         const routeDecision = buildToolPathRouteDecision(directToolResult.outputContext);
         const replyDraft = normalizeOutputReplyImpl(directToolResult.reply);
-        const qcResult = applyQualityControlImpl(replyDraft, directToolResult.outputContext, routeDecision);
+        const outputContext = {
+          ...directToolResult.outputContext,
+          ...requestedTimeWindowFields,
+        };
+        const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
         const phase2Trace = buildPhase2TraceImpl({
           requestId,
           questionJudgment,
-          dataAvailability: buildToolPathDataAvailability(directToolResult.outputContext),
+          dataAvailability: buildToolPathDataAvailability(outputContext),
           sessionState,
           routeDecision,
           retrievalState: buildToolPathRetrievalState(toolRuntimeState, toolRouteType),
-          outputContext: directToolResult.outputContext,
+          outputContext,
           forcedBounded: false,
           qcState: qcResult.qcState,
           toolRouteMode,
@@ -461,7 +560,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       const toolFirstResult = await runToolFirstChatImpl({
         message,
         historyWindow,
-        businessSnapshot: normalizedBusinessSnapshot,
+        businessSnapshot: scopedBusinessSnapshot,
+        requestedTimeWindow,
         questionJudgment,
         authToken: authResult.token,
         env: context.env,
@@ -475,16 +575,20 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         stage = "qc";
         const routeDecision = buildToolPathRouteDecision(toolFirstResult.outputContext);
         const replyDraft = normalizeOutputReplyImpl(toolFirstResult.reply);
-        const qcResult = applyQualityControlImpl(replyDraft, toolFirstResult.outputContext, routeDecision);
+        const outputContext = {
+          ...toolFirstResult.outputContext,
+          ...requestedTimeWindowFields,
+        };
+        const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
         const phase2Trace = buildPhase2TraceImpl({
           requestId,
           questionJudgment,
-          dataAvailability: buildToolPathDataAvailability(toolFirstResult.outputContext),
+          dataAvailability: buildToolPathDataAvailability(outputContext),
           sessionState,
           routeDecision,
           retrievalState: buildToolPathRetrievalState(toolRuntimeState, "generic"),
           outputContext: {
-            ...toolFirstResult.outputContext,
+            ...outputContext,
             tool_route_mode: "auto",
             tool_route_type: "none",
             tool_route_name: "",
@@ -523,7 +627,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     });
 
     stage = "availability";
-    let dataAvailability = buildDataAvailabilityImpl(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
+    let dataAvailability = buildDataAvailabilityImpl(scopedBusinessSnapshot, effectiveQuestionJudgment, {
       hospitalMonthlyDetailRequested,
       productHospitalRequested,
       hospitalNamedRequested,
@@ -541,7 +645,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       productFullRequested,
       productNamedRequested,
     });
-    let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
+    let effectiveBusinessSnapshot = scopedBusinessSnapshot;
     let retrievalState = createInitialRetrievalStateImpl();
 
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
@@ -597,7 +701,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     stage = "output";
-    const outputContext = buildOutputContextImpl(routeDecision, effectiveQuestionJudgment, dataAvailability);
+    const outputContext = {
+      ...buildOutputContextImpl(routeDecision, effectiveQuestionJudgment, dataAvailability),
+      ...requestedTimeWindowFields,
+    };
     let modelReplyText = "";
     let responseModel = "local-template-refuse";
 

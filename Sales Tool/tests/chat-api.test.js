@@ -312,6 +312,134 @@ test("handleChatRequest falls back to legacy phase2 when tool-first fails", asyn
   assert.equal(legacyGeminiCalled, true);
 });
 
+test("handleChatRequest returns time boundary reply when requested real-world window is not fully covered", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "近三个月整体趋势如何",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let directToolCalled = false;
+  let autoToolCalled = false;
+  let legacyAvailabilityCalled = false;
+  const response = await handleChatRequest(context, "req-time-boundary", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    parseRequestedTimeWindow: () => ({
+      kind: "relative",
+      label: "近三个月",
+      start_month: "2025-12",
+      end_month: "2026-02",
+      period: "2025-12~2026-02",
+    }),
+    buildTimeWindowCoverage: () => ({
+      code: "partial",
+      available_start_month: "2025-01",
+      available_end_month: "2025-12",
+      available_period: "2025-01~2025-12",
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return { ok: false };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false };
+    },
+    buildDataAvailability: () => {
+      legacyAvailabilityCalled = true;
+      return {};
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "local-template-time-boundary");
+  assert.equal(directToolCalled, false);
+  assert.equal(autoToolCalled, false);
+  assert.equal(legacyAvailabilityCalled, false);
+  assert.match(payload.reply, /2025-12~2026-02/u);
+  assert.match(payload.reply, /2025-01~2025-12/u);
+});
+
+test("handleChatRequest passes requested subwindow snapshot into deterministic tool route when coverage is full", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "华美这家机构近三个月怎么样",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let observedSnapshotPeriod = "";
+  const response = await handleChatRequest(context, "req-time-full", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    parseRequestedTimeWindow: () => ({
+      kind: "relative",
+      label: "近三个月",
+      start_month: "2025-10",
+      end_month: "2025-12",
+      period: "2025-10~2025-12",
+    }),
+    buildTimeWindowCoverage: () => ({
+      code: "full",
+      available_start_month: "2025-01",
+      available_end_month: "2025-12",
+      available_period: "2025-01~2025-12",
+    }),
+    resolveHospitalNamedRequestContext: () => ({
+      hospitalNamedRequested: true,
+      requestedHospitals: [{ mention_name: "华美这家机构" }],
+    }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "hospital_named",
+      tool_name: "get_hospital_summary",
+      tool_args: { hospital_names: ["华美这家机构"], limit: 10 },
+    }),
+    runDirectToolChat: async ({ businessSnapshot, requestedTimeWindow }) => {
+      observedSnapshotPeriod = businessSnapshot.analysis_range.period;
+      assert.equal(requestedTimeWindow.period, "2025-10~2025-12");
+      return {
+        ok: true,
+        reply: "按 2025-10~2025-12 来看，华美这家机构表现稳定。",
+        model: "deterministic-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          boundary_needed: false,
+          refuse_mode: false,
+        },
+        toolRuntimeState: { attempted: true, success: true },
+        toolCallTrace: [],
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(observedSnapshotPeriod, "2025-10~2025-12");
+  assert.match(payload.reply, /2025-10~2025-12/u);
+});
+
 test("handleChatRequest uses deterministic direct-tool route before AUTO tool-first", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {

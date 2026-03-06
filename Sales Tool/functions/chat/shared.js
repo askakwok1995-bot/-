@@ -174,6 +174,8 @@ export const QC_REASON_CODES = Object.freeze({
   IRRELEVANT_REFUSE_MISMATCH: "irrelevant_refuse_mismatch",
   TOOL_RESULT_CONTRADICTION: "tool_result_contradiction",
   TOOL_RESULT_UNDERLISTED: "tool_result_underlisted",
+  TIME_WINDOW_NOT_EXPLICIT: "time_window_not_explicit",
+  TIME_WINDOW_REINTERPRETED: "time_window_reinterpreted",
 });
 
 export const QC_ACTIONS = Object.freeze({

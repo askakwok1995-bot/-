@@ -760,7 +760,7 @@ V1 首批仅开放 5 类受控业务工具：
 
 固定约束：
 
-- 工具只能绑定当前 `analysis_range`
+- 工具默认受当前 `analysis_range` 约束；若命中受支持的时间意图且覆盖完整，则按请求子窗口执行
 - 不开放自由 SQL
 - 同一请求最多 3 次工具调用、最多 2 轮 tool loop
 - `refuse` 仍不调用 Gemini
@@ -818,7 +818,52 @@ V1 首批仅开放 5 类受控业务工具：
 - 当 deterministic `product_hospital` 结果 `rows>=3` 时，回复至少体现多家医院，不应只说 Top1。
 - 当 deterministic `product_hospital` 结果 `coverage=full` 且 `rows=0` 时，必须明确写成“当前范围内贡献为0/未产生贡献”，而不是“缺数据”。
 
-### 11.16 Legacy Fallback 收敛
+### 11.16 相对时间意图标准化（Phase T1.1）
+
+当前聊天后端已新增“相对时间意图标准化”层，用于解决“本月 / 近三个月 / 前两个月”被默认解释成报表尾部月份的问题。
+
+固定口径：
+
+- 相对时间默认按真实世界时间解释，不再默认锚定 `analysis_range.end_month`
+- 业务时区固定为 `Asia/Shanghai`
+- `近N个月 / 前N个月` 默认按完整自然月计算，不包含当前未结束月；`本月` 例外，仍指当前自然月
+- 一旦识别到相对或绝对时间意图，系统会先转成绝对时间区间，再与当前 `analysis_range` 做覆盖判定
+
+V1 已支持：
+
+- `本月`
+- `上月`
+- `近三个月` / `最近三个月`
+- `前两个月`
+- `今年`
+- `去年`
+- `本季度`
+- `上季度`
+- `YYYY-MM`
+- `YYYY年M月`
+- `YYYY年Qx`
+
+覆盖判定：
+
+- `full`：请求时间区间完全落在当前 `analysis_range` 内，允许继续执行 deterministic tool、AUTO tool-first 或 legacy fallback
+- `partial`：请求时间区间仅部分落在当前 `analysis_range` 内，不自动裁交集回答，直接进入时间边界说明路径
+- `none`：请求时间区间完全不在当前 `analysis_range` 内，不自动改成报表尾部时间，直接进入时间边界说明路径
+
+当前收口规则：
+
+- 若 `time_window_coverage=full`，工具执行使用请求子窗口，而不是整段 `analysis_range`
+- 若 `time_window_coverage=partial|none`，不再进入 deterministic tool、AUTO tool-first 或 legacy fallback 业务回答链
+- 时间边界回答必须同时写出：
+  - 用户请求的真实时间区间
+  - 当前可用分析区间
+- 不允许把“近三个月 / 本月”偷换成“当前报表最后三个月 / 最后一个月”
+
+输出/QC 约束：
+
+- 只要命中了时间意图，最终回答必须显式写出绝对时间区间
+- 若回复把相对时间自动重解释为报表尾部月份，QC 会直接回退到统一时间边界模板
+
+### 11.17 Legacy Fallback 收敛
 
 - `availability` 已拆为两层：
   - `availability-core.js`：通用判定（`has_business_data / dimension_availability / answer_depth / gap_hint_needed`）

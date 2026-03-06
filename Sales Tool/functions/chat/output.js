@@ -29,6 +29,7 @@ import {
   sanitizeModelName,
   trimString,
 } from "./shared.js";
+import { buildTimeWindowBoundaryReplyFromOutputContext } from "./time-intent.js";
 
 export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, finalDataAvailability) {
   const routeCode = trimString(finalRouteDecision?.route?.code);
@@ -65,6 +66,15 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     tool_result_row_count_value: 0,
     tool_result_row_names: [],
     tool_result_matched_products: [],
+    requested_time_window_kind: "none",
+    requested_time_window_label: "",
+    requested_time_window_start_month: "",
+    requested_time_window_end_month: "",
+    requested_time_window_period: "",
+    time_window_coverage_code: "none",
+    available_time_window_start_month: "",
+    available_time_window_end_month: "",
+    available_time_window_period: "",
   };
 }
 
@@ -277,6 +287,25 @@ function containsDataInsufficientWording(text) {
   return containsAnyKeywordIgnoreCase(text, ["数据不足", "未提供细分", "无法直接判断", "无法直接给出", "未包含", "无法提供"]);
 }
 
+function hasExplicitRequestedTimeWindow(text, outputContext) {
+  const requestedPeriod = trimString(outputContext?.requested_time_window_period);
+  if (!requestedPeriod) {
+    return true;
+  }
+  return trimString(text).includes(requestedPeriod);
+}
+
+function looksLikeTimeWindowReinterpreted(text, outputContext) {
+  const coverageCode = trimString(outputContext?.time_window_coverage_code);
+  const requestedPeriod = trimString(outputContext?.requested_time_window_period);
+  const availablePeriod = trimString(outputContext?.available_time_window_period);
+  if (!requestedPeriod || !availablePeriod || (coverageCode !== "partial" && coverageCode !== "none")) {
+    return false;
+  }
+  const normalizedText = trimString(text);
+  return normalizedText.includes(availablePeriod) && !normalizedText.includes(requestedPeriod);
+}
+
 function countMentionedToolRowNames(text, outputContext) {
   const normalizedText = trimString(text);
   const rowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
@@ -416,6 +445,12 @@ function evaluateReplyQuality(reply, outputContext, routeDecision) {
       findings.push(QC_REASON_CODES.TOOL_RESULT_UNDERLISTED);
     }
   }
+  if (trimString(outputContext?.requested_time_window_kind) !== "none" && !hasExplicitRequestedTimeWindow(text, outputContext)) {
+    findings.push(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT);
+  }
+  if (looksLikeTimeWindowReinterpreted(text, outputContext)) {
+    findings.push(QC_REASON_CODES.TIME_WINDOW_REINTERPRETED);
+  }
 
   const dedupedFindings = [];
   for (const finding of findings) {
@@ -514,6 +549,21 @@ function injectBoundedBoundarySentence(text) {
   return [lines[0], QC_BOUNDED_BOUNDARY_TEXT, ...lines.slice(1)].join("\n");
 }
 
+function injectExplicitTimeWindow(text, outputContext) {
+  const requestedPeriod = trimString(outputContext?.requested_time_window_period);
+  if (!requestedPeriod) {
+    return trimString(text);
+  }
+  const normalized = trimString(text);
+  if (!normalized) {
+    return `本轮分析时间区间为 ${requestedPeriod}。`;
+  }
+  if (normalized.includes(requestedPeriod)) {
+    return normalized;
+  }
+  return [`本轮分析时间区间为 ${requestedPeriod}。`, normalized].join("\n");
+}
+
 function applyMinimalPatch(reply, findings, outputContext) {
   let patched = trimString(reply);
   const routeCode = trimString(outputContext?.route_code);
@@ -538,6 +588,16 @@ function applyMinimalPatch(reply, findings, outputContext) {
   }
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER && findingSet.has(QC_REASON_CODES.BOUNDED_MISSING_BOUNDARY_SENTENCE)) {
     patched = injectBoundedBoundarySentence(patched);
+  }
+  if (
+    findingSet.has(QC_REASON_CODES.TIME_WINDOW_REINTERPRETED) ||
+    (findingSet.has(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT) &&
+      trimString(outputContext?.time_window_coverage_code) !== "partial" &&
+      trimString(outputContext?.time_window_coverage_code) !== "none")
+  ) {
+    patched = findingSet.has(QC_REASON_CODES.TIME_WINDOW_REINTERPRETED)
+      ? buildTimeWindowBoundaryReplyFromOutputContext(outputContext)
+      : injectExplicitTimeWindow(patched, outputContext);
   }
 
   return trimString(patched).replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
@@ -564,11 +624,25 @@ function buildQualityFallbackReply(routeCode, outputContext) {
 
 export function applyQualityControl(replyDraft, outputContext, routeDecision) {
   const initial = evaluateReplyQuality(replyDraft, outputContext, routeDecision);
+  if (initial.findings.includes(QC_REASON_CODES.TIME_WINDOW_REINTERPRETED)) {
+    return {
+      finalReplyText: buildTimeWindowBoundaryReplyFromOutputContext(outputContext),
+      qcState: {
+        applied: true,
+        reason_codes: initial.findings,
+        action: QC_ACTIONS.SAFE_FALLBACK,
+      },
+    };
+  }
   const deterministicToolConsistencyPatch =
     trimString(outputContext?.tool_route_mode) === "deterministic" &&
     initial.findings.some(
       (code) => code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION || code === QC_REASON_CODES.TOOL_RESULT_UNDERLISTED,
     );
+  const timeWindowExplicitPatchAllowed =
+    initial.findings.includes(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT) &&
+    initial.severe_findings.length > 0 &&
+    initial.severe_findings.every((code) => code === QC_REASON_CODES.EMPTY_OR_TOO_SHORT);
   const severeFindingsAllowDeterministicPatch =
     deterministicToolConsistencyPatch &&
     initial.severe_findings.length > 0 &&
@@ -584,7 +658,11 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
     };
   }
 
-  if (initial.severe_findings.length > 0 && !severeFindingsAllowDeterministicPatch) {
+  if (
+    initial.severe_findings.length > 0 &&
+    !severeFindingsAllowDeterministicPatch &&
+    !timeWindowExplicitPatchAllowed
+  ) {
     return {
       finalReplyText: buildQualityFallbackReply(trimString(routeDecision?.route?.code), outputContext),
       qcState: {
@@ -654,9 +732,21 @@ export function buildOutputInstructionText(outputContext) {
   const hospitalNamedSupportCode = trimString(outputContext?.hospital_named_support_code);
   const productFullSupportCode = trimString(outputContext?.product_full_support_code);
   const productNamedSupportCode = trimString(outputContext?.product_named_support_code);
+  const requestedTimeWindowKind = trimString(outputContext?.requested_time_window_kind);
+  const requestedTimeWindowPeriod = trimString(outputContext?.requested_time_window_period);
+  const timeWindowCoverageCode = trimString(outputContext?.time_window_coverage_code);
+  const availableTimeWindowPeriod = trimString(outputContext?.available_time_window_period);
+  const timeWindowInstructionText =
+    requestedTimeWindowKind !== "none" && requestedTimeWindowPeriod
+      ? `时间口径约束：本轮回答必须显式写出实际采用的时间区间 ${requestedTimeWindowPeriod}，不要只写“本月/近三个月”。${
+          timeWindowCoverageCode === "partial" || timeWindowCoverageCode === "none"
+            ? `当前可用区间为 ${availableTimeWindowPeriod}，不得把请求时间偷换成报表尾部月份。`
+            : ""
+        }`
+      : "";
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
     if (hospitalMonthlyDetailMode) {
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。`;
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。${timeWindowInstructionText}`;
     }
     if (productHospitalDetailMode) {
       const listConstraint =
@@ -671,37 +761,37 @@ export function buildOutputInstructionText(outputContext) {
         toolResultCoverageCode === "full" && Boolean(outputContext?.product_hospital_zero_result_mode)
           ? "当前工具结果明确为0贡献，必须写成“当前范围内该产品医院贡献为0/未产生贡献”，不得写成“缺数据”。"
           : "";
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。${listConstraint}${contradictionConstraint}${zeroResultConstraint}`;
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求“某产品由哪些医院贡献”时，优先给出该产品对应的医院贡献结构与重点医院结论。${listConstraint}${contradictionConstraint}${zeroResultConstraint}${timeWindowInstructionText}`;
     }
     if (hospitalNamedDetailMode) {
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。`;
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体医院时，优先逐条覆盖命名医院结论与依据，避免退化为泛医院Top摘要。${timeWindowInstructionText}`;
     }
     if (productFullDetailMode) {
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求全产品分析时，优先覆盖当前可见产品范围并明确产品盘点口径。`;
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求全产品分析时，优先覆盖当前可见产品范围并明确产品盘点口径。${timeWindowInstructionText}`;
     }
     if (productNamedDetailMode) {
-      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体产品时，优先逐条覆盖命名产品的结论与依据；无销售记录产品使用“本期无销售记录/贡献为0”的业务表达。`;
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题点名具体产品时，优先逐条覆盖命名产品的结论与依据；无销售记录产品使用“本期无销售记录/贡献为0”的业务表达。${timeWindowInstructionText}`;
     }
-    return OUTPUT_POLICY_DIRECT_ANSWER;
+    return timeWindowInstructionText ? `${OUTPUT_POLICY_DIRECT_ANSWER}\n${timeWindowInstructionText}` : OUTPUT_POLICY_DIRECT_ANSWER;
   }
 
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
     if (hospitalMonthlyDetailMode) {
-      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：医院逐月明细场景下，先给逐月可得结论，再用业务口吻说明当前逐月覆盖边界。`;
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：医院逐月明细场景下，先给逐月可得结论，再用业务口吻说明当前逐月覆盖边界。${timeWindowInstructionText}`;
     }
     if (productHospitalDetailMode) {
-      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：产品×医院交叉场景下，先给该产品的医院贡献结论，再说明当前医院覆盖范围（${productHospitalSupportCode || "partial"}）。`;
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：产品×医院交叉场景下，先给该产品的医院贡献结论，再说明当前医院覆盖范围（${productHospitalSupportCode || "partial"}）。${timeWindowInstructionText}`;
     }
     if (hospitalNamedDetailMode) {
-      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名医院场景下，先给可得结论，再说明当前已覆盖命名医院范围（${hospitalNamedSupportCode || "partial"}）。`;
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名医院场景下，先给可得结论，再说明当前已覆盖命名医院范围（${hospitalNamedSupportCode || "partial"}）。${timeWindowInstructionText}`;
     }
     if (productFullDetailMode) {
-      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：全产品分析场景下，先给当前可得产品结论，再说明当前覆盖范围（${productFullSupportCode || "partial"}）。`;
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：全产品分析场景下，先给当前可得产品结论，再说明当前覆盖范围（${productFullSupportCode || "partial"}）。${timeWindowInstructionText}`;
     }
     if (productNamedDetailMode) {
-      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名产品场景下，先给可得结论，再说明当前已覆盖命名产品范围（${productNamedSupportCode || "partial"}）。`;
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：命名产品场景下，先给可得结论，再说明当前已覆盖命名产品范围（${productNamedSupportCode || "partial"}）。${timeWindowInstructionText}`;
     }
-    return OUTPUT_POLICY_BOUNDED_ANSWER;
+    return timeWindowInstructionText ? `${OUTPUT_POLICY_BOUNDED_ANSWER}\n${timeWindowInstructionText}` : OUTPUT_POLICY_BOUNDED_ANSWER;
   }
 
   if (routeCode === ROUTE_DECISION_CODES.REFUSE) {
@@ -735,6 +825,9 @@ export function buildGeminiPayload(message, businessSnapshot, outputContext) {
   const userPromptText = [
     "以下是当前业务快照（business_snapshot），请将其作为本轮回答的事实依据。",
     "如果快照中的数据不足，请明确说明“数据不足”，不要编造。",
+    trimString(outputContext?.requested_time_window_period)
+      ? `本轮实际时间区间：${trimString(outputContext?.requested_time_window_period)}。不得将其偷换成 analysis_range 尾部月份。`
+      : "",
     "",
     "business_snapshot:",
     JSON.stringify(normalizedSnapshot, null, 2),
@@ -768,6 +861,9 @@ export function buildGeminiPayloadFromToolResult(message, toolResult, outputCont
     "以下是当前问题对应的工具执行结果（tool_result），请将其作为本轮回答的主事实依据。",
     "如 tool_result.coverage=full 且 rows 非空，请直接给出明确结论，不要写成“数据不足”。",
     "如 tool_result.coverage=full 且 rows 为空，请直接说明当前范围内贡献为0/未产生贡献。",
+    trimString(outputContext?.requested_time_window_period)
+      ? `本轮实际时间区间：${trimString(outputContext?.requested_time_window_period)}。不得将其偷换成 analysis_range 尾部月份。`
+      : "",
     "",
     "tool_result:",
     JSON.stringify(toolResult ?? {}, null, 2),
