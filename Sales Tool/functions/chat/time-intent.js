@@ -301,14 +301,18 @@ function splitQuarterCompareOperands(message) {
   return null;
 }
 
+function normalizeQuarterCompareOperand(rawValue) {
+  return trimString(rawValue).replace(/(?:的?情况|情况|表现|走势|销售情况)$/u, "");
+}
+
 function parseQuarterCompareIntent(message, analysisRange) {
   const operands = splitQuarterCompareOperands(message);
   if (!operands) {
     return null;
   }
 
-  const leftExpression = parseQuarterExpression(operands.left);
-  const rightExpression = parseQuarterExpression(operands.right);
+  const leftExpression = parseQuarterExpression(normalizeQuarterCompareOperand(operands.left));
+  const rightExpression = parseQuarterExpression(normalizeQuarterCompareOperand(operands.right));
   if (!leftExpression || !rightExpression) {
     return null;
   }
