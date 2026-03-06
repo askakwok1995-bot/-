@@ -87,3 +87,19 @@ test('hospital named request context no longer throws when message uses hospital
   assert.ok(Array.isArray(result.requestedHospitals));
   assert.ok(result.requestedHospitals.length >= 1);
 });
+
+test('hospital named request context can use hospital trigger keywords even when primary dimension is not hospital', () => {
+  const result = resolveHospitalNamedRequestContext({
+    message: '华美机构最近如何',
+    questionJudgment: {
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT },
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL },
+    },
+    productFullRequested: false,
+    productNamedRequested: false,
+  });
+
+  assert.equal(result.hospitalNamedRequested, true);
+  assert.ok(Array.isArray(result.requestedHospitals));
+  assert.ok(result.requestedHospitals.length >= 1);
+});
