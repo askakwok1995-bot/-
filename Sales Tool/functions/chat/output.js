@@ -700,6 +700,11 @@ function buildLocalOverallPeriodCompareReply(toolResult, outputContext) {
   if (timePrefix) {
     lines.push(timePrefix);
   }
+  const primaryLabel = trimString(outputContext?.requested_time_window_label) || "主窗口";
+  const comparisonLabel = trimString(outputContext?.comparison_time_window_label) || "对比窗口";
+  const primaryPeriod = trimString(outputContext?.tool_result_primary_period) || trimString(outputContext?.requested_time_window_period);
+  const comparisonPeriod =
+    trimString(outputContext?.tool_result_comparison_period) || trimString(outputContext?.comparison_time_window_period);
   const primaryAmount = trimString(primary?.sales_amount) || toWanTextFromValue(primary?.sales_amount_value);
   const primaryVolume =
     trimString(primary?.sales_volume) ||
@@ -722,14 +727,35 @@ function buildLocalOverallPeriodCompareReply(toolResult, outputContext) {
     trimString(outputContext?.tool_result_delta_sales_volume_change) ||
     trimString(outputContext?.tool_result_sales_volume_change) ||
     toSignedRatioText(delta?.sales_volume_change_ratio ?? outputContext?.tool_result_delta_sales_volume_change_ratio);
-  lines.push(`主窗口整体销售额为 ${primaryAmount}${primaryVolume !== "--" ? `，销量 ${primaryVolume}` : ""}。`);
-  lines.push(`对比窗口整体销售额为 ${comparisonAmount}${comparisonVolume !== "--" ? `，销量 ${comparisonVolume}` : ""}。`);
-  if (amountDelta && amountDelta !== "--") {
-    lines.push(`与对比窗口相比，销售额变化为 ${amountDelta}${volumeDelta && volumeDelta !== "--" ? `，销量变化为 ${volumeDelta}` : ""}。`);
-  } else if (volumeDelta && volumeDelta !== "--") {
-    lines.push(`与对比窗口相比，销量变化为 ${volumeDelta}。`);
+  const amountDeltaRatio = normalizeNumericValue(delta?.sales_amount_change_ratio ?? outputContext?.tool_result_delta_sales_amount_change_ratio);
+  const volumeDeltaRatio = normalizeNumericValue(delta?.sales_volume_change_ratio ?? outputContext?.tool_result_delta_sales_volume_change_ratio);
+  let conclusion = `${primaryLabel}整体表现与${comparisonLabel}基本持平。`;
+  if (typeof amountDeltaRatio === "number") {
+    if (amountDeltaRatio > 0.001) {
+      conclusion = `${primaryLabel}整体销售表现明显强于${comparisonLabel}。`;
+    } else if (amountDeltaRatio < -0.001) {
+      conclusion = `${primaryLabel}整体销售表现弱于${comparisonLabel}。`;
+    }
+  } else if (typeof volumeDeltaRatio === "number") {
+    if (volumeDeltaRatio > 0.001) {
+      conclusion = `${primaryLabel}整体销量表现强于${comparisonLabel}。`;
+    } else if (volumeDeltaRatio < -0.001) {
+      conclusion = `${primaryLabel}整体销量表现弱于${comparisonLabel}。`;
+    }
   }
-  lines.push("建议继续结合季度内关键月份和核心产品表现，判断本轮变化是阶段性波动还是持续性趋势。");
+
+  lines.push(
+    `${conclusion}${primaryPeriod && comparisonPeriod ? ` 其中，${primaryLabel}为 ${primaryPeriod}，${comparisonLabel}为 ${comparisonPeriod}。` : ""}`,
+  );
+  lines.push(
+    `${primaryLabel}销售额为 ${primaryAmount}${primaryVolume !== "--" ? `，销量 ${primaryVolume}` : ""}；${comparisonLabel}销售额为 ${comparisonAmount}${comparisonVolume !== "--" ? `，销量 ${comparisonVolume}` : ""}。`,
+  );
+  if (amountDelta && amountDelta !== "--") {
+    lines.push(`与${comparisonLabel}相比，${primaryLabel}销售额变化为 ${amountDelta}${volumeDelta && volumeDelta !== "--" ? `，销量变化为 ${volumeDelta}` : ""}。`);
+  } else if (volumeDelta && volumeDelta !== "--") {
+    lines.push(`与${comparisonLabel}相比，${primaryLabel}销量变化为 ${volumeDelta}。`);
+  }
+  lines.push(`建议继续结合${primaryLabel}内的关键月份、核心产品和重点医院贡献，判断这轮变化是阶段性波动还是可延续趋势。`);
   return lines.join("\n");
 }
 

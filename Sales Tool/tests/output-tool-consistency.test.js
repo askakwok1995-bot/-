@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyQualityControl, buildPhase2Trace } from "../functions/chat/output.js";
+import { applyQualityControl, buildLocalDeterministicToolReply, buildPhase2Trace } from "../functions/chat/output.js";
 
 function createRouteDecision(routeCode) {
   return {
@@ -175,8 +175,10 @@ test("QC patches compare reply when only Q4 is mentioned but Q3 comparison exist
   );
 
   assert.equal(result.qcState.applied, true);
+  assert.match(result.finalReplyText, /Q4/u);
   assert.match(result.finalReplyText, /2025-07~2025-09/u);
   assert.match(result.finalReplyText, /Q3/u);
+  assert.match(result.finalReplyText, /强于Q3|与Q3相比/u);
   assert.match(result.finalReplyText, /36.36%|31.57%/u);
 });
 
@@ -213,10 +215,58 @@ test("QC patches compare contradiction with concrete primary and comparison valu
   );
 
   assert.equal(result.qcState.applied, true);
+  assert.match(result.finalReplyText, /Q4/u);
   assert.match(result.finalReplyText, /709.22万元/u);
-  assert.match(result.finalReplyText, /520.00万元/u);
+  assert.match(result.finalReplyText, /5539盒/u);
   assert.match(result.finalReplyText, /Q3/u);
+  assert.match(result.finalReplyText, /520.00万元/u);
+  assert.match(result.finalReplyText, /4210盒/u);
+  assert.match(result.finalReplyText, /36.39%|31.59%/u);
   assert.doesNotMatch(result.finalReplyText, /无法和Q3直接比较/u);
+});
+
+test("deterministic overall period compare local reply includes both quarters, ranges, values and delta", () => {
+  const reply = buildLocalDeterministicToolReply(
+    {
+      summary: {
+        primary: {
+          sales_amount: "709.22万元",
+          sales_volume: "5539盒",
+        },
+        comparison: {
+          sales_amount: "517.04万元",
+          sales_volume: "4698盒",
+        },
+        delta: {
+          sales_amount_change: "+37.17%",
+          sales_volume_change: "+17.90%",
+        },
+      },
+    },
+    {
+      tool_route_type: "overall_period_compare",
+      requested_time_window_label: "Q4",
+      requested_time_window_period: "2025-10~2025-12",
+      requested_time_window_start_month: "2025-10",
+      requested_time_window_anchor_mode: "explicit",
+      comparison_time_window_label: "Q3",
+      comparison_time_window_period: "2025-07~2025-09",
+      comparison_time_window_start_month: "2025-07",
+      comparison_time_window_anchor_mode: "explicit",
+      time_compare_mode: "quarter_compare",
+    },
+  );
+
+  assert.match(reply, /Q4/u);
+  assert.match(reply, /Q3/u);
+  assert.match(reply, /2025-10~2025-12/u);
+  assert.match(reply, /2025-07~2025-09/u);
+  assert.match(reply, /709.22万元/u);
+  assert.match(reply, /5539盒/u);
+  assert.match(reply, /517.04万元/u);
+  assert.match(reply, /4698盒/u);
+  assert.match(reply, /37.17%/u);
+  assert.match(reply, /17.90%/u);
 });
 
 test("phase2 trace includes compare summary values for deterministic overall period compare", () => {
