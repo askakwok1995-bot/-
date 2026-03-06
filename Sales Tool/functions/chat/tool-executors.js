@@ -176,7 +176,7 @@ function filterRecordsByMonthWindow(records, startMonth, endMonth) {
     return [];
   }
   return (Array.isArray(records) ? records : []).filter((record) => {
-    const period = trimString(record?.period || record?.month_key || record?.record_month);
+    const period = trimString(record?.period || record?.month_key || record?.record_month || record?.ym);
     if (period) {
       return compareYm(period, safeStart) >= 0 && compareYm(period, safeEnd) <= 0;
     }

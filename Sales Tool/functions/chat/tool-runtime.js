@@ -7,6 +7,7 @@ import {
   TOOL_RUNTIME_MAX_ROUNDS,
   buildAssistantRoleSystemInstruction,
   normalizeBusinessSnapshot,
+  normalizeNumericValue,
   trimString,
 } from "./shared.js";
 import { buildToolDeclarations } from "./tool-registry.js";
@@ -167,6 +168,12 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
   const matchedHospitals = Array.isArray(lastToolResult?.meta?.matched_hospitals) ? lastToolResult.meta.matched_hospitals : [];
   const matchedProducts = Array.isArray(lastToolResult?.meta?.matched_products) ? lastToolResult.meta.matched_products : [];
   const rows = Array.isArray(lastToolResult?.result?.rows) ? lastToolResult.result.rows : [];
+  const primarySummary = lastToolResult?.result?.summary?.primary && typeof lastToolResult.result.summary.primary === "object"
+    ? lastToolResult.result.summary.primary
+    : {};
+  const comparisonSummary = lastToolResult?.result?.summary?.comparison && typeof lastToolResult.result.summary.comparison === "object"
+    ? lastToolResult.result.summary.comparison
+    : {};
   const comparisonRange = lastToolResult?.result?.comparison_range && typeof lastToolResult.result.comparison_range === "object"
     ? lastToolResult.result.comparison_range
     : {};
@@ -214,6 +221,14 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
     tool_result_matched_products: matchedProducts.slice(0, 5),
     tool_result_primary_period: trimString(lastToolResult?.meta?.primary_period) || trimString(lastToolResult?.result?.range?.period),
     tool_result_comparison_period: trimString(lastToolResult?.meta?.comparison_period) || trimString(comparisonRange?.period),
+    tool_result_primary_sales_amount: trimString(primarySummary?.sales_amount),
+    tool_result_primary_sales_volume: trimString(primarySummary?.sales_volume),
+    tool_result_primary_sales_amount_value: normalizeNumericValue(primarySummary?.sales_amount_value),
+    tool_result_primary_sales_volume_value: normalizeNumericValue(primarySummary?.sales_volume_value),
+    tool_result_comparison_sales_amount: trimString(comparisonSummary?.sales_amount),
+    tool_result_comparison_sales_volume: trimString(comparisonSummary?.sales_volume),
+    tool_result_comparison_sales_amount_value: normalizeNumericValue(comparisonSummary?.sales_amount_value),
+    tool_result_comparison_sales_volume_value: normalizeNumericValue(comparisonSummary?.sales_volume_value),
     tool_result_delta_sales_amount_change_ratio: lastToolResult?.result?.summary?.delta?.sales_amount_change_ratio,
     tool_result_delta_sales_volume_change_ratio: lastToolResult?.result?.summary?.delta?.sales_volume_change_ratio,
     tool_result_delta_achievement_change_ratio: lastToolResult?.result?.summary?.delta?.achievement_change_ratio,

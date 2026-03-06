@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyQualityControl } from "../functions/chat/output.js";
+import { applyQualityControl, buildPhase2Trace } from "../functions/chat/output.js";
 
 function createRouteDecision(routeCode) {
   return {
@@ -178,4 +178,222 @@ test("QC patches compare reply when only Q4 is mentioned but Q3 comparison exist
   assert.match(result.finalReplyText, /2025-07~2025-09/u);
   assert.match(result.finalReplyText, /Q3/u);
   assert.match(result.finalReplyText, /36.36%|31.57%/u);
+});
+
+test("QC patches compare contradiction with concrete primary and comparison values", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: true,
+    time_compare_mode: "quarter_compare",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_start_month: "2025-10",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_start_month: "2025-07",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_result_primary_period: "2025-10~2025-12",
+    tool_result_comparison_period: "2025-07~2025-09",
+    tool_result_primary_sales_amount: "709.22万元",
+    tool_result_primary_sales_volume: "5539盒",
+    tool_result_comparison_sales_amount: "520.00万元",
+    tool_result_comparison_sales_volume: "4210盒",
+    tool_result_delta_sales_amount_change_ratio: 0.3639,
+    tool_result_delta_sales_volume_change_ratio: 0.3159,
+    tool_result_delta_sales_amount_change: "+36.39%",
+    tool_result_delta_sales_volume_change: "+31.59%",
+  };
+
+  const result = applyQualityControl(
+    "当前只看到Q4数据，无法和Q3直接比较。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.equal(result.qcState.applied, true);
+  assert.match(result.finalReplyText, /709.22万元/u);
+  assert.match(result.finalReplyText, /520.00万元/u);
+  assert.match(result.finalReplyText, /Q3/u);
+  assert.doesNotMatch(result.finalReplyText, /无法和Q3直接比较/u);
+});
+
+test("phase2 trace includes compare summary values for deterministic overall period compare", () => {
+  const trace = buildPhase2Trace({
+    requestId: "trace-compare-1",
+    questionJudgment: {
+      primary_dimension: { code: "overall" },
+      granularity: { code: "summary" },
+      relevance: { code: "relevant" },
+    },
+    dataAvailability: {
+      has_business_data: { code: "available" },
+      dimension_availability: { code: "available" },
+      answer_depth: { code: "focused" },
+      gap_hint_needed: { code: "no" },
+      detail_request_mode: "overall_period_compare",
+    },
+    sessionState: {
+      is_followup: false,
+      inherit_primary_dimension: false,
+      inherit_scope: false,
+      topic_shift_detected: false,
+    },
+    routeDecision: {
+      route: { code: "direct_answer" },
+      reason_codes: ["sufficient"],
+    },
+    retrievalState: {
+      triggered: true,
+      success: true,
+    },
+    outputContext: {
+      route_code: "direct_answer",
+      local_response_mode: "none",
+      overall_period_compare_mode: true,
+      requested_time_window_period: "2025-10~2025-12",
+      comparison_time_window_period: "2025-07~2025-09",
+      tool_result_primary_period: "2025-10~2025-12",
+      tool_result_comparison_period: "2025-07~2025-09",
+      tool_result_primary_sales_amount_value: 7092200,
+      tool_result_primary_sales_volume_value: 5539,
+      tool_result_comparison_sales_amount_value: 5200000,
+      tool_result_comparison_sales_volume_value: 4210,
+      tool_result_delta_sales_amount_change_ratio: 0.3639,
+      tool_result_delta_sales_volume_change_ratio: 0.3159,
+    },
+    qcState: {
+      applied: false,
+      action: "pass_through",
+      reason_codes: [],
+    },
+    toolRouteMode: "deterministic",
+    toolRouteType: "overall_period_compare",
+    toolRouteName: "get_period_comparison_summary",
+  });
+
+  assert.equal(trace.outputContext.requested_time_window_period, "2025-10~2025-12");
+  assert.equal(trace.outputContext.comparison_time_window_period, "2025-07~2025-09");
+  assert.equal(trace.outputContext.tool_result_primary_sales_amount_value, 7092200);
+  assert.equal(trace.outputContext.tool_result_primary_sales_volume_value, 5539);
+  assert.equal(trace.outputContext.tool_result_comparison_sales_amount_value, 5200000);
+  assert.equal(trace.outputContext.tool_result_comparison_sales_volume_value, 4210);
+  assert.equal(trace.outputContext.tool_result_delta_sales_amount_change_ratio, 0.3639);
+  assert.equal(trace.outputContext.tool_result_delta_sales_volume_change_ratio, 0.3159);
+});
+
+test("QC does not flag contradiction for compare replies when rows are empty but summary exists", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: true,
+    time_compare_mode: "quarter_compare",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_start_month: "2025-10",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_start_month: "2025-07",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_result_coverage_code: "full",
+    tool_result_row_count_value: 0,
+    tool_result_primary_sales_amount: "709.22万元",
+    tool_result_primary_sales_volume: "5539盒",
+    tool_result_comparison_sales_amount: "520.00万元",
+    tool_result_comparison_sales_volume: "4210盒",
+    tool_result_delta_sales_amount_change_ratio: 0.3639,
+    tool_result_delta_sales_volume_change_ratio: 0.3159,
+    tool_result_delta_sales_amount_change: "+36.39%",
+    tool_result_delta_sales_volume_change: "+31.59%",
+  };
+
+  const result = applyQualityControl(
+    "按当前数据年份口径，这里将 Q4 解释为 2025年Q4（2025-10~2025-12），将 Q3 解释为 2025年Q3（2025-07~2025-09）。主窗口整体销售额为709.22万元，销量5539盒。对比窗口整体销售额为520.00万元，销量4210盒。与对比窗口相比，销售额变化为+36.39%，销量变化为+31.59%。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.equal(result.qcState.action, "pass_through");
+  assert.equal(result.qcState.applied, false);
+});
+
+test("QC patches compare contradiction even when explicit windows are already present", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: true,
+    time_compare_mode: "quarter_compare",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_start_month: "2025-10",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_start_month: "2025-07",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_result_coverage_code: "full",
+    tool_result_row_count_value: 0,
+    tool_result_primary_sales_amount: "709.22万元",
+    tool_result_primary_sales_volume: "5539盒",
+    tool_result_comparison_sales_amount: "520.00万元",
+    tool_result_comparison_sales_volume: "4210盒",
+    tool_result_delta_sales_amount_change_ratio: 0.3639,
+    tool_result_delta_sales_volume_change_ratio: 0.3159,
+    tool_result_delta_sales_amount_change: "+36.39%",
+    tool_result_delta_sales_volume_change: "+31.59%",
+  };
+
+  const result = applyQualityControl(
+    "按当前数据年份口径，这里将 Q4 解释为 2025年Q4（2025-10~2025-12），将 Q3 解释为 2025年Q3（2025-07~2025-09）。当前数据不足，只看到Q4数据，无法和Q3直接比较。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.equal(result.qcState.action, "minimal_patch");
+  assert.match(result.finalReplyText, /709.22万元/u);
+  assert.match(result.finalReplyText, /520.00万元/u);
+  assert.match(result.finalReplyText, /Q3/u);
+  assert.doesNotMatch(result.finalReplyText, /无法和Q3直接比较/u);
+});
+
+test("QC patches compare contradiction when compare route exists even if compare mode flag is missing", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: false,
+    time_compare_mode: "none",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_start_month: "2025-10",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_start_month: "2025-07",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_route_type: "overall_period_compare",
+    tool_result_coverage_code: "full",
+    tool_result_row_count_value: 0,
+    tool_result_primary_sales_amount: "709.22万元",
+    tool_result_primary_sales_volume: "5539盒",
+    tool_result_comparison_sales_amount: "520.00万元",
+    tool_result_comparison_sales_volume: "4210盒",
+    tool_result_delta_sales_amount_change_ratio: 0.3639,
+    tool_result_delta_sales_volume_change_ratio: 0.3159,
+    tool_result_delta_sales_amount_change: "+36.39%",
+    tool_result_delta_sales_volume_change: "+31.59%",
+  };
+
+  const result = applyQualityControl(
+    "基于当前可用业务信息，可以先给出方向性结论：请优先聚焦对业绩影响最大的产品或医院。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.equal(result.qcState.action, "minimal_patch");
+  assert.match(result.finalReplyText, /2025-10~2025-12/u);
+  assert.match(result.finalReplyText, /2025-07~2025-09/u);
+  assert.match(result.finalReplyText, /709.22万元/u);
+  assert.match(result.finalReplyText, /520.00万元/u);
 });

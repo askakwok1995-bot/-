@@ -91,6 +91,14 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     time_compare_mode: "none",
     tool_result_primary_period: "",
     tool_result_comparison_period: "",
+    tool_result_primary_sales_amount: "",
+    tool_result_primary_sales_volume: "",
+    tool_result_primary_sales_amount_value: null,
+    tool_result_primary_sales_volume_value: null,
+    tool_result_comparison_sales_amount: "",
+    tool_result_comparison_sales_volume: "",
+    tool_result_comparison_sales_amount_value: null,
+    tool_result_comparison_sales_volume_value: null,
     tool_result_delta_sales_amount_change_ratio: null,
     tool_result_delta_sales_volume_change_ratio: null,
     tool_result_delta_achievement_change_ratio: null,
@@ -161,12 +169,27 @@ function toRetrievalStateTrace(retrievalState) {
 }
 
 function toOutputContextTrace(outputContext) {
-  return {
+  const trace = {
     route_code: trimString(outputContext?.route_code),
     boundary_needed: Boolean(outputContext?.boundary_needed),
     refuse_mode: Boolean(outputContext?.refuse_mode),
     local_response_mode: trimString(outputContext?.local_response_mode),
   };
+
+  if (isOverallPeriodCompareContext(outputContext)) {
+    trace.requested_time_window_period = trimString(outputContext?.requested_time_window_period);
+    trace.comparison_time_window_period = trimString(outputContext?.comparison_time_window_period);
+    trace.tool_result_primary_period = trimString(outputContext?.tool_result_primary_period);
+    trace.tool_result_comparison_period = trimString(outputContext?.tool_result_comparison_period);
+    trace.tool_result_primary_sales_amount_value = normalizeNumericValue(outputContext?.tool_result_primary_sales_amount_value);
+    trace.tool_result_primary_sales_volume_value = normalizeNumericValue(outputContext?.tool_result_primary_sales_volume_value);
+    trace.tool_result_comparison_sales_amount_value = normalizeNumericValue(outputContext?.tool_result_comparison_sales_amount_value);
+    trace.tool_result_comparison_sales_volume_value = normalizeNumericValue(outputContext?.tool_result_comparison_sales_volume_value);
+    trace.tool_result_delta_sales_amount_change_ratio = normalizeNumericValue(outputContext?.tool_result_delta_sales_amount_change_ratio);
+    trace.tool_result_delta_sales_volume_change_ratio = normalizeNumericValue(outputContext?.tool_result_delta_sales_volume_change_ratio);
+  }
+
+  return trace;
 }
 
 function toQcStateTrace(qcState) {
@@ -310,6 +333,14 @@ function containsDataInsufficientWording(text) {
   return containsAnyKeywordIgnoreCase(text, ["数据不足", "未提供细分", "无法直接判断", "无法直接给出", "未包含", "无法提供"]);
 }
 
+function isOverallPeriodCompareContext(outputContext) {
+  return (
+    Boolean(outputContext?.overall_period_compare_mode) ||
+    trimString(outputContext?.tool_route_type) === "overall_period_compare" ||
+    trimString(outputContext?.time_compare_mode) === "quarter_compare"
+  );
+}
+
 function hasExplicitRequestedTimeWindow(text, outputContext) {
   const requestedPeriod = trimString(outputContext?.requested_time_window_period);
   if (!requestedPeriod) {
@@ -330,7 +361,7 @@ function looksLikeTimeWindowReinterpreted(text, outputContext) {
 }
 
 function isCompareUnderexplained(text, outputContext) {
-  if (!Boolean(outputContext?.overall_period_compare_mode)) {
+  if (!isOverallPeriodCompareContext(outputContext)) {
     return false;
   }
   const normalized = trimString(text);
@@ -674,12 +705,14 @@ function buildLocalOverallPeriodCompareReply(toolResult, outputContext) {
       : "--");
   const amountDelta =
     trimString(delta?.sales_amount_change) ||
+    trimString(outputContext?.tool_result_delta_sales_amount_change) ||
     trimString(outputContext?.tool_result_sales_amount_change) ||
-    toSignedRatioText(delta?.sales_amount_change_ratio ?? outputContext?.tool_result_sales_amount_change_ratio);
+    toSignedRatioText(delta?.sales_amount_change_ratio ?? outputContext?.tool_result_delta_sales_amount_change_ratio);
   const volumeDelta =
     trimString(delta?.sales_volume_change) ||
+    trimString(outputContext?.tool_result_delta_sales_volume_change) ||
     trimString(outputContext?.tool_result_sales_volume_change) ||
-    toSignedRatioText(delta?.sales_volume_change_ratio ?? outputContext?.tool_result_sales_volume_change_ratio);
+    toSignedRatioText(delta?.sales_volume_change_ratio ?? outputContext?.tool_result_delta_sales_volume_change_ratio);
   lines.push(`主窗口整体销售额为 ${primaryAmount}${primaryVolume !== "--" ? `，销量 ${primaryVolume}` : ""}。`);
   lines.push(`对比窗口整体销售额为 ${comparisonAmount}${comparisonVolume !== "--" ? `，销量 ${comparisonVolume}` : ""}。`);
   if (amountDelta && amountDelta !== "--") {
@@ -805,7 +838,11 @@ function evaluateReplyQuality(reply, outputContext, routeDecision) {
   const toolCoverageCode = trimString(outputContext?.tool_result_coverage_code);
   const toolRowCount = normalizeNumericValue(outputContext?.tool_result_row_count_value) ?? 0;
   if (deterministicToolRoute && toolCoverageCode === "full") {
-    if (
+    if (isOverallPeriodCompareContext(outputContext)) {
+      if (containsDataInsufficientWording(text)) {
+        findings.push(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION);
+      }
+    } else if (
       (toolRowCount > 0 && containsDataInsufficientWording(text)) ||
       (toolRowCount === 0 && (containsDataInsufficientWording(text) || !containsAnyKeywordIgnoreCase(text, ["贡献为0", "未产生医院销量贡献", "无贡献"])))
     ) {
@@ -969,8 +1006,12 @@ function applyMinimalPatch(reply, findings, outputContext) {
     Boolean(outputContext?.product_hospital_detail_mode) &&
     (findingSet.has(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION) || findingSet.has(QC_REASON_CODES.TOOL_RESULT_UNDERLISTED));
   const deterministicComparePatch =
-    Boolean(outputContext?.overall_period_compare_mode) &&
-    (findingSet.has(QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT) || findingSet.has(QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED));
+    isOverallPeriodCompareContext(outputContext) &&
+    (
+      findingSet.has(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION) ||
+      findingSet.has(QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT) ||
+      findingSet.has(QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED)
+    );
 
   if (findingSet.has(QC_REASON_CODES.CONTAINS_INTERNAL_PROCESS_WORDS)) {
     patched = scrubInternalProcessWords(patched);
@@ -988,12 +1029,16 @@ function applyMinimalPatch(reply, findings, outputContext) {
       {
         summary: {
           primary: {
-            sales_amount: "",
-            sales_volume: "",
+            sales_amount: trimString(outputContext?.tool_result_primary_sales_amount),
+            sales_volume: trimString(outputContext?.tool_result_primary_sales_volume),
+            sales_amount_value: outputContext?.tool_result_primary_sales_amount_value,
+            sales_volume_value: outputContext?.tool_result_primary_sales_volume_value,
           },
           comparison: {
-            sales_amount: "",
-            sales_volume: "",
+            sales_amount: trimString(outputContext?.tool_result_comparison_sales_amount),
+            sales_volume: trimString(outputContext?.tool_result_comparison_sales_volume),
+            sales_amount_value: outputContext?.tool_result_comparison_sales_amount_value,
+            sales_volume_value: outputContext?.tool_result_comparison_sales_volume_value,
           },
           delta: {
             sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
@@ -1034,17 +1079,21 @@ function applyMinimalPatch(reply, findings, outputContext) {
 
 function buildQualityFallbackReply(routeCode, outputContext) {
   const safeRouteCode = trimString(routeCode) || trimString(outputContext?.route_code);
-  if (Boolean(outputContext?.overall_period_compare_mode)) {
+  if (isOverallPeriodCompareContext(outputContext)) {
     return buildLocalOverallPeriodCompareReply(
       {
         summary: {
           primary: {
             sales_amount: trimString(outputContext?.tool_result_primary_sales_amount),
             sales_volume: trimString(outputContext?.tool_result_primary_sales_volume),
+            sales_amount_value: outputContext?.tool_result_primary_sales_amount_value,
+            sales_volume_value: outputContext?.tool_result_primary_sales_volume_value,
           },
           comparison: {
             sales_amount: trimString(outputContext?.tool_result_comparison_sales_amount),
             sales_volume: trimString(outputContext?.tool_result_comparison_sales_volume),
+            sales_amount_value: outputContext?.tool_result_comparison_sales_amount_value,
+            sales_volume_value: outputContext?.tool_result_comparison_sales_volume_value,
           },
           delta: {
             sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
@@ -1093,8 +1142,10 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
     );
   const deterministicComparePatch =
     trimString(outputContext?.tool_route_mode) === "deterministic" &&
-    initial.findings.some(
-      (code) => code === QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT || code === QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED,
+    initial.findings.some((code) =>
+      code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION ||
+      code === QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT ||
+      code === QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED,
     );
   const timeWindowExplicitPatchAllowed =
     initial.findings.includes(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT) &&
@@ -1227,7 +1278,7 @@ export function buildOutputInstructionText(outputContext) {
         }`
       : "";
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
-    if (Boolean(outputContext?.overall_period_compare_mode)) {
+    if (isOverallPeriodCompareContext(outputContext)) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：本轮是时间窗口对比问题，必须同时给出主窗口与对比窗口的结论，并至少给出一项变化结果（金额或销量）。${compareInstructionText}`;
     }
     if (hospitalMonthlyDetailMode) {
@@ -1264,7 +1315,7 @@ export function buildOutputInstructionText(outputContext) {
   }
 
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
-    if (Boolean(outputContext?.overall_period_compare_mode)) {
+    if (isOverallPeriodCompareContext(outputContext)) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：时间窗口对比场景下，先给主窗口与对比窗口的方向性结论，再说明当前边界，且必须写出两个绝对时间区间。${compareInstructionText}`;
     }
     if (hospitalMonthlyDetailMode) {
