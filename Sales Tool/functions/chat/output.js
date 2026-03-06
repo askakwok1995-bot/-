@@ -174,6 +174,15 @@ function toOutputContextTrace(outputContext) {
     boundary_needed: Boolean(outputContext?.boundary_needed),
     refuse_mode: Boolean(outputContext?.refuse_mode),
     local_response_mode: trimString(outputContext?.local_response_mode),
+    requested_time_window_kind: trimString(outputContext?.requested_time_window_kind) || "none",
+    requested_time_window_period: trimString(outputContext?.requested_time_window_period),
+    requested_time_window_anchor_mode: trimString(outputContext?.requested_time_window_anchor_mode) || "none",
+    time_window_coverage_code: trimString(outputContext?.time_window_coverage_code) || "none",
+    comparison_time_window_kind: trimString(outputContext?.comparison_time_window_kind) || "none",
+    comparison_time_window_period: trimString(outputContext?.comparison_time_window_period),
+    comparison_time_window_anchor_mode: trimString(outputContext?.comparison_time_window_anchor_mode) || "none",
+    comparison_time_window_coverage_code: trimString(outputContext?.comparison_time_window_coverage_code) || "none",
+    time_compare_mode: trimString(outputContext?.time_compare_mode) || "none",
   };
 
   if (isOverallPeriodCompareContext(outputContext)) {

@@ -252,8 +252,15 @@ test("phase2 trace includes compare summary values for deterministic overall per
       route_code: "direct_answer",
       local_response_mode: "none",
       overall_period_compare_mode: true,
+      requested_time_window_kind: "absolute",
       requested_time_window_period: "2025-10~2025-12",
+      requested_time_window_anchor_mode: "analysis_year",
+      time_window_coverage_code: "full",
+      comparison_time_window_kind: "absolute",
       comparison_time_window_period: "2025-07~2025-09",
+      comparison_time_window_anchor_mode: "analysis_year",
+      comparison_time_window_coverage_code: "full",
+      time_compare_mode: "quarter_compare",
       tool_result_primary_period: "2025-10~2025-12",
       tool_result_comparison_period: "2025-07~2025-09",
       tool_result_primary_sales_amount_value: 7092200,
@@ -274,7 +281,14 @@ test("phase2 trace includes compare summary values for deterministic overall per
   });
 
   assert.equal(trace.outputContext.requested_time_window_period, "2025-10~2025-12");
+  assert.equal(trace.outputContext.requested_time_window_kind, "absolute");
+  assert.equal(trace.outputContext.requested_time_window_anchor_mode, "analysis_year");
+  assert.equal(trace.outputContext.time_window_coverage_code, "full");
   assert.equal(trace.outputContext.comparison_time_window_period, "2025-07~2025-09");
+  assert.equal(trace.outputContext.comparison_time_window_kind, "absolute");
+  assert.equal(trace.outputContext.comparison_time_window_anchor_mode, "analysis_year");
+  assert.equal(trace.outputContext.comparison_time_window_coverage_code, "full");
+  assert.equal(trace.outputContext.time_compare_mode, "quarter_compare");
   assert.equal(trace.outputContext.tool_result_primary_sales_amount_value, 7092200);
   assert.equal(trace.outputContext.tool_result_primary_sales_volume_value, 5539);
   assert.equal(trace.outputContext.tool_result_comparison_sales_amount_value, 5200000);
