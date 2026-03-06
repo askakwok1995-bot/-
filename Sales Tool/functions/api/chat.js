@@ -64,6 +64,36 @@ function errorResponse(code, message, status, requestId, details = null) {
   return jsonResponse(payload, status, requestId);
 }
 
+function summarizeErrorStack(error) {
+  if (!(error instanceof Error) || !trimString(error.stack)) {
+    return "";
+  }
+  return error.stack
+    .split("\n")
+    .map((line) => trimString(line))
+    .filter((line) => line)
+    .slice(0, 5)
+    .join(" | ");
+}
+
+function logChatError({ requestId, stage, error }) {
+  const payload = {
+    requestId: trimString(requestId),
+    stage: trimString(stage) || "unknown",
+    error_name: error instanceof Error ? trimString(error.name) || "Error" : "UnknownError",
+    error_message: error instanceof Error ? trimString(error.message) : "Unknown error",
+  };
+  const stack = summarizeErrorStack(error);
+  if (stack) {
+    payload.stack = stack;
+  }
+  try {
+    console.error("[chat.error]", JSON.stringify(payload));
+  } catch (_loggingError) {
+    // Error logging should never affect primary request flow.
+  }
+}
+
 function extractBearerToken(request) {
   const raw = trimString(request?.headers?.get("authorization"));
   if (!raw) {
@@ -150,115 +180,86 @@ async function verifySupabaseAccessToken(request, env) {
   }
 }
 
-export async function onRequestPost(context) {
-  const requestId = crypto.randomUUID();
-  const authResult = await verifySupabaseAccessToken(context.request, context.env);
-  if (!authResult.ok) {
-    return errorResponse(authResult.code, authResult.message, authResult.status, requestId);
-  }
+export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
+  const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
+  const buildQuestionJudgmentImpl = deps.buildQuestionJudgment || buildQuestionJudgment;
+  let stage = "auth";
 
-  let body;
   try {
-    body = await context.request.json();
-  } catch (_error) {
-    return errorResponse(CHAT_ERROR_CODES.BAD_REQUEST, "请求体必须是合法 JSON。", 400, requestId);
-  }
+    const authResult = await verifySupabaseAccessTokenImpl(context.request, context.env);
+    if (!authResult.ok) {
+      return errorResponse(authResult.code, authResult.message, authResult.status, requestId);
+    }
 
-  const message = trimString(body?.message);
-  if (!message) {
-    return errorResponse(CHAT_ERROR_CODES.MESSAGE_REQUIRED, "message 不能为空。", 400, requestId);
-  }
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return errorResponse(
-      CHAT_ERROR_CODES.MESSAGE_TOO_LONG,
-      `message 过长，最多 ${MAX_MESSAGE_LENGTH} 个字符。`,
-      400,
-      requestId,
-    );
-  }
+    stage = "body";
+    let body;
+    try {
+      body = await context.request.json();
+    } catch (_error) {
+      return errorResponse(CHAT_ERROR_CODES.BAD_REQUEST, "请求体必须是合法 JSON。", 400, requestId);
+    }
 
-  const questionJudgment = buildQuestionJudgment(message);
-  const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
-  const productFullRequested = isFullProductRequest(message, questionJudgment);
-  const productNamedContext = await resolveProductNamedRequestContext({
-    message,
-    questionJudgment,
-    productFullRequested,
-    token: authResult.token,
-    env: context.env,
-  });
-  const productNamedRequested = Boolean(productNamedContext.productNamedRequested);
-  const requestedProducts = Array.isArray(productNamedContext.requestedProducts) ? productNamedContext.requestedProducts : [];
-  const productNamedMatchMode = trimString(productNamedContext.productNamedMatchMode).toLocaleLowerCase() || "none";
-  const hospitalNamedContext = resolveHospitalNamedRequestContext({
-    message,
-    questionJudgment,
-    productFullRequested,
-    productNamedRequested,
-  });
-  const hospitalNamedRequested = Boolean(hospitalNamedContext.hospitalNamedRequested);
-  const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
-    ? hospitalNamedContext.requestedHospitals
-    : [];
-  const productHospitalContext = resolveProductHospitalRequestContext({
-    message,
-    questionJudgment,
-    productFullRequested,
-    productNamedRequested,
-    requestedProducts,
-  });
-  const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
-  const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
-    productFullRequested,
-    productHospitalRequested,
-    productNamedRequested,
-    hospitalNamedRequested,
-  });
+    const message = trimString(body?.message);
+    if (!message) {
+      return errorResponse(CHAT_ERROR_CODES.MESSAGE_REQUIRED, "message 不能为空。", 400, requestId);
+    }
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return errorResponse(
+        CHAT_ERROR_CODES.MESSAGE_TOO_LONG,
+        `message 过长，最多 ${MAX_MESSAGE_LENGTH} 个字符。`,
+        400,
+        requestId,
+      );
+    }
 
-  const normalizedBusinessSnapshot = normalizeBusinessSnapshot(body?.business_snapshot);
-  const historyWindow = normalizeSessionHistoryWindow(body?.history);
-  const sessionState = buildSessionState(message, historyWindow, questionJudgment);
+    stage = "judgment";
+    const questionJudgment = buildQuestionJudgmentImpl(message);
+    const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
+    const productFullRequested = isFullProductRequest(message, questionJudgment);
+    const historyWindow = normalizeSessionHistoryWindow(body?.history);
+    const sessionState = buildSessionState(message, historyWindow, questionJudgment);
 
-  let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
-    hospitalMonthlyDetailRequested,
-    productHospitalRequested,
-    hospitalNamedRequested,
-    requestedHospitals,
-    productFullRequested,
-    productNamedRequested,
-    productNamedMatchMode,
-    requestedProducts,
-  });
-  let routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
-    productHospitalRequested,
-    hospitalNamedRequested,
-    productFullRequested,
-    productNamedRequested,
-  });
-  let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
-  let retrievalState = createInitialRetrievalState();
-
-  if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
-    const enhancementResult = await buildOnDemandSnapshotEnhancement({
-      questionJudgment: effectiveQuestionJudgment,
-      dataAvailability,
-      routeDecision,
-      sessionState,
-      hospitalMonthlyDetailRequested,
-      productHospitalRequested,
-      hospitalNamedRequested,
-      requestedHospitals,
+    stage = "retrieval";
+    const productNamedContext = await resolveProductNamedRequestContext({
+      message,
+      questionJudgment,
+      productFullRequested,
+      token: authResult.token,
+      env: context.env,
+    });
+    const productNamedRequested = Boolean(productNamedContext.productNamedRequested);
+    const requestedProducts = Array.isArray(productNamedContext.requestedProducts)
+      ? productNamedContext.requestedProducts
+      : [];
+    const productNamedMatchMode = trimString(productNamedContext.productNamedMatchMode).toLocaleLowerCase() || "none";
+    const hospitalNamedContext = resolveHospitalNamedRequestContext({
+      message,
+      questionJudgment,
+      productFullRequested,
+      productNamedRequested,
+    });
+    const hospitalNamedRequested = Boolean(hospitalNamedContext.hospitalNamedRequested);
+    const requestedHospitals = Array.isArray(hospitalNamedContext.requestedHospitals)
+      ? hospitalNamedContext.requestedHospitals
+      : [];
+    const productHospitalContext = resolveProductHospitalRequestContext({
+      message,
+      questionJudgment,
       productFullRequested,
       productNamedRequested,
       requestedProducts,
-      businessSnapshot: effectiveBusinessSnapshot,
-      authToken: authResult.token,
-      env: context.env,
     });
-    effectiveBusinessSnapshot = normalizeBusinessSnapshot(enhancementResult.effectiveSnapshot);
-    retrievalState = enhancementResult.retrievalState;
+    const productHospitalRequested = Boolean(productHospitalContext.productHospitalRequested);
+    const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
+      productFullRequested,
+      productHospitalRequested,
+      productNamedRequested,
+      hospitalNamedRequested,
+    });
+    const normalizedBusinessSnapshot = normalizeBusinessSnapshot(body?.business_snapshot);
 
-    dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
+    stage = "availability";
+    let dataAvailability = buildDataAvailability(normalizedBusinessSnapshot, effectiveQuestionJudgment, {
       hospitalMonthlyDetailRequested,
       productHospitalRequested,
       hospitalNamedRequested,
@@ -268,69 +269,129 @@ export async function onRequestPost(context) {
       productNamedMatchMode,
       requestedProducts,
     });
-    routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+
+    stage = "routing";
+    let routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
       productHospitalRequested,
       hospitalNamedRequested,
       productFullRequested,
       productNamedRequested,
     });
+    let effectiveBusinessSnapshot = normalizedBusinessSnapshot;
+    let retrievalState = createInitialRetrievalState();
 
     if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
+      stage = "retrieval";
+      const enhancementResult = await buildOnDemandSnapshotEnhancement({
+        questionJudgment: effectiveQuestionJudgment,
+        dataAvailability,
+        routeDecision,
+        sessionState,
+        hospitalMonthlyDetailRequested,
+        productHospitalRequested,
+        hospitalNamedRequested,
+        requestedHospitals,
+        productFullRequested,
+        productNamedRequested,
+        requestedProducts,
+        businessSnapshot: effectiveBusinessSnapshot,
+        authToken: authResult.token,
+        env: context.env,
+      });
+      effectiveBusinessSnapshot = normalizeBusinessSnapshot(enhancementResult.effectiveSnapshot);
+      retrievalState = enhancementResult.retrievalState;
+
+      stage = "availability";
+      dataAvailability = buildDataAvailability(effectiveBusinessSnapshot, effectiveQuestionJudgment, {
+        hospitalMonthlyDetailRequested,
+        productHospitalRequested,
+        hospitalNamedRequested,
+        requestedHospitals,
+        productFullRequested,
+        productNamedRequested,
+        productNamedMatchMode,
+        requestedProducts,
+      });
+      stage = "routing";
+      routeDecision = buildRouteDecision(effectiveQuestionJudgment, dataAvailability, {
+        productHospitalRequested,
+        hospitalNamedRequested,
+        productFullRequested,
+        productNamedRequested,
+      });
+
+      if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
+        routeDecision = forceBoundedRouteDecision(dataAvailability);
+        retrievalState.degraded_to_bounded = true;
+      }
+    }
+
+    let forcedBounded = false;
+    if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
       routeDecision = forceBoundedRouteDecision(dataAvailability);
-      retrievalState.degraded_to_bounded = true;
+      forcedBounded = true;
     }
-  }
 
-  let forcedBounded = false;
-  if (routeDecision.route.code === ROUTE_DECISION_CODES.NEED_MORE_DATA) {
-    routeDecision = forceBoundedRouteDecision(dataAvailability);
-    forcedBounded = true;
-  }
+    stage = "output";
+    const outputContext = buildOutputContext(routeDecision, effectiveQuestionJudgment, dataAvailability);
+    let modelReplyText = "";
+    let responseModel = "local-template-refuse";
 
-  const outputContext = buildOutputContext(routeDecision, effectiveQuestionJudgment, dataAvailability);
-  let modelReplyText = "";
-  let responseModel = "local-template-refuse";
-
-  if (outputContext.refuse_mode) {
-    modelReplyText = buildRefuseReplyTemplate(outputContext);
-  } else {
-    const geminiResult = await callGemini(message, effectiveBusinessSnapshot, outputContext, context.env);
-    if (!geminiResult.ok) {
-      return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
+    if (outputContext.refuse_mode) {
+      modelReplyText = buildRefuseReplyTemplate(outputContext);
+    } else {
+      stage = "gemini";
+      const geminiResult = await callGemini(message, effectiveBusinessSnapshot, outputContext, context.env, requestId);
+      if (!geminiResult.ok) {
+        return errorResponse(geminiResult.code, geminiResult.message, geminiResult.status, requestId);
+      }
+      responseModel = geminiResult.model;
+      modelReplyText = geminiResult.reply;
     }
-    responseModel = geminiResult.model;
-    modelReplyText = geminiResult.reply;
-  }
 
-  const replyDraft = normalizeOutputReply(modelReplyText);
-  const qcResult = applyQualityControl(replyDraft, outputContext, routeDecision);
-  const finalReply = qcResult.finalReplyText;
+    stage = "qc";
+    const replyDraft = normalizeOutputReply(modelReplyText);
+    const qcResult = applyQualityControl(replyDraft, outputContext, routeDecision);
+    const finalReply = qcResult.finalReplyText;
 
-  const phase2Trace = buildPhase2Trace({
-    requestId,
-    questionJudgment,
-    dataAvailability,
-    sessionState,
-    routeDecision,
-    retrievalState,
-    outputContext,
-    forcedBounded,
-    qcState: qcResult.qcState,
-  });
-  logPhase2Trace(phase2Trace, context.env);
-
-  return jsonResponse(
-    {
-      reply: finalReply,
-      surfaceReply: finalReply,
-      responseAction: "natural_answer",
-      businessIntent: "chat",
-      model: responseModel,
+    const phase2Trace = buildPhase2Trace({
       requestId,
-    },
-    200,
-    requestId,
-  );
+      questionJudgment,
+      dataAvailability,
+      sessionState,
+      routeDecision,
+      retrievalState,
+      outputContext,
+      forcedBounded,
+      qcState: qcResult.qcState,
+    });
+    logPhase2Trace(phase2Trace, context.env);
+
+    return jsonResponse(
+      {
+        reply: finalReply,
+        surfaceReply: finalReply,
+        responseAction: "natural_answer",
+        businessIntent: "chat",
+        model: responseModel,
+        requestId,
+      },
+      200,
+      requestId,
+    );
+  } catch (error) {
+    logChatError({ requestId, stage, error });
+    return errorResponse(
+      CHAT_ERROR_CODES.INTERNAL_ERROR,
+      "聊天服务暂时不可用，请稍后重试。",
+      500,
+      requestId,
+    );
+  }
+}
+
+export async function onRequestPost(context) {
+  return handleChatRequest(context, crypto.randomUUID());
 }
 
 export async function onRequestOptions() {

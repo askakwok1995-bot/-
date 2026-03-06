@@ -172,6 +172,14 @@ export function logPhase2Trace(tracePayload, env) {
   }
 }
 
+function logGeminiCallBreadcrumb(eventName, payload) {
+  try {
+    console.log(`[gemini.call.${eventName}]`, JSON.stringify(payload));
+  } catch (_error) {
+    // Gemini breadcrumb logging should never affect primary request flow.
+  }
+}
+
 function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -652,9 +660,17 @@ function extractGeminiReply(payload) {
   return "";
 }
 
-export async function callGemini(message, businessSnapshot, outputContext, env) {
+export async function callGemini(message, businessSnapshot, outputContext, env, requestId = "") {
+  const model = sanitizeModelName(getEnvString(env, "GEMINI_MODEL"));
   const apiKey = getEnvString(env, "GEMINI_API_KEY");
   if (!apiKey) {
+    logGeminiCallBreadcrumb("result", {
+      requestId: trimString(requestId),
+      model,
+      ok: false,
+      status: 500,
+      error_code: CHAT_ERROR_CODES.CONFIG_MISSING,
+    });
     return {
       ok: false,
       code: CHAT_ERROR_CODES.CONFIG_MISSING,
@@ -663,8 +679,11 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
     };
   }
 
-  const model = sanitizeModelName(getEnvString(env, "GEMINI_MODEL"));
   const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  logGeminiCallBreadcrumb("start", {
+    requestId: trimString(requestId),
+    model,
+  });
 
   try {
     const response = await fetchWithTimeout(
@@ -682,6 +701,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
     const payload = await parseJsonSafe(response);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
+        logGeminiCallBreadcrumb("result", {
+          requestId: trimString(requestId),
+          model,
+          ok: false,
+          status: response.status,
+          error_code: CHAT_ERROR_CODES.UPSTREAM_AUTH_ERROR,
+        });
         return {
           ok: false,
           code: CHAT_ERROR_CODES.UPSTREAM_AUTH_ERROR,
@@ -690,6 +716,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
         };
       }
       if (response.status === 429) {
+        logGeminiCallBreadcrumb("result", {
+          requestId: trimString(requestId),
+          model,
+          ok: false,
+          status: response.status,
+          error_code: CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT,
+        });
         return {
           ok: false,
           code: CHAT_ERROR_CODES.UPSTREAM_RATE_LIMIT,
@@ -698,6 +731,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
         };
       }
       const upstreamMessage = trimString(payload?.error?.message);
+      logGeminiCallBreadcrumb("result", {
+        requestId: trimString(requestId),
+        model,
+        ok: false,
+        status: response.status,
+        error_code: CHAT_ERROR_CODES.UPSTREAM_ERROR,
+      });
       return {
         ok: false,
         code: CHAT_ERROR_CODES.UPSTREAM_ERROR,
@@ -708,6 +748,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
 
     const reply = extractGeminiReply(payload);
     if (!reply) {
+      logGeminiCallBreadcrumb("result", {
+        requestId: trimString(requestId),
+        model,
+        ok: false,
+        status: 502,
+        error_code: CHAT_ERROR_CODES.EMPTY_REPLY,
+      });
       return {
         ok: false,
         code: CHAT_ERROR_CODES.EMPTY_REPLY,
@@ -716,6 +763,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
       };
     }
 
+    logGeminiCallBreadcrumb("result", {
+      requestId: trimString(requestId),
+      model,
+      ok: true,
+      status: response.status,
+      error_code: "",
+    });
     return {
       ok: true,
       reply,
@@ -723,6 +777,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      logGeminiCallBreadcrumb("result", {
+        requestId: trimString(requestId),
+        model,
+        ok: false,
+        status: 504,
+        error_code: CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
+      });
       return {
         ok: false,
         code: CHAT_ERROR_CODES.UPSTREAM_TIMEOUT,
@@ -730,6 +791,13 @@ export async function callGemini(message, businessSnapshot, outputContext, env) 
         status: 504,
       };
     }
+    logGeminiCallBreadcrumb("result", {
+      requestId: trimString(requestId),
+      model,
+      ok: false,
+      status: 502,
+      error_code: CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
+    });
     return {
       ok: false,
       code: CHAT_ERROR_CODES.UPSTREAM_NETWORK_ERROR,
