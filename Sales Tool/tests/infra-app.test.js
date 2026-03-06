@@ -3,13 +3,7 @@ import test from "node:test";
 
 import { createAppDeps } from "../app/create-app-deps.js";
 import { mapCloudProductToLocal } from "../infra/products-repository.js";
-import {
-  createRecordsRepository,
-  mapCloudRecordToAnalyticsModel,
-  mapCloudRecordToListModel,
-  mapCloudRecordToLocal,
-} from "../infra/records-repository.js";
-import { formatRecordAmountText, formatRecordQuantityText } from "../records.js";
+import { mapCloudRecordToLocal } from "../infra/records-repository.js";
 
 test("mapCloudProductToLocal maps valid cloud row to local model", () => {
   const mapped = mapCloudProductToLocal(
@@ -51,108 +45,6 @@ test("mapCloudRecordToLocal resolves productId from injected products", () => {
   assert.equal(mapped?.productId, "p1");
   assert.equal(mapped?.productName, "诺和盈1mg");
   assert.equal(mapped?.quantity, 12);
-});
-
-test("list mapper keeps malformed numeric fields while analytics mapper filters them", () => {
-  const row = {
-    id: "r-bad",
-    record_date: "2026-03-01",
-    hospital_name: "广州华美",
-    product_name: "诺和盈1mg",
-    purchase_quantity_boxes: "",
-    assessed_amount: "not-a-number",
-    channel: "",
-  };
-  const mapperOptions = {
-    products: [{ id: "p1", productName: "诺和盈1mg", unitPrice: 100 }],
-    normalizeText: (value) => String(value || "").trim().toLowerCase(),
-    roundMoney: (value) => Math.round(value * 100) / 100,
-  };
-
-  const listMapped = mapCloudRecordToListModel(row, mapperOptions);
-  const analyticsMapped = mapCloudRecordToAnalyticsModel(row, mapperOptions);
-
-  assert.equal(listMapped?.id, "r-bad");
-  assert.equal(listMapped?.delivery, "未填写");
-  assert.equal(listMapped?.quantity, null);
-  assert.equal(listMapped?.amount, null);
-  assert.equal(analyticsMapped, null);
-});
-
-test("records repository separates tolerant list read and conservative analytics read", async () => {
-  const rows = [
-    {
-      id: "r1",
-      record_date: "2026-03-01",
-      hospital_name: "广州华美",
-      product_name: "诺和盈1mg",
-      purchase_quantity_boxes: 12,
-      assessed_amount: 1200,
-      channel: "院内",
-      created_at: "2026-03-01T00:00:00Z",
-    },
-    {
-      id: "r2",
-      record_date: "2026-03-02",
-      hospital_name: "广州华美",
-      product_name: "诺和盈1mg",
-      purchase_quantity_boxes: "",
-      assessed_amount: "oops",
-      channel: "",
-      created_at: "2026-03-02T00:00:00Z",
-    },
-  ];
-  const warnings = [];
-  function createQueryResult(result) {
-    return {
-      eq() {
-        return this;
-      },
-      order() {
-        return this;
-      },
-      range() {
-        return Promise.resolve(result);
-      },
-      then(resolve, reject) {
-        return Promise.resolve(result).then(resolve, reject);
-      },
-    };
-  }
-  const client = {
-    from() {
-      return {
-        select(_fields, options) {
-          const result = options?.count
-            ? { data: rows, error: null, count: rows.length }
-            : { data: rows, error: null };
-          return createQueryResult(result);
-        },
-      };
-    },
-  };
-  const repo = createRecordsRepository({
-    getAuthContext: () => ({ client, user: { id: "u1" } }),
-    getProducts: () => [{ id: "p1", productName: "诺和盈1mg", unitPrice: 100 }],
-    normalizeText: (value) => String(value || "").trim().toLowerCase(),
-    roundMoney: (value) => Math.round(value * 100) / 100,
-    defaultPageSize: 20,
-    logger: { warn: (message) => warnings.push(message) },
-  });
-
-  const pageResult = await repo.fetchRecordsPageFromCloud({ page: 1, pageSize: 20, filters: {} });
-  const analyticsRecords = await repo.fetchAllRecordsFromCloud();
-
-  assert.equal(pageResult.items.length, 2);
-  assert.equal(pageResult.items[1]?.quantity, null);
-  assert.equal(analyticsRecords.length, 1);
-  assert.equal(warnings.length, 1);
-});
-
-test("record display helpers render null numeric values as placeholder", () => {
-  assert.equal(formatRecordQuantityText(null), "--");
-  assert.equal(formatRecordAmountText(null), "--");
-  assert.equal(formatRecordQuantityText(12), "12 盒");
 });
 
 test("createAppDeps preserves repository contract and UI wrappers", async () => {

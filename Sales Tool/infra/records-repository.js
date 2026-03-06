@@ -2,16 +2,6 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function parseQuantity(value) {
-  const num = Number(value);
-  return Number.isInteger(num) && num !== 0 ? num : null;
-}
-
-function parseAmount(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
 export const RECORD_SORT_FIELD_COLUMN_MAP = {
   date: "record_date",
   productName: "product_name",
@@ -21,7 +11,7 @@ export const RECORD_SORT_FIELD_COLUMN_MAP = {
   delivery: "channel",
 };
 
-export function mapCloudRecordToListModel(row, { products, normalizeText, roundMoney }) {
+export function mapCloudRecordToLocal(row, { products, normalizeText, roundMoney }) {
   if (!row || typeof row !== "object") {
     return null;
   }
@@ -30,12 +20,18 @@ export function mapCloudRecordToListModel(row, { products, normalizeText, roundM
   const date = trimString(row.record_date);
   const hospital = trimString(row.hospital_name);
   const productName = trimString(row.product_name);
-  const quantity = parseQuantity(row.purchase_quantity_boxes);
-  const amount = parseAmount(row.assessed_amount);
+  const quantity = Number(row.purchase_quantity_boxes);
+  const amount = Number(row.assessed_amount);
   const channel = trimString(row.channel);
   const delivery = channel || "未填写";
 
   if (!id || !date || !hospital || !productName) {
+    return null;
+  }
+  if (!Number.isInteger(quantity) || quantity === 0) {
+    return null;
+  }
+  if (!Number.isFinite(amount)) {
     return null;
   }
 
@@ -51,26 +47,10 @@ export function mapCloudRecordToListModel(row, { products, normalizeText, roundM
     unitPriceSnapshot: matchedProduct ? roundMoney(matchedProduct.unitPrice) : null,
     hospital,
     quantity,
-    amount: amount === null ? null : roundMoney(amount),
+    amount: roundMoney(amount),
     delivery,
   };
 }
-
-export function mapCloudRecordToAnalyticsModel(row, { products, normalizeText, roundMoney }) {
-  const mapped = mapCloudRecordToListModel(row, { products, normalizeText, roundMoney });
-  if (!mapped) {
-    return null;
-  }
-  if (!Number.isInteger(mapped.quantity) || mapped.quantity === 0) {
-    return null;
-  }
-  if (!Number.isFinite(mapped.amount)) {
-    return null;
-  }
-  return mapped;
-}
-
-export const mapCloudRecordToLocal = mapCloudRecordToAnalyticsModel;
 
 export function createRecordsRepository({
   getAuthContext,
@@ -78,18 +58,9 @@ export function createRecordsRepository({
   normalizeText,
   roundMoney,
   defaultPageSize,
-  logger = console,
 }) {
-  function mapListRow(row) {
-    return mapCloudRecordToListModel(row, {
-      products: typeof getProducts === "function" ? getProducts() : [],
-      normalizeText,
-      roundMoney,
-    });
-  }
-
-  function mapAnalyticsRow(row) {
-    return mapCloudRecordToAnalyticsModel(row, {
+  function mapRow(row) {
+    return mapCloudRecordToLocal(row, {
       products: typeof getProducts === "function" ? getProducts() : [],
       normalizeText,
       roundMoney,
@@ -153,7 +124,7 @@ export function createRecordsRepository({
       throw error;
     }
 
-    const items = Array.isArray(data) ? data.map((item) => mapListRow(item)).filter((item) => item !== null) : [];
+    const items = Array.isArray(data) ? data.map((item) => mapRow(item)).filter((item) => item !== null) : [];
     const total = Number.isInteger(Number(count)) && Number(count) >= 0 ? Number(count) : items.length;
     return { items, total };
   }
@@ -176,17 +147,7 @@ export function createRecordsRepository({
       throw error;
     }
 
-    const sourceRows = Array.isArray(data) ? data : [];
-    const listRows = sourceRows.map((item) => mapListRow(item)).filter((item) => item !== null);
-    const analyticsRows = sourceRows.map((item) => mapAnalyticsRow(item)).filter((item) => item !== null);
-
-    if (listRows.length > analyticsRows.length) {
-      logger.warn(
-        `[Sales Tool] 存在无法进入报表分析的历史记录：列表可显示 ${listRows.length} 条，报表可分析 ${analyticsRows.length} 条。`,
-      );
-    }
-
-    return analyticsRows;
+    return Array.isArray(data) ? data.map((item) => mapRow(item)).filter((item) => item !== null) : [];
   }
 
   async function fetchRecordsFromCloud() {
@@ -220,7 +181,7 @@ export function createRecordsRepository({
       throw error;
     }
 
-    const mapped = mapAnalyticsRow(data);
+    const mapped = mapRow(data);
     if (!mapped) {
       throw new Error("云端写入成功，但返回数据格式异常。");
     }

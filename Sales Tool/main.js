@@ -216,6 +216,7 @@ async function initializeApp() {
     reportAmountUnitId: initialReportAmountUnitId,
     activeHospitalChartKey: "",
   };
+  let listStatusTimer = null;
 
   function hydrateReportRangeInputs(domRef, stateRef) {
     const startInput = domRef.reportStartMonthInput instanceof HTMLInputElement ? domRef.reportStartMonthInput : null;
