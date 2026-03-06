@@ -1034,27 +1034,33 @@ function applyMinimalPatch(reply, findings, outputContext) {
 
 function buildQualityFallbackReply(routeCode, outputContext) {
   const safeRouteCode = trimString(routeCode) || trimString(outputContext?.route_code);
+  if (Boolean(outputContext?.overall_period_compare_mode)) {
+    return buildLocalOverallPeriodCompareReply(
+      {
+        summary: {
+          primary: {
+            sales_amount: trimString(outputContext?.tool_result_primary_sales_amount),
+            sales_volume: trimString(outputContext?.tool_result_primary_sales_volume),
+          },
+          comparison: {
+            sales_amount: trimString(outputContext?.tool_result_comparison_sales_amount),
+            sales_volume: trimString(outputContext?.tool_result_comparison_sales_volume),
+          },
+          delta: {
+            sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
+            sales_volume_change: trimString(outputContext?.tool_result_delta_sales_volume_change),
+            sales_amount_change_ratio: outputContext?.tool_result_delta_sales_amount_change_ratio,
+            sales_volume_change_ratio: outputContext?.tool_result_delta_sales_volume_change_ratio,
+          },
+        },
+      },
+      outputContext,
+    );
+  }
   if (safeRouteCode === ROUTE_DECISION_CODES.REFUSE) {
     return buildRefuseReplyTemplate(outputContext);
   }
   if (safeRouteCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
-    if (Boolean(outputContext?.overall_period_compare_mode)) {
-      return buildLocalOverallPeriodCompareReply(
-        {
-          summary: {
-            primary: {},
-            comparison: {},
-            delta: {
-              sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
-              sales_volume_change: trimString(outputContext?.tool_result_delta_sales_volume_change),
-              sales_amount_change_ratio: outputContext?.tool_result_delta_sales_amount_change_ratio,
-              sales_volume_change_ratio: outputContext?.tool_result_delta_sales_volume_change_ratio,
-            },
-          },
-        },
-        outputContext,
-      );
-    }
     return [
       "基于当前可用业务信息，可以先给出方向性判断：当前表现已有可参考信号。",
       QC_BOUNDED_BOUNDARY_TEXT,
