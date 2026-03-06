@@ -83,6 +83,7 @@ test("QC appends explicit absolute period when time intent is present but reply 
     requested_time_window_kind: "relative",
     requested_time_window_label: "近三个月",
     requested_time_window_period: "2025-10~2025-12",
+    time_compare_mode: "none",
     time_window_coverage_code: "full",
     available_time_window_period: "2025-01~2025-12",
   };
@@ -115,4 +116,66 @@ test("QC falls back to boundary reply when relative time is silently reinterpret
   assert.equal(result.qcState.action, "safe_fallback");
   assert.match(result.finalReplyText, /2025-12~2026-02/u);
   assert.match(result.finalReplyText, /2025-01~2025-12/u);
+});
+
+test("QC appends explicit comparison windows when compare reply omits absolute periods", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: true,
+    time_compare_mode: "quarter_compare",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_result_primary_period: "2025-10~2025-12",
+    tool_result_comparison_period: "2025-07~2025-09",
+    tool_result_sales_amount_change_ratio: 0.3636,
+    tool_result_sales_volume_change_ratio: 0.3157,
+  };
+
+  const result = applyQualityControl(
+    "Q4整体销售表现强于Q3，销售额和销量都有提升。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.match(result.finalReplyText, /2025-10~2025-12/u);
+  assert.match(result.finalReplyText, /2025-07~2025-09/u);
+});
+
+test("QC patches compare reply when only Q4 is mentioned but Q3 comparison exists", () => {
+  const outputContext = {
+    route_code: "direct_answer",
+    overall_period_compare_mode: true,
+    time_compare_mode: "quarter_compare",
+    requested_time_window_label: "Q4",
+    requested_time_window_period: "2025-10~2025-12",
+    requested_time_window_start_month: "2025-10",
+    requested_time_window_anchor_mode: "analysis_year",
+    comparison_time_window_label: "Q3",
+    comparison_time_window_period: "2025-07~2025-09",
+    comparison_time_window_start_month: "2025-07",
+    comparison_time_window_anchor_mode: "analysis_year",
+    tool_route_mode: "deterministic",
+    tool_result_primary_period: "2025-10~2025-12",
+    tool_result_comparison_period: "2025-07~2025-09",
+    tool_result_sales_amount_change_ratio: 0.3636,
+    tool_result_sales_volume_change_ratio: 0.3157,
+    tool_result_sales_amount_change: "+36.36%",
+    tool_result_sales_volume_change: "+31.57%",
+  };
+
+  const result = applyQualityControl(
+    "在2025-10~2025-12（Q4）期间，整体销售额达到709.22万元，表现明显走强。",
+    outputContext,
+    createRouteDecision("direct_answer"),
+  );
+
+  assert.equal(result.qcState.applied, true);
+  assert.match(result.finalReplyText, /2025-07~2025-09/u);
+  assert.match(result.finalReplyText, /Q3/u);
+  assert.match(result.finalReplyText, /36.36%|31.57%/u);
 });

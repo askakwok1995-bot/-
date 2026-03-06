@@ -2,7 +2,7 @@ import { trimString } from "./shared.js";
 import { buildToolOutputContext, buildToolCallTraceEntry, createInitialToolRuntimeState } from "./tool-runtime.js";
 import { createToolRuntimeContext, executeToolByName } from "./tool-executors.js";
 import { buildLocalDeterministicToolReply, callGeminiWithToolResult } from "./output.js";
-import { buildTimeWindowOutputContextFields } from "./time-intent.js";
+import { buildComparisonTimeWindowOutputContextFields, buildTimeWindowOutputContextFields } from "./time-intent.js";
 
 const DIRECT_TOOL_LOCAL_FALLBACK_CODES = new Set([
   "UPSTREAM_TIMEOUT",
@@ -16,6 +16,8 @@ export async function runDirectToolChat(
     message,
     businessSnapshot,
     requestedTimeWindow = null,
+    comparisonTimeWindow = null,
+    timeCompareMode = "none",
     questionJudgment,
     authToken,
     env,
@@ -43,11 +45,13 @@ export async function runDirectToolChat(
   const buildLocalDeterministicToolReplyImpl = deps.buildLocalDeterministicToolReply || buildLocalDeterministicToolReply;
   const buildTimeWindowOutputContextFieldsImpl =
     deps.buildTimeWindowOutputContextFields || buildTimeWindowOutputContextFields;
+  const buildComparisonTimeWindowOutputContextFieldsImpl =
+    deps.buildComparisonTimeWindowOutputContextFields || buildComparisonTimeWindowOutputContextFields;
 
   const runtimeContext = createToolRuntimeContextImpl(
     {
       businessSnapshot,
-      requestedTimeWindow,
+      requestedTimeWindow: trimString(route.route_type) === "overall_period_compare" ? null : requestedTimeWindow,
       authToken,
       env,
     },
@@ -103,6 +107,19 @@ export async function runDirectToolChat(
           ? `${trimString(windowInfo?.effective_start_month)}~${trimString(windowInfo?.effective_end_month)}`
           : "",
     }),
+    ...buildComparisonTimeWindowOutputContextFieldsImpl(
+      comparisonTimeWindow,
+      {
+        code: trimString(timeCompareMode) === "quarter_compare" ? "full" : "none",
+        available_start_month: trimString(windowInfo?.effective_start_month),
+        available_end_month: trimString(windowInfo?.effective_end_month),
+        available_period:
+          trimString(windowInfo?.effective_start_month) && trimString(windowInfo?.effective_end_month)
+            ? `${trimString(windowInfo?.effective_start_month)}~${trimString(windowInfo?.effective_end_month)}`
+            : "",
+      },
+      timeCompareMode,
+    ),
     tool_route_mode: "deterministic",
     tool_route_type: trimString(route.route_type),
     tool_route_name: trimString(route.tool_name),

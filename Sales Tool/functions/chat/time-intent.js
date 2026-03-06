@@ -19,6 +19,14 @@ function createEmptyRequestedTimeWindow() {
   };
 }
 
+function createEmptyTimeIntent() {
+  return {
+    requested_time_window: createEmptyRequestedTimeWindow(),
+    comparison_time_window: createEmptyRequestedTimeWindow(),
+    time_compare_mode: "none",
+  };
+}
+
 function createEmptyCoverage() {
   return {
     code: "none",
@@ -107,6 +115,12 @@ function buildAbsoluteWindow(label, startMonth, endMonth, anchorMode = "explicit
   };
 }
 
+function buildQuarterWindow(label, year, quarter, anchorMode = "explicit") {
+  const startMonth = formatYm(year, (quarter - 1) * 3 + 1);
+  const endMonth = formatYm(year, quarter * 3);
+  return buildAbsoluteWindow(label, startMonth, endMonth, anchorMode);
+}
+
 function buildBareQuarterAmbiguousWindow(label) {
   return {
     kind: "absolute",
@@ -186,6 +200,24 @@ function parseBareQuarterNumber(rawValue) {
   return mapping[value] || null;
 }
 
+function normalizeShortYear(rawValue) {
+  const numeric = Number(rawValue);
+  if (!Number.isInteger(numeric)) {
+    return null;
+  }
+  if (numeric >= 1000) {
+    return numeric;
+  }
+  if (numeric >= 0 && numeric <= 99) {
+    return 2000 + numeric;
+  }
+  return null;
+}
+
+function toQuarterNumber(rawQuarterToken) {
+  return parseBareQuarterNumber(trimString(rawQuarterToken).toUpperCase());
+}
+
 function resolveAnalysisRangeYearAnchor(rawAnalysisRange) {
   const startMonth = trimString(rawAnalysisRange?.start_month);
   const endMonth = trimString(rawAnalysisRange?.end_month);
@@ -201,6 +233,123 @@ function resolveAnalysisRangeYearAnchor(rawAnalysisRange) {
     return null;
   }
   return parsedStart.year;
+}
+
+function isFullSingleYearAnalysisRange(rawAnalysisRange) {
+  return resolveAnalysisRangeYearAnchor(rawAnalysisRange) !== null;
+}
+
+function parseQuarterExpression(rawText) {
+  const text = trimString(rawText).replace(/\s+/g, "");
+  if (!text) {
+    return null;
+  }
+
+  let matched = text.match(/^(\d{2,4})年(?:Q([1-4])|([1-4])季度|第([一二三四])季度|([一二三四])季度)$/i);
+  if (matched) {
+    return {
+      label: text,
+      year: normalizeShortYear(matched[1]),
+      quarter: toQuarterNumber(matched[2] || matched[3] || matched[4] || matched[5]),
+      explicitYear: true,
+    };
+  }
+
+  matched = text.match(/^(?:Q([1-4])|([1-4])季度|第([一二三四])季度|([一二三四])季度)$/i);
+  if (matched) {
+    return {
+      label: text,
+      year: null,
+      quarter: toQuarterNumber(matched[1] || matched[2] || matched[3] || matched[4]),
+      explicitYear: false,
+    };
+  }
+
+  return null;
+}
+
+function buildQuarterWindowFromExpression(expression, year, anchorMode = "explicit") {
+  if (!expression || !Number.isInteger(year) || !Number.isInteger(expression.quarter)) {
+    return createEmptyRequestedTimeWindow();
+  }
+  const label = expression.explicitYear ? expression.label : `Q${expression.quarter}`;
+  return buildQuarterWindow(label, year, expression.quarter, anchorMode);
+}
+
+function splitQuarterCompareOperands(message) {
+  const text = trimString(message);
+  if (!text) {
+    return null;
+  }
+
+  const directMatch = text.match(/^\s*(.+?)\s*对比\s*(.+?)\s*(?:的?情况如何|怎么样|如何|情况|表现)?\s*$/u);
+  if (directMatch) {
+    return {
+      left: trimString(directMatch[1]),
+      right: trimString(directMatch[2]),
+    };
+  }
+
+  const comparedMatch = text.match(/^\s*(.+?)\s*和\s*(.+?)\s*相比\s*(?:的?情况如何|怎么样|如何|情况|表现)?\s*$/u);
+  if (comparedMatch) {
+    return {
+      left: trimString(comparedMatch[1]),
+      right: trimString(comparedMatch[2]),
+    };
+  }
+
+  return null;
+}
+
+function parseQuarterCompareIntent(message, analysisRange) {
+  const operands = splitQuarterCompareOperands(message);
+  if (!operands) {
+    return null;
+  }
+
+  const leftExpression = parseQuarterExpression(operands.left);
+  const rightExpression = parseQuarterExpression(operands.right);
+  if (!leftExpression || !rightExpression) {
+    return null;
+  }
+
+  const analysisYear = resolveAnalysisRangeYearAnchor(analysisRange);
+  let leftYear = leftExpression.year;
+  let rightYear = rightExpression.year;
+  let anchorMode = "explicit";
+
+  if (Number.isInteger(leftYear) && !Number.isInteger(rightYear)) {
+    rightYear = leftYear;
+    anchorMode = "explicit";
+  } else if (!Number.isInteger(leftYear) && Number.isInteger(rightYear)) {
+    leftYear = rightYear;
+    anchorMode = "explicit";
+  } else if (!Number.isInteger(leftYear) && !Number.isInteger(rightYear)) {
+    if (!Number.isInteger(analysisYear) || !isFullSingleYearAnalysisRange(analysisRange)) {
+      return {
+        requested_time_window: buildBareQuarterAmbiguousWindow(leftExpression.label || "Q" + leftExpression.quarter),
+        comparison_time_window: buildBareQuarterAmbiguousWindow(rightExpression.label || "Q" + rightExpression.quarter),
+        time_compare_mode: "quarter_compare",
+      };
+    }
+    leftYear = analysisYear;
+    rightYear = analysisYear;
+    anchorMode = "analysis_year";
+  }
+
+  if (!Number.isInteger(leftYear) || !Number.isInteger(rightYear)) {
+    return {
+      requested_time_window: buildBareQuarterAmbiguousWindow(leftExpression.label || "Q" + leftExpression.quarter),
+      comparison_time_window: buildBareQuarterAmbiguousWindow(rightExpression.label || "Q" + rightExpression.quarter),
+      time_compare_mode: "quarter_compare",
+    };
+  }
+
+  return {
+    requested_time_window: buildQuarterWindowFromExpression(leftExpression, leftYear, leftExpression.explicitYear ? "explicit" : anchorMode),
+    comparison_time_window: buildQuarterWindowFromExpression(rightExpression, rightYear, rightExpression.explicitYear ? "explicit" : anchorMode),
+    time_compare_mode: "quarter_compare",
+  };
 }
 
 function parseAbsoluteTimeWindow(message, analysisRange) {
@@ -309,14 +458,31 @@ function parseRelativeTimeWindow(message, currentYm) {
 }
 
 export function parseRequestedTimeWindow(message, options = {}) {
+  const intent = parseTimeIntent(message, options);
+  return intent.requested_time_window;
+}
+
+export function parseTimeIntent(message, options = {}) {
+  const compareIntent = parseQuarterCompareIntent(message, options.analysisRange);
+  if (compareIntent) {
+    return compareIntent;
+  }
   const now = options.now instanceof Date ? options.now : new Date();
   const timeZone = trimString(options.timeZone) || DEFAULT_TIMEZONE;
   const absoluteWindow = parseAbsoluteTimeWindow(message, options.analysisRange);
   if (absoluteWindow.kind !== "none") {
-    return absoluteWindow;
+    return {
+      requested_time_window: absoluteWindow,
+      comparison_time_window: createEmptyRequestedTimeWindow(),
+      time_compare_mode: "none",
+    };
   }
   const currentYm = getCurrentYearMonth(now, timeZone);
-  return parseRelativeTimeWindow(message, currentYm);
+  return {
+    requested_time_window: parseRelativeTimeWindow(message, currentYm),
+    comparison_time_window: createEmptyRequestedTimeWindow(),
+    time_compare_mode: "none",
+  };
 }
 
 export function buildTimeWindowCoverage(requestedTimeWindow, businessSnapshot) {
@@ -410,6 +576,47 @@ export function buildTimeWindowOutputContextFields(requestedTimeWindow, coverage
   };
 }
 
+export function buildComparisonTimeWindowOutputContextFields(comparisonTimeWindow, coverage, timeCompareMode = "none") {
+  return {
+    comparison_time_window_kind: trimString(comparisonTimeWindow?.kind) || "none",
+    comparison_time_window_label: trimString(comparisonTimeWindow?.label),
+    comparison_time_window_start_month: trimString(comparisonTimeWindow?.start_month),
+    comparison_time_window_end_month: trimString(comparisonTimeWindow?.end_month),
+    comparison_time_window_period: trimString(comparisonTimeWindow?.period),
+    comparison_time_window_anchor_mode: trimString(comparisonTimeWindow?.anchor_mode) || "none",
+    comparison_time_window_coverage_code: trimString(coverage?.code) || "none",
+    comparison_available_time_window_start_month: trimString(coverage?.available_start_month),
+    comparison_available_time_window_end_month: trimString(coverage?.available_end_month),
+    comparison_available_time_window_period: trimString(coverage?.available_period),
+    time_compare_mode: trimString(timeCompareMode) || "none",
+  };
+}
+
+function listAvailableSuggestionWindow(requestedTimeWindow, coverage) {
+  const availableStart = trimString(coverage?.available_start_month);
+  const availableEnd = trimString(coverage?.available_end_month);
+  const requestedStart = trimString(requestedTimeWindow?.start_month);
+  const requestedEnd = trimString(requestedTimeWindow?.end_month);
+  if (!availableStart || !availableEnd) {
+    return "";
+  }
+  if (!requestedStart || !requestedEnd) {
+    return buildPeriod(availableStart, availableEnd);
+  }
+  const parsedStart = parseYm(requestedStart);
+  const parsedEnd = parseYm(requestedEnd);
+  const parsedAvailableStart = parseYm(availableStart);
+  const parsedAvailableEnd = parseYm(availableEnd);
+  if (!parsedStart || !parsedEnd || !parsedAvailableStart || !parsedAvailableEnd) {
+    return buildPeriod(availableStart, availableEnd);
+  }
+  const span = Math.max(1, (parsedEnd.year - parsedStart.year) * 12 + (parsedEnd.month - parsedStart.month) + 1);
+  const availableSpan = Math.max(1, (parsedAvailableEnd.year - parsedAvailableStart.year) * 12 + (parsedAvailableEnd.month - parsedAvailableStart.month) + 1);
+  const safeSpan = Math.min(span, availableSpan);
+  const suggestedStart = addMonthsToYm(availableEnd, -(safeSpan - 1));
+  return buildPeriod(suggestedStart, availableEnd);
+}
+
 export function buildTimeWindowBoundaryReply({ requestedTimeWindow, coverage }) {
   const label = trimString(requestedTimeWindow?.label) || "该时间范围";
   const requestedPeriod = trimString(requestedTimeWindow?.period);
@@ -426,23 +633,86 @@ export function buildTimeWindowBoundaryReply({ requestedTimeWindow, coverage }) 
   if (!requestedPeriod || !availablePeriod) {
     return "当前时间范围无法与现有分析区间对齐，我先不直接改写时间口径来回答。若你希望，我可以按当前报表范围内的时间来分析。";
   }
+  const suggestedPeriod = listAvailableSuggestionWindow(requestedTimeWindow, coverage);
+  const suggestionLine = suggestedPeriod
+    ? `如果你希望，我可以按当前报表范围内最近可用时间来分析，例如按 ${suggestedPeriod} 来看。`
+    : "如果你希望，我可以按当前报表范围内最近可用时间来分析。";
   return [
     `按真实时间口径，“${label}”指 ${requestedPeriod}。`,
     `当前可用分析区间为 ${availablePeriod}，当前区间无法完整覆盖你的时间请求，因此我先不直接把它改写为当前报表尾部时间来回答。`,
-    "若你希望，我可以按当前报表范围内的时间来分析。",
+    suggestionLine,
+  ].join("\n");
+}
+
+export function buildTimeCompareBoundaryReply({
+  requestedTimeWindow,
+  comparisonTimeWindow,
+  primaryCoverage,
+  comparisonCoverage,
+  timeCompareMode,
+}) {
+  const requestedLabel = trimString(requestedTimeWindow?.label) || "主窗口";
+  const comparisonLabel = trimString(comparisonTimeWindow?.label) || "对比窗口";
+  const requestedPeriod = trimString(requestedTimeWindow?.period);
+  const comparisonPeriod = trimString(comparisonTimeWindow?.period);
+  const availablePeriod = trimString(primaryCoverage?.available_period) || trimString(comparisonCoverage?.available_period);
+  const anchorMode =
+    trimString(requestedTimeWindow?.anchor_mode) === "none" || trimString(comparisonTimeWindow?.anchor_mode) === "none"
+      ? "none"
+      : trimString(requestedTimeWindow?.anchor_mode) || trimString(comparisonTimeWindow?.anchor_mode);
+
+  if (trimString(timeCompareMode) === "quarter_compare" && anchorMode === "none") {
+    return [
+      `你提到的是未写年份的季度对比（${requestedLabel} 对 ${comparisonLabel}）。`,
+      `当前可用分析区间为 ${availablePeriod || "当前报表区间"}，暂时无法唯一确定这两个季度所属年份，因此我先不替你自动选年份。`,
+      "若你希望，我可以按当前报表所在年份的 Q4 和 Q3 来分析。",
+    ].join("\n");
+  }
+
+  return [
+    `本轮对比请求的时间区间分别为 ${requestedPeriod || requestedLabel} 和 ${comparisonPeriod || comparisonLabel}。`,
+    `当前可用分析区间为 ${availablePeriod || "当前报表区间"}，两段时间未被完整覆盖，因此我先不自动改写成报表尾部可比窗口来回答。`,
+    "如果你希望，我可以按当前报表范围内可完整覆盖的时间窗口重新做对比分析。",
   ].join("\n");
 }
 
 export function buildTimeWindowBoundaryReplyFromOutputContext(outputContext) {
+  const timeCompareMode = trimString(outputContext?.time_compare_mode);
+  if (timeCompareMode !== "none") {
+    return buildTimeCompareBoundaryReply({
+      requestedTimeWindow: {
+        label: trimString(outputContext?.requested_time_window_label),
+        period: trimString(outputContext?.requested_time_window_period),
+        anchor_mode: trimString(outputContext?.requested_time_window_anchor_mode),
+      },
+      comparisonTimeWindow: {
+        label: trimString(outputContext?.comparison_time_window_label),
+        period: trimString(outputContext?.comparison_time_window_period),
+        anchor_mode: trimString(outputContext?.comparison_time_window_anchor_mode),
+      },
+      primaryCoverage: {
+        available_period: trimString(outputContext?.available_time_window_period),
+      },
+      comparisonCoverage: {
+        available_period: trimString(outputContext?.comparison_available_time_window_period),
+      },
+      timeCompareMode,
+    });
+  }
   return buildTimeWindowBoundaryReply({
     requestedTimeWindow: {
       kind: trimString(outputContext?.requested_time_window_kind),
       label: trimString(outputContext?.requested_time_window_label),
       period: trimString(outputContext?.requested_time_window_period),
       anchor_mode: trimString(outputContext?.requested_time_window_anchor_mode),
+      start_month: trimString(outputContext?.requested_time_window_start_month),
+      end_month: trimString(outputContext?.requested_time_window_end_month),
     },
     coverage: {
+      code: trimString(outputContext?.time_window_coverage_code),
       available_period: trimString(outputContext?.available_time_window_period),
+      available_start_month: trimString(outputContext?.available_time_window_start_month),
+      available_end_month: trimString(outputContext?.available_time_window_end_month),
     },
   });
 }

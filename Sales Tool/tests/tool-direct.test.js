@@ -164,3 +164,97 @@ test("runDirectToolChat uses local deterministic fallback for overall time-windo
   assert.match(result.reply, /300.00万元/u);
   assert.match(result.reply, /2025-10/u);
 });
+
+test("runDirectToolChat uses local deterministic fallback for overall period compare replies", async () => {
+  const result = await runDirectToolChat(
+    {
+      message: "25年Q4对比Q3的情况如何",
+      businessSnapshot: {
+        analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+      },
+      requestedTimeWindow: {
+        kind: "absolute",
+        label: "25年Q4",
+        start_month: "2025-10",
+        end_month: "2025-12",
+        period: "2025-10~2025-12",
+        anchor_mode: "explicit",
+      },
+      comparisonTimeWindow: {
+        kind: "absolute",
+        label: "Q3",
+        start_month: "2025-07",
+        end_month: "2025-09",
+        period: "2025-07~2025-09",
+        anchor_mode: "explicit",
+      },
+      timeCompareMode: "quarter_compare",
+      questionJudgment: {
+        primary_dimension: { code: "overall", label: "整体" },
+        granularity: { code: "summary", label: "摘要级" },
+      },
+      authToken: "token",
+      env: {},
+      requestId: "req-overall-compare-fallback",
+      deterministicToolRoute: {
+        matched: true,
+        route_type: "overall_period_compare",
+        tool_name: "get_period_comparison_summary",
+        tool_args: {
+          primary_start_month: "2025-10",
+          primary_end_month: "2025-12",
+          comparison_start_month: "2025-07",
+          comparison_end_month: "2025-09",
+          dimension: "overall",
+        },
+      },
+    },
+    {
+      createToolRuntimeContext: () => ({
+        getWindowInfo: async () => ({
+          valid: true,
+          effective_start_month: "2025-01",
+          effective_end_month: "2025-12",
+        }),
+      }),
+      executeToolByName: async () => ({
+        result: {
+          range: { start_month: "2025-10", end_month: "2025-12", period: "2025-10~2025-12" },
+          comparison_range: { start_month: "2025-07", end_month: "2025-09", period: "2025-07~2025-09" },
+          coverage: { code: "full", message: "" },
+          matched_entities: { products: [], hospitals: [] },
+          unmatched_entities: { products: [], hospitals: [] },
+          summary: {
+            primary: { sales_amount: "709.22万元", sales_amount_value: 7092200, sales_volume: "5539盒", sales_volume_value: 5539 },
+            comparison: { sales_amount: "520.10万元", sales_amount_value: 5201000, sales_volume: "4210盒", sales_volume_value: 4210 },
+            delta: {
+              sales_amount_change_ratio: 0.3636,
+              sales_volume_change_ratio: 0.3157,
+              sales_amount_change: "+36.36%",
+              sales_volume_change: "+31.57%",
+            },
+          },
+          rows: [],
+        },
+        meta: {
+          detail_request_mode: "overall_period_compare",
+          coverage_code: "full",
+          primary_period: "2025-10~2025-12",
+          comparison_period: "2025-07~2025-09",
+        },
+      }),
+      callGeminiWithToolResult: async () => ({
+        ok: false,
+        code: "UPSTREAM_ERROR",
+      }),
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "local-template-tool-fallback");
+  assert.equal(result.outputContext.local_response_mode, "tool_result_fallback");
+  assert.equal(result.outputContext.tool_route_type, "overall_period_compare");
+  assert.match(result.reply, /2025-10~2025-12/u);
+  assert.match(result.reply, /2025-07~2025-09/u);
+  assert.match(result.reply, /36.36%|31.57%/u);
+});

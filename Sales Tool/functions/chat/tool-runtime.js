@@ -167,6 +167,12 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
   const matchedHospitals = Array.isArray(lastToolResult?.meta?.matched_hospitals) ? lastToolResult.meta.matched_hospitals : [];
   const matchedProducts = Array.isArray(lastToolResult?.meta?.matched_products) ? lastToolResult.meta.matched_products : [];
   const rows = Array.isArray(lastToolResult?.result?.rows) ? lastToolResult.result.rows : [];
+  const comparisonRange = lastToolResult?.result?.comparison_range && typeof lastToolResult.result.comparison_range === "object"
+    ? lastToolResult.result.comparison_range
+    : {};
+  const deltaSummary = lastToolResult?.result?.summary?.delta && typeof lastToolResult.result.summary.delta === "object"
+    ? lastToolResult.result.summary.delta
+    : {};
   const rowNames = rows
     .map((row) => trimString(row?.hospital_name || row?.product_name || row?.period))
     .filter((item) => item)
@@ -182,6 +188,7 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
     hospital_named_detail_mode: detailRequestMode === "hospital_named",
     product_full_detail_mode: detailRequestMode === "product_full",
     product_named_detail_mode: detailRequestMode === "product_named",
+    overall_period_compare_mode: detailRequestMode === "overall_period_compare",
     product_hospital_support_code:
       detailRequestMode === "product_hospital" ? trimString(lastToolResult?.meta?.coverage_code) : "",
     product_hospital_hospital_count_value:
@@ -205,6 +212,13 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
     tool_result_row_count_value: rows.length,
     tool_result_row_names: rowNames,
     tool_result_matched_products: matchedProducts.slice(0, 5),
+    tool_result_primary_period: trimString(lastToolResult?.meta?.primary_period) || trimString(lastToolResult?.result?.range?.period),
+    tool_result_comparison_period: trimString(lastToolResult?.meta?.comparison_period) || trimString(comparisonRange?.period),
+    tool_result_delta_sales_amount_change_ratio: lastToolResult?.result?.summary?.delta?.sales_amount_change_ratio,
+    tool_result_delta_sales_volume_change_ratio: lastToolResult?.result?.summary?.delta?.sales_volume_change_ratio,
+    tool_result_delta_achievement_change_ratio: lastToolResult?.result?.summary?.delta?.achievement_change_ratio,
+    tool_result_delta_sales_amount_change: trimString(deltaSummary?.sales_amount_change),
+    tool_result_delta_sales_volume_change: trimString(deltaSummary?.sales_volume_change),
   };
 }
 

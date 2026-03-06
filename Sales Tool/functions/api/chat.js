@@ -40,10 +40,12 @@ import { buildDeterministicToolRoute } from "../chat/tool-router.js";
 import { runDirectToolChat } from "../chat/tool-direct.js";
 import {
   applyRequestedTimeWindowToSnapshot,
+  buildComparisonTimeWindowOutputContextFields,
+  buildTimeCompareBoundaryReply,
   buildTimeWindowBoundaryReply,
   buildTimeWindowCoverage,
   buildTimeWindowOutputContextFields,
-  parseRequestedTimeWindow,
+  parseTimeIntent,
 } from "../chat/time-intent.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
@@ -201,6 +203,19 @@ function createEmptySessionStateTraceValue() {
 }
 
 function buildToolPathDataAvailability(outputContext = {}) {
+  const detailRequestMode = Boolean(outputContext?.overall_period_compare_mode)
+    ? "overall_period_compare"
+    : Boolean(outputContext?.product_hospital_detail_mode)
+      ? "product_hospital"
+      : Boolean(outputContext?.hospital_monthly_detail_mode)
+        ? "hospital_monthly"
+        : Boolean(outputContext?.hospital_named_detail_mode)
+          ? "hospital_named"
+          : Boolean(outputContext?.product_full_detail_mode)
+            ? "product_full"
+            : Boolean(outputContext?.product_named_detail_mode)
+              ? "product_named"
+              : "generic";
   return {
     has_business_data: { code: "available", label: "有" },
     dimension_availability: {
@@ -212,17 +227,7 @@ function buildToolPathDataAvailability(outputContext = {}) {
       code: Boolean(outputContext?.boundary_needed) ? "yes" : "no",
       label: "",
     },
-    detail_request_mode: Boolean(outputContext?.product_hospital_detail_mode)
-      ? "product_hospital"
-      : Boolean(outputContext?.hospital_monthly_detail_mode)
-        ? "hospital_monthly"
-        : Boolean(outputContext?.hospital_named_detail_mode)
-          ? "hospital_named"
-          : Boolean(outputContext?.product_full_detail_mode)
-            ? "product_full"
-            : Boolean(outputContext?.product_named_detail_mode)
-              ? "product_named"
-              : "generic",
+    detail_request_mode: detailRequestMode,
     hospital_monthly_support: Boolean(outputContext?.hospital_monthly_detail_mode) ? "full" : "none",
     product_hospital_support: trimString(outputContext?.product_hospital_support_code),
     hospital_named_support: trimString(outputContext?.hospital_named_support_code),
@@ -318,13 +323,16 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const createInitialToolRuntimeStateImpl = deps.createInitialToolRuntimeState || createInitialToolRuntimeState;
   const buildDeterministicToolRouteImpl = deps.buildDeterministicToolRoute || buildDeterministicToolRoute;
   const runDirectToolChatImpl = deps.runDirectToolChat || runDirectToolChat;
-  const parseRequestedTimeWindowImpl = deps.parseRequestedTimeWindow || parseRequestedTimeWindow;
+  const parseTimeIntentImpl = deps.parseTimeIntent || parseTimeIntent;
   const buildTimeWindowCoverageImpl = deps.buildTimeWindowCoverage || buildTimeWindowCoverage;
   const applyRequestedTimeWindowToSnapshotImpl =
     deps.applyRequestedTimeWindowToSnapshot || applyRequestedTimeWindowToSnapshot;
   const buildTimeWindowBoundaryReplyImpl = deps.buildTimeWindowBoundaryReply || buildTimeWindowBoundaryReply;
+  const buildTimeCompareBoundaryReplyImpl = deps.buildTimeCompareBoundaryReply || buildTimeCompareBoundaryReply;
   const buildTimeWindowOutputContextFieldsImpl =
     deps.buildTimeWindowOutputContextFields || buildTimeWindowOutputContextFields;
+  const buildComparisonTimeWindowOutputContextFieldsImpl =
+    deps.buildComparisonTimeWindowOutputContextFields || buildComparisonTimeWindowOutputContextFields;
   let stage = "auth";
 
   try {
@@ -358,10 +366,36 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const questionJudgment = buildQuestionJudgmentImpl(message);
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
-    const requestedTimeWindow = parseRequestedTimeWindowImpl(message, {
+    const timeIntent = parseTimeIntentImpl(message, {
       analysisRange: normalizedBusinessSnapshot?.analysis_range,
     });
+    const requestedTimeWindow = timeIntent?.requested_time_window || {
+      kind: "none",
+      label: "",
+      start_month: "",
+      end_month: "",
+      period: "",
+      anchor_mode: "none",
+    };
+    const comparisonTimeWindow = timeIntent?.comparison_time_window || {
+      kind: "none",
+      label: "",
+      start_month: "",
+      end_month: "",
+      period: "",
+      anchor_mode: "none",
+    };
+    const timeCompareMode = trimString(timeIntent?.time_compare_mode) || "none";
     const timeWindowCoverage = buildTimeWindowCoverageImpl(requestedTimeWindow, normalizedBusinessSnapshot);
+    const comparisonTimeWindowCoverage =
+      timeCompareMode !== "none"
+        ? buildTimeWindowCoverageImpl(comparisonTimeWindow, normalizedBusinessSnapshot)
+        : {
+            code: "none",
+            available_start_month: trimString(normalizedBusinessSnapshot?.analysis_range?.start_month),
+            available_end_month: trimString(normalizedBusinessSnapshot?.analysis_range?.end_month),
+            available_period: trimString(normalizedBusinessSnapshot?.analysis_range?.period),
+          };
     const sessionState = buildSessionStateImpl(message, historyWindow, questionJudgment);
 
     if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
@@ -392,16 +426,93 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
     const requestedTimeWindowFields = buildTimeWindowOutputContextFieldsImpl(requestedTimeWindow, timeWindowCoverage);
+    const comparisonTimeWindowFields = buildComparisonTimeWindowOutputContextFieldsImpl(
+      comparisonTimeWindow,
+      comparisonTimeWindowCoverage,
+      timeCompareMode,
+    );
 
     const requestedTimeWindowKind = trimString(requestedTimeWindow?.kind);
     const requestedTimeWindowAnchorMode = trimString(requestedTimeWindow?.anchor_mode);
     const requestedTimeWindowHasExecutableRange =
       Boolean(trimString(requestedTimeWindow?.start_month)) && Boolean(trimString(requestedTimeWindow?.end_month));
+    const requestedTimeWindowIsAmbiguous =
+      requestedTimeWindowKind === "absolute" && requestedTimeWindowAnchorMode === "none";
+    const comparisonTimeWindowKind = trimString(comparisonTimeWindow?.kind);
+    const comparisonTimeWindowAnchorMode = trimString(comparisonTimeWindow?.anchor_mode);
+    const comparisonTimeWindowHasExecutableRange =
+      Boolean(trimString(comparisonTimeWindow?.start_month)) && Boolean(trimString(comparisonTimeWindow?.end_month));
+    const comparisonTimeWindowIsAmbiguous =
+      comparisonTimeWindowKind === "absolute" && comparisonTimeWindowAnchorMode === "none";
+
+    if (
+      timeCompareMode !== "none" &&
+      (
+        !requestedTimeWindowHasExecutableRange ||
+        !comparisonTimeWindowHasExecutableRange ||
+        requestedTimeWindowIsAmbiguous ||
+        comparisonTimeWindowIsAmbiguous ||
+        trimString(timeWindowCoverage?.code) !== "full" ||
+        trimString(comparisonTimeWindowCoverage?.code) !== "full"
+      )
+    ) {
+      const routeDecision = buildTimeBoundaryRouteDecision();
+      const dataAvailability = buildTimeBoundaryDataAvailability();
+      stage = "output";
+      const outputContext = {
+        ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
+        ...requestedTimeWindowFields,
+        ...comparisonTimeWindowFields,
+        local_response_mode: "time_boundary",
+      };
+      const replyDraft = normalizeOutputReplyImpl(
+        buildTimeCompareBoundaryReplyImpl({
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          primaryCoverage: timeWindowCoverage,
+          comparisonCoverage: comparisonTimeWindowCoverage,
+          timeCompareMode,
+        }),
+      );
+      stage = "qc";
+      const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
+      const phase2Trace = buildPhase2TraceImpl({
+        requestId,
+        questionJudgment,
+        dataAvailability,
+        sessionState,
+        routeDecision,
+        retrievalState: createInitialRetrievalStateImpl(),
+        outputContext,
+        forcedBounded: false,
+        qcState: qcResult.qcState,
+        toolRouteMode: "legacy",
+        toolRouteType: "none",
+        toolRouteName: "",
+        toolRouteFallbackReason:
+          (!requestedTimeWindowHasExecutableRange || !comparisonTimeWindowHasExecutableRange || requestedTimeWindowIsAmbiguous || comparisonTimeWindowIsAmbiguous)
+            ? "time_compare_year_ambiguous"
+            : "time_compare_not_fully_covered",
+      });
+      logPhase2TraceImpl(phase2Trace, context.env);
+      return jsonResponse(
+        {
+          reply: qcResult.finalReplyText,
+          surfaceReply: qcResult.finalReplyText,
+          responseAction: "natural_answer",
+          businessIntent: "chat",
+          model: "local-template-time-boundary",
+          requestId,
+        },
+        200,
+        requestId,
+      );
+    }
 
     if (
       requestedTimeWindowKind !== "none" &&
       (!requestedTimeWindowHasExecutableRange ||
-        requestedTimeWindowAnchorMode === "none" ||
+        requestedTimeWindowIsAmbiguous ||
         trimString(timeWindowCoverage?.code) !== "full")
     ) {
       const routeDecision = buildTimeBoundaryRouteDecision();
@@ -410,6 +521,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       const outputContext = {
         ...buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability),
         ...requestedTimeWindowFields,
+        ...comparisonTimeWindowFields,
         local_response_mode: "time_boundary",
       };
       const replyDraft = normalizeOutputReplyImpl(
@@ -434,7 +546,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         toolRouteType: "none",
         toolRouteName: "",
         toolRouteFallbackReason:
-          requestedTimeWindowKind !== "none" && !requestedTimeWindowHasExecutableRange
+          requestedTimeWindowKind !== "none" && (!requestedTimeWindowHasExecutableRange || requestedTimeWindowIsAmbiguous)
             ? "time_window_year_ambiguous"
             : "time_window_not_fully_covered",
       });
@@ -454,7 +566,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     const scopedBusinessSnapshot =
-      requestedTimeWindowKind !== "none" && trimString(timeWindowCoverage?.code) === "full"
+      timeCompareMode === "none" && requestedTimeWindowKind !== "none" && trimString(timeWindowCoverage?.code) === "full"
         ? applyRequestedTimeWindowToSnapshotImpl(normalizedBusinessSnapshot, requestedTimeWindow)
         : normalizedBusinessSnapshot;
 
@@ -501,6 +613,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       message,
       questionJudgment,
       requestedTimeWindow,
+      comparisonTimeWindow,
+      timeCompareMode,
+      primaryWindowCoverageCode: trimString(timeWindowCoverage?.code),
+      comparisonWindowCoverageCode: trimString(comparisonTimeWindowCoverage?.code),
       productFullRequested,
       hospitalMonthlyDetailRequested,
       productNamedContext,
@@ -521,6 +637,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           message,
           businessSnapshot: scopedBusinessSnapshot,
           requestedTimeWindow,
+          comparisonTimeWindow,
+          timeCompareMode,
           questionJudgment,
           authToken: authResult.token,
           env: context.env,
@@ -539,6 +657,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         const outputContext = {
           ...directToolResult.outputContext,
           ...requestedTimeWindowFields,
+          ...comparisonTimeWindowFields,
           local_response_mode: trimString(directToolResult.outputContext?.local_response_mode) || "none",
         };
         const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
@@ -596,6 +715,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         const outputContext = {
           ...toolFirstResult.outputContext,
           ...requestedTimeWindowFields,
+          ...comparisonTimeWindowFields,
           local_response_mode: trimString(toolFirstResult.outputContext?.local_response_mode) || "none",
         };
         const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
@@ -723,6 +843,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const outputContext = {
       ...buildOutputContextImpl(routeDecision, effectiveQuestionJudgment, dataAvailability),
       ...requestedTimeWindowFields,
+      ...comparisonTimeWindowFields,
     };
     let modelReplyText = "";
     let responseModel = "local-template-refuse";

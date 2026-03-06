@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyRequestedTimeWindowToSnapshot,
   buildTimeWindowCoverage,
+  parseTimeIntent,
   parseRequestedTimeWindow,
 } from "../functions/chat/time-intent.js";
 import { createToolRuntimeContext } from "../functions/chat/tool-executors.js";
@@ -52,6 +53,42 @@ test("parseRequestedTimeWindow anchors bare quarter to analysis year only when a
   assert.equal(ambiguousQuarter.kind, "absolute");
   assert.equal(ambiguousQuarter.period, "");
   assert.equal(ambiguousQuarter.anchor_mode, "none");
+});
+
+test("parseTimeIntent resolves quarter compare using explicit or analysis-year anchors", () => {
+  const explicitCompare = parseTimeIntent("25年Q4对比Q3", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(explicitCompare.time_compare_mode, "quarter_compare");
+  assert.equal(explicitCompare.requested_time_window.period, "2025-10~2025-12");
+  assert.equal(explicitCompare.comparison_time_window.period, "2025-07~2025-09");
+
+  const analysisAnchoredCompare = parseTimeIntent("Q4对比Q3", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-01",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(analysisAnchoredCompare.requested_time_window.period, "2025-10~2025-12");
+  assert.equal(analysisAnchoredCompare.comparison_time_window.period, "2025-07~2025-09");
+  assert.equal(analysisAnchoredCompare.requested_time_window.anchor_mode, "analysis_year");
+
+  const ambiguousCompare = parseTimeIntent("Q4对比Q3", {
+    now: FIXED_NOW,
+    analysisRange: {
+      start_month: "2025-04",
+      end_month: "2025-12",
+    },
+  });
+  assert.equal(ambiguousCompare.time_compare_mode, "quarter_compare");
+  assert.equal(ambiguousCompare.requested_time_window.period, "");
+  assert.equal(ambiguousCompare.comparison_time_window.period, "");
+  assert.equal(ambiguousCompare.requested_time_window.anchor_mode, "none");
 });
 
 test("buildTimeWindowCoverage distinguishes full partial and none", () => {

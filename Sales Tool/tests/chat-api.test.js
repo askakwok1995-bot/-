@@ -335,12 +335,24 @@ test("handleChatRequest returns time boundary reply when requested real-world wi
   let legacyAvailabilityCalled = false;
   const response = await handleChatRequest(context, "req-time-boundary", {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
-    parseRequestedTimeWindow: () => ({
-      kind: "relative",
-      label: "近三个月",
-      start_month: "2025-12",
-      end_month: "2026-02",
-      period: "2025-12~2026-02",
+    parseTimeIntent: () => ({
+      requested_time_window: {
+        kind: "relative",
+        label: "近三个月",
+        start_month: "2025-12",
+        end_month: "2026-02",
+        period: "2025-12~2026-02",
+        anchor_mode: "none",
+      },
+      comparison_time_window: {
+        kind: "none",
+        label: "",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      time_compare_mode: "none",
     }),
     buildTimeWindowCoverage: () => ({
       code: "partial",
@@ -394,13 +406,24 @@ test("handleChatRequest returns year-ambiguous quarter boundary reply before too
   let autoToolCalled = false;
   const response = await handleChatRequest(context, "req-quarter-ambiguous", {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
-    parseRequestedTimeWindow: () => ({
-      kind: "absolute",
-      label: "Q4季度",
-      start_month: "",
-      end_month: "",
-      period: "",
-      anchor_mode: "none",
+    parseTimeIntent: () => ({
+      requested_time_window: {
+        kind: "absolute",
+        label: "Q4季度",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      comparison_time_window: {
+        kind: "none",
+        label: "",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      time_compare_mode: "none",
     }),
     runDirectToolChat: async () => {
       directToolCalled = true;
@@ -441,12 +464,24 @@ test("handleChatRequest passes requested subwindow snapshot into deterministic t
   let observedSnapshotPeriod = "";
   const response = await handleChatRequest(context, "req-time-full", {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
-    parseRequestedTimeWindow: () => ({
-      kind: "relative",
-      label: "近三个月",
-      start_month: "2025-10",
-      end_month: "2025-12",
-      period: "2025-10~2025-12",
+    parseTimeIntent: () => ({
+      requested_time_window: {
+        kind: "relative",
+        label: "近三个月",
+        start_month: "2025-10",
+        end_month: "2025-12",
+        period: "2025-10~2025-12",
+        anchor_mode: "none",
+      },
+      comparison_time_window: {
+        kind: "none",
+        label: "",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      time_compare_mode: "none",
     }),
     buildTimeWindowCoverage: () => ({
       code: "full",
@@ -486,6 +521,157 @@ test("handleChatRequest passes requested subwindow snapshot into deterministic t
   assert.equal(response.status, 200);
   assert.equal(observedSnapshotPeriod, "2025-10~2025-12");
   assert.match(payload.reply, /2025-10~2025-12/u);
+});
+
+test("handleChatRequest returns compare boundary reply when quarter compare cannot anchor a unique year", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Q4对比Q3的情况如何",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-04", end_month: "2025-12", period: "2025-04~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let directToolCalled = false;
+  let autoToolCalled = false;
+  let legacyAvailabilityCalled = false;
+  const response = await handleChatRequest(context, "req-quarter-compare-ambiguous", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    parseTimeIntent: () => ({
+      requested_time_window: {
+        kind: "absolute",
+        label: "Q4",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      comparison_time_window: {
+        kind: "absolute",
+        label: "Q3",
+        start_month: "",
+        end_month: "",
+        period: "",
+        anchor_mode: "none",
+      },
+      time_compare_mode: "quarter_compare",
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return { ok: false };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false };
+    },
+    buildDataAvailability: () => {
+      legacyAvailabilityCalled = true;
+      return {};
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "local-template-time-boundary");
+  assert.equal(directToolCalled, false);
+  assert.equal(autoToolCalled, false);
+  assert.equal(legacyAvailabilityCalled, false);
+  assert.match(payload.reply, /未写年份的季度对比|无法唯一确定/u);
+});
+
+test("handleChatRequest routes quarter compare deterministically before AUTO tool-first", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "25年Q4对比Q3的情况如何",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let autoToolCalled = false;
+  let directToolCalled = false;
+  const response = await handleChatRequest(context, "req-quarter-compare-deterministic", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    parseTimeIntent: () => ({
+      requested_time_window: {
+        kind: "absolute",
+        label: "25年Q4",
+        start_month: "2025-10",
+        end_month: "2025-12",
+        period: "2025-10~2025-12",
+        anchor_mode: "explicit",
+      },
+      comparison_time_window: {
+        kind: "absolute",
+        label: "Q3",
+        start_month: "2025-07",
+        end_month: "2025-09",
+        period: "2025-07~2025-09",
+        anchor_mode: "explicit",
+      },
+      time_compare_mode: "quarter_compare",
+    }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "overall_period_compare",
+      tool_name: "get_period_comparison_summary",
+      tool_args: {
+        primary_start_month: "2025-10",
+        primary_end_month: "2025-12",
+        comparison_start_month: "2025-07",
+        comparison_end_month: "2025-09",
+        dimension: "overall",
+      },
+    }),
+    runDirectToolChat: async ({ requestedTimeWindow, comparisonTimeWindow, timeCompareMode }) => {
+      directToolCalled = true;
+      assert.equal(requestedTimeWindow.period, "2025-10~2025-12");
+      assert.equal(comparisonTimeWindow.period, "2025-07~2025-09");
+      assert.equal(timeCompareMode, "quarter_compare");
+      return {
+        ok: true,
+        reply: "按 2025-10~2025-12 对比 2025-07~2025-09 来看，Q4整体表现更强。",
+        model: "deterministic-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          boundary_needed: false,
+          refuse_mode: false,
+          overall_period_compare_mode: true,
+        },
+        toolRuntimeState: { attempted: true, success: true },
+        toolCallTrace: [],
+      };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return { ok: false };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(directToolCalled, true);
+  assert.equal(autoToolCalled, false);
+  assert.match(payload.reply, /2025-10~2025-12/u);
+  assert.match(payload.reply, /2025-07~2025-09/u);
 });
 
 test("handleChatRequest uses deterministic direct-tool route before AUTO tool-first", async () => {

@@ -4,6 +4,7 @@ export const TOOL_NAMES = Object.freeze({
   GET_HOSPITAL_SUMMARY: "get_hospital_summary",
   GET_PRODUCT_HOSPITAL_CONTRIBUTION: "get_product_hospital_contribution",
   GET_TREND_SUMMARY: "get_trend_summary",
+  GET_PERIOD_COMPARISON_SUMMARY: "get_period_comparison_summary",
 });
 
 function arrayOfStringsSchema(description) {
@@ -108,6 +109,43 @@ export function buildToolDeclarations() {
           },
         },
         required: ["dimension"],
+      },
+    },
+    {
+      name: TOOL_NAMES.GET_PERIOD_COMPARISON_SUMMARY,
+      description: "获取当前报表区间内两个时间窗口的整体对比摘要，可用于季度对比。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          primary_start_month: {
+            type: "STRING",
+            description: "主窗口起始月份，格式 YYYY-MM。",
+          },
+          primary_end_month: {
+            type: "STRING",
+            description: "主窗口结束月份，格式 YYYY-MM。",
+          },
+          comparison_start_month: {
+            type: "STRING",
+            description: "对比窗口起始月份，格式 YYYY-MM。",
+          },
+          comparison_end_month: {
+            type: "STRING",
+            description: "对比窗口结束月份，格式 YYYY-MM。",
+          },
+          dimension: {
+            type: "STRING",
+            description: "当前仅支持 overall。",
+            enum: ["overall"],
+          },
+        },
+        required: [
+          "primary_start_month",
+          "primary_end_month",
+          "comparison_start_month",
+          "comparison_end_month",
+          "dimension",
+        ],
       },
     },
   ];

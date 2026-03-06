@@ -1,12 +1,15 @@
 import {
+  addMonthsToYm,
   ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP,
   ON_DEMAND_MAX_WINDOW_MONTHS,
   ON_DEMAND_PRODUCT_FULL_SAFE_CAP,
   ON_DEMAND_PRODUCT_NAMED_SAFE_CAP,
   QUESTION_JUDGMENT_CODES,
   formatAmountWanText,
+  formatDeltaPercentText,
   normalizeBusinessSnapshot,
   normalizeNumericValue,
+  parseYm,
   trimString,
 } from "./shared.js";
 import { buildToolDeclarations, TOOL_NAMES } from "./tool-registry.js";
@@ -89,6 +92,18 @@ function buildEnvelope(windowInfo, payload = {}) {
   };
 }
 
+function compareYm(left, right) {
+  const parsedLeft = parseYm(left);
+  const parsedRight = parseYm(right);
+  if (!parsedLeft || !parsedRight) {
+    return 0;
+  }
+  if (parsedLeft.year !== parsedRight.year) {
+    return parsedLeft.year - parsedRight.year;
+  }
+  return parsedLeft.month - parsedRight.month;
+}
+
 function buildNamedHospitalResolution(targetNames, candidateRows) {
   const requestedHospitals = normalizeStringArray(targetNames).map((name) => ({
     mention_name: name,
@@ -136,6 +151,66 @@ function buildToolSummaryFromMetrics(metrics, targetDimension, extra = {}) {
     ...performanceOverview,
     key_business_signals: keyBusinessSignals,
     ...extra,
+  };
+}
+
+function listMonthKeysInRange(startMonth, endMonth) {
+  const safeStart = trimString(startMonth);
+  const safeEnd = trimString(endMonth);
+  if (!parseYm(safeStart) || !parseYm(safeEnd) || compareYm(safeStart, safeEnd) > 0) {
+    return [];
+  }
+  const values = [];
+  let cursor = safeStart;
+  while (cursor && compareYm(cursor, safeEnd) <= 0) {
+    values.push(cursor);
+    cursor = addMonthsToYm(cursor, 1);
+  }
+  return values;
+}
+
+function filterRecordsByMonthWindow(records, startMonth, endMonth) {
+  const safeStart = trimString(startMonth);
+  const safeEnd = trimString(endMonth);
+  if (!parseYm(safeStart) || !parseYm(safeEnd)) {
+    return [];
+  }
+  return (Array.isArray(records) ? records : []).filter((record) => {
+    const period = trimString(record?.period || record?.month_key || record?.record_month);
+    if (period) {
+      return compareYm(period, safeStart) >= 0 && compareYm(period, safeEnd) <= 0;
+    }
+    const recordDate = trimString(record?.record_date);
+    const parsed = recordDate ? new Date(recordDate) : null;
+    if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+      return false;
+    }
+    const month = `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}`;
+    return compareYm(month, safeStart) >= 0 && compareYm(month, safeEnd) <= 0;
+  });
+}
+
+function buildPeriodComparisonSummary(primaryMetrics, comparisonMetrics) {
+  const primaryOverview = buildPerformanceOverviewFromMetrics(primaryMetrics);
+  const comparisonOverview = buildPerformanceOverviewFromMetrics(comparisonMetrics);
+  const primaryAmount = normalizeNumericValue(primaryOverview?.sales_amount_value) ?? 0;
+  const comparisonAmount = normalizeNumericValue(comparisonOverview?.sales_amount_value) ?? 0;
+  const primaryVolume = normalizeNumericValue(primaryOverview?.sales_volume_value) ?? 0;
+  const comparisonVolume = normalizeNumericValue(comparisonOverview?.sales_volume_value) ?? 0;
+  const deltaAmountRatio =
+    comparisonAmount > 0 ? (primaryAmount - comparisonAmount) / comparisonAmount : primaryAmount > 0 ? null : 0;
+  const deltaVolumeRatio =
+    comparisonVolume > 0 ? (primaryVolume - comparisonVolume) / comparisonVolume : primaryVolume > 0 ? null : 0;
+  return {
+    primary: primaryOverview,
+    comparison: comparisonOverview,
+    delta: {
+      sales_amount_change_ratio: deltaAmountRatio,
+      sales_volume_change_ratio: deltaVolumeRatio,
+      achievement_change_ratio: null,
+      sales_amount_change: formatDeltaPercentText(deltaAmountRatio),
+      sales_volume_change: formatDeltaPercentText(deltaVolumeRatio),
+    },
   };
 }
 
@@ -512,6 +587,53 @@ async function executeTrendSummary(args, ctx) {
   };
 }
 
+async function executePeriodComparisonSummary(args, ctx) {
+  const windowInfo = await ctx.getWindowInfo();
+  const records = await ctx.getRecords();
+  const primaryStartMonth = trimString(args?.primary_start_month);
+  const primaryEndMonth = trimString(args?.primary_end_month);
+  const comparisonStartMonth = trimString(args?.comparison_start_month);
+  const comparisonEndMonth = trimString(args?.comparison_end_month);
+
+  const primaryMonthKeys = listMonthKeysInRange(primaryStartMonth, primaryEndMonth);
+  const comparisonMonthKeys = listMonthKeysInRange(comparisonStartMonth, comparisonEndMonth);
+  const primaryRecords = filterRecordsByMonthWindow(records, primaryStartMonth, primaryEndMonth);
+  const comparisonRecords = filterRecordsByMonthWindow(records, comparisonStartMonth, comparisonEndMonth);
+  const primaryMetrics = buildAggregatedMetrics(primaryRecords, primaryMonthKeys);
+  const comparisonMetrics = buildAggregatedMetrics(comparisonRecords, comparisonMonthKeys);
+  const summary = buildPeriodComparisonSummary(primaryMetrics, comparisonMetrics);
+
+  return {
+    result: {
+      ...buildEnvelope(windowInfo, {
+        coverage: {
+          code: "full",
+          message: "当前请求的两个季度窗口已完整覆盖。",
+        },
+        summary,
+        rows: [],
+      }),
+      range: {
+        start_month: primaryStartMonth,
+        end_month: primaryEndMonth,
+        period: `${primaryStartMonth}~${primaryEndMonth}`,
+      },
+      comparison_range: {
+        start_month: comparisonStartMonth,
+        end_month: comparisonEndMonth,
+        period: `${comparisonStartMonth}~${comparisonEndMonth}`,
+      },
+    },
+    meta: {
+      tool_name: TOOL_NAMES.GET_PERIOD_COMPARISON_SUMMARY,
+      detail_request_mode: "overall_period_compare",
+      coverage_code: "full",
+      primary_period: `${primaryStartMonth}~${primaryEndMonth}`,
+      comparison_period: `${comparisonStartMonth}~${comparisonEndMonth}`,
+    },
+  };
+}
+
 export function createToolExecutors(deps = {}) {
   return {
     [TOOL_NAMES.GET_OVERALL_SUMMARY]: (args, ctx) => executeOverallSummary(args, ctx, deps),
@@ -519,6 +641,7 @@ export function createToolExecutors(deps = {}) {
     [TOOL_NAMES.GET_HOSPITAL_SUMMARY]: (args, ctx) => executeHospitalSummary(args, ctx, deps),
     [TOOL_NAMES.GET_PRODUCT_HOSPITAL_CONTRIBUTION]: (args, ctx) => executeProductHospitalContribution(args, ctx, deps),
     [TOOL_NAMES.GET_TREND_SUMMARY]: (args, ctx) => executeTrendSummary(args, ctx, deps),
+    [TOOL_NAMES.GET_PERIOD_COMPARISON_SUMMARY]: (args, ctx) => executePeriodComparisonSummary(args, ctx, deps),
   };
 }
 

@@ -40,6 +40,7 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
   const hospitalNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "hospital_named";
   const productFullDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_full";
   const productNamedDetailMode = trimString(finalDataAvailability?.detail_request_mode) === "product_named";
+  const overallPeriodCompareMode = trimString(finalDataAvailability?.detail_request_mode) === "overall_period_compare";
   return {
     route_code: routeCode,
     primary_dimension_code: primaryDimensionCode,
@@ -51,6 +52,7 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     hospital_named_detail_mode: hospitalNamedDetailMode,
     product_full_detail_mode: productFullDetailMode,
     product_named_detail_mode: productNamedDetailMode,
+    overall_period_compare_mode: overallPeriodCompareMode,
     product_hospital_support_code: trimString(finalDataAvailability?.product_hospital_support),
     product_hospital_hospital_count_value: normalizeNumericValue(finalDataAvailability?.product_hospital_hospital_count_value),
     hospital_named_support_code: trimString(finalDataAvailability?.hospital_named_support),
@@ -76,6 +78,24 @@ export function buildOutputContext(finalRouteDecision, finalQuestionJudgment, fi
     available_time_window_start_month: "",
     available_time_window_end_month: "",
     available_time_window_period: "",
+    comparison_time_window_kind: "none",
+    comparison_time_window_label: "",
+    comparison_time_window_start_month: "",
+    comparison_time_window_end_month: "",
+    comparison_time_window_period: "",
+    comparison_time_window_anchor_mode: "none",
+    comparison_time_window_coverage_code: "none",
+    comparison_available_time_window_start_month: "",
+    comparison_available_time_window_end_month: "",
+    comparison_available_time_window_period: "",
+    time_compare_mode: "none",
+    tool_result_primary_period: "",
+    tool_result_comparison_period: "",
+    tool_result_delta_sales_amount_change_ratio: null,
+    tool_result_delta_sales_volume_change_ratio: null,
+    tool_result_delta_achievement_change_ratio: null,
+    tool_result_delta_sales_amount_change: "",
+    tool_result_delta_sales_volume_change: "",
     local_response_mode: "none",
   };
 }
@@ -309,6 +329,29 @@ function looksLikeTimeWindowReinterpreted(text, outputContext) {
   return normalizedText.includes(availablePeriod) && !normalizedText.includes(requestedPeriod);
 }
 
+function isCompareUnderexplained(text, outputContext) {
+  if (!Boolean(outputContext?.overall_period_compare_mode)) {
+    return false;
+  }
+  const normalized = trimString(text);
+  if (!normalized) {
+    return false;
+  }
+  const primaryPeriod = trimString(outputContext?.requested_time_window_period);
+  const comparisonPeriod = trimString(outputContext?.comparison_time_window_period);
+  if (primaryPeriod && !normalized.includes(primaryPeriod)) {
+    return true;
+  }
+  if (comparisonPeriod && !normalized.includes(comparisonPeriod)) {
+    return true;
+  }
+  const hasDelta =
+    containsAnyKeywordIgnoreCase(normalized, ["相比", "对比", "变化", "增幅", "下降", "上升"]) ||
+    Boolean(trimString(outputContext?.tool_result_delta_sales_amount_change)) ||
+    Boolean(trimString(outputContext?.tool_result_delta_sales_volume_change));
+  return !hasDelta;
+}
+
 function countMentionedToolRowNames(text, outputContext) {
   const normalizedText = trimString(text);
   const rowNames = Array.isArray(outputContext?.tool_result_row_names) ? outputContext.tool_result_row_names : [];
@@ -385,6 +428,40 @@ function buildExplicitTimePrefix(outputContext) {
     return "";
   }
   return `本轮分析时间区间为 ${requestedPeriod}。`;
+}
+
+function hasExplicitComparisonTimeWindow(text, outputContext) {
+  const primaryPeriod = trimString(outputContext?.requested_time_window_period);
+  const comparisonPeriod = trimString(outputContext?.comparison_time_window_period);
+  if (!primaryPeriod || !comparisonPeriod) {
+    return true;
+  }
+  const normalized = trimString(text);
+  return normalized.includes(primaryPeriod) && normalized.includes(comparisonPeriod);
+}
+
+function buildExplicitComparisonPrefix(outputContext) {
+  const primaryPeriod = trimString(outputContext?.requested_time_window_period);
+  const comparisonPeriod = trimString(outputContext?.comparison_time_window_period);
+  if (!primaryPeriod || !comparisonPeriod) {
+    return "";
+  }
+  const anchorMode = trimString(outputContext?.requested_time_window_anchor_mode);
+  const label = trimString(outputContext?.requested_time_window_label);
+  const comparisonLabel = trimString(outputContext?.comparison_time_window_label);
+  const requestedStart = trimString(outputContext?.requested_time_window_start_month);
+  if (anchorMode === "analysis_year" && requestedStart) {
+    const year = requestedStart.slice(0, 4);
+    const requestedQuarter = trimString(label).replace(/\s+/g, "");
+    const comparisonQuarter = trimString(comparisonLabel).replace(/\s+/g, "");
+    return `按当前数据年份口径，这里将 ${requestedQuarter || "主窗口"} 解释为 ${year}年${requestedQuarter || ""}（${primaryPeriod}），将 ${comparisonQuarter || "对比窗口"} 解释为 ${year}年${comparisonQuarter || ""}（${comparisonPeriod}）。`;
+  }
+  const requestedLabel = trimString(label);
+  const comparisonWindowLabel = trimString(comparisonLabel);
+  if (requestedLabel || comparisonWindowLabel) {
+    return `本轮主分析区间${requestedLabel ? `（${requestedLabel}）` : ""}为 ${primaryPeriod}，对比区间${comparisonWindowLabel ? `（${comparisonWindowLabel}）` : ""}为 ${comparisonPeriod}。`;
+  }
+  return `本轮主分析区间为 ${primaryPeriod}，对比区间为 ${comparisonPeriod}。`;
 }
 
 function toWanTextFromValue(rawValue) {
@@ -573,6 +650,47 @@ function buildLocalOverallTimeWindowReply(toolResult, outputContext) {
   return lines.join("\n");
 }
 
+function buildLocalOverallPeriodCompareReply(toolResult, outputContext) {
+  const summary = toolResult?.summary && typeof toolResult.summary === "object" ? toolResult.summary : {};
+  const primary = summary?.primary && typeof summary.primary === "object" ? summary.primary : {};
+  const comparison = summary?.comparison && typeof summary.comparison === "object" ? summary.comparison : {};
+  const delta = summary?.delta && typeof summary.delta === "object" ? summary.delta : {};
+  const lines = [];
+  const timePrefix = buildExplicitComparisonPrefix(outputContext);
+  if (timePrefix) {
+    lines.push(timePrefix);
+  }
+  const primaryAmount = trimString(primary?.sales_amount) || toWanTextFromValue(primary?.sales_amount_value);
+  const primaryVolume =
+    trimString(primary?.sales_volume) ||
+    (typeof normalizeNumericValue(primary?.sales_volume_value) === "number"
+      ? `${normalizeNumericValue(primary?.sales_volume_value)}盒`
+      : "--");
+  const comparisonAmount = trimString(comparison?.sales_amount) || toWanTextFromValue(comparison?.sales_amount_value);
+  const comparisonVolume =
+    trimString(comparison?.sales_volume) ||
+    (typeof normalizeNumericValue(comparison?.sales_volume_value) === "number"
+      ? `${normalizeNumericValue(comparison?.sales_volume_value)}盒`
+      : "--");
+  const amountDelta =
+    trimString(delta?.sales_amount_change) ||
+    trimString(outputContext?.tool_result_sales_amount_change) ||
+    toSignedRatioText(delta?.sales_amount_change_ratio ?? outputContext?.tool_result_sales_amount_change_ratio);
+  const volumeDelta =
+    trimString(delta?.sales_volume_change) ||
+    trimString(outputContext?.tool_result_sales_volume_change) ||
+    toSignedRatioText(delta?.sales_volume_change_ratio ?? outputContext?.tool_result_sales_volume_change_ratio);
+  lines.push(`主窗口整体销售额为 ${primaryAmount}${primaryVolume !== "--" ? `，销量 ${primaryVolume}` : ""}。`);
+  lines.push(`对比窗口整体销售额为 ${comparisonAmount}${comparisonVolume !== "--" ? `，销量 ${comparisonVolume}` : ""}。`);
+  if (amountDelta && amountDelta !== "--") {
+    lines.push(`与对比窗口相比，销售额变化为 ${amountDelta}${volumeDelta && volumeDelta !== "--" ? `，销量变化为 ${volumeDelta}` : ""}。`);
+  } else if (volumeDelta && volumeDelta !== "--") {
+    lines.push(`与对比窗口相比，销量变化为 ${volumeDelta}。`);
+  }
+  lines.push("建议继续结合季度内关键月份和核心产品表现，判断本轮变化是阶段性波动还是持续性趋势。");
+  return lines.join("\n");
+}
+
 export function buildLocalDeterministicToolReply(toolResult, outputContext) {
   const routeType = trimString(outputContext?.tool_route_type);
   if (routeType === "product_hospital") {
@@ -589,6 +707,9 @@ export function buildLocalDeterministicToolReply(toolResult, outputContext) {
   }
   if (routeType === "overall_time_window") {
     return buildLocalOverallTimeWindowReply(toolResult, outputContext);
+  }
+  if (routeType === "overall_period_compare") {
+    return buildLocalOverallPeriodCompareReply(toolResult, outputContext);
   }
   return "";
 }
@@ -699,10 +820,18 @@ function evaluateReplyQuality(reply, outputContext, routeDecision) {
     }
   }
   if (trimString(outputContext?.requested_time_window_kind) !== "none" && !hasExplicitRequestedTimeWindow(text, outputContext)) {
-    findings.push(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT);
+    if (trimString(outputContext?.time_compare_mode) === "none") {
+      findings.push(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT);
+    }
   }
   if (looksLikeTimeWindowReinterpreted(text, outputContext)) {
     findings.push(QC_REASON_CODES.TIME_WINDOW_REINTERPRETED);
+  }
+  if (trimString(outputContext?.time_compare_mode) !== "none" && !hasExplicitComparisonTimeWindow(text, outputContext)) {
+    findings.push(QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT);
+  }
+  if (isCompareUnderexplained(text, outputContext)) {
+    findings.push(QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED);
   }
 
   const dedupedFindings = [];
@@ -817,6 +946,21 @@ function injectExplicitTimeWindow(text, outputContext) {
   return [`本轮分析时间区间为 ${requestedPeriod}。`, normalized].join("\n");
 }
 
+function injectExplicitComparisonWindow(text, outputContext) {
+  const prefix = buildExplicitComparisonPrefix(outputContext);
+  if (!prefix) {
+    return trimString(text);
+  }
+  const normalized = trimString(text);
+  if (!normalized) {
+    return prefix;
+  }
+  if (hasExplicitComparisonTimeWindow(normalized, outputContext)) {
+    return normalized;
+  }
+  return [prefix, normalized].join("\n");
+}
+
 function applyMinimalPatch(reply, findings, outputContext) {
   let patched = trimString(reply);
   const routeCode = trimString(outputContext?.route_code);
@@ -824,6 +968,9 @@ function applyMinimalPatch(reply, findings, outputContext) {
   const deterministicProductHospitalPatch =
     Boolean(outputContext?.product_hospital_detail_mode) &&
     (findingSet.has(QC_REASON_CODES.TOOL_RESULT_CONTRADICTION) || findingSet.has(QC_REASON_CODES.TOOL_RESULT_UNDERLISTED));
+  const deterministicComparePatch =
+    Boolean(outputContext?.overall_period_compare_mode) &&
+    (findingSet.has(QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT) || findingSet.has(QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED));
 
   if (findingSet.has(QC_REASON_CODES.CONTAINS_INTERNAL_PROCESS_WORDS)) {
     patched = scrubInternalProcessWords(patched);
@@ -835,6 +982,29 @@ function applyMinimalPatch(reply, findings, outputContext) {
     const summaryText = buildDeterministicProductHospitalSummary(outputContext);
     const listText = buildDeterministicProductHospitalList(outputContext);
     patched = trimString([summaryText, listText].filter((item) => trimString(item)).join("\n"));
+  }
+  if (deterministicComparePatch) {
+    patched = buildLocalOverallPeriodCompareReply(
+      {
+        summary: {
+          primary: {
+            sales_amount: "",
+            sales_volume: "",
+          },
+          comparison: {
+            sales_amount: "",
+            sales_volume: "",
+          },
+          delta: {
+            sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
+            sales_volume_change: trimString(outputContext?.tool_result_delta_sales_volume_change),
+            sales_amount_change_ratio: outputContext?.tool_result_delta_sales_amount_change_ratio,
+            sales_volume_change_ratio: outputContext?.tool_result_delta_sales_volume_change_ratio,
+          },
+        },
+      },
+      outputContext,
+    );
   }
   if (routeCode === ROUTE_DECISION_CODES.REFUSE && findingSet.has(QC_REASON_CODES.REFUSE_MISSING_EXAMPLES)) {
     patched = appendRefuseExamplesText(patched);
@@ -852,6 +1022,12 @@ function applyMinimalPatch(reply, findings, outputContext) {
       ? buildTimeWindowBoundaryReplyFromOutputContext(outputContext)
       : injectExplicitTimeWindow(patched, outputContext);
   }
+  if (
+    findingSet.has(QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT) ||
+    findingSet.has(QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED)
+  ) {
+    patched = injectExplicitComparisonWindow(patched, outputContext);
+  }
 
   return trimString(patched).replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
 }
@@ -862,6 +1038,23 @@ function buildQualityFallbackReply(routeCode, outputContext) {
     return buildRefuseReplyTemplate(outputContext);
   }
   if (safeRouteCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
+    if (Boolean(outputContext?.overall_period_compare_mode)) {
+      return buildLocalOverallPeriodCompareReply(
+        {
+          summary: {
+            primary: {},
+            comparison: {},
+            delta: {
+              sales_amount_change: trimString(outputContext?.tool_result_delta_sales_amount_change),
+              sales_volume_change: trimString(outputContext?.tool_result_delta_sales_volume_change),
+              sales_amount_change_ratio: outputContext?.tool_result_delta_sales_amount_change_ratio,
+              sales_volume_change_ratio: outputContext?.tool_result_delta_sales_volume_change_ratio,
+            },
+          },
+        },
+        outputContext,
+      );
+    }
     return [
       "基于当前可用业务信息，可以先给出方向性判断：当前表现已有可参考信号。",
       QC_BOUNDED_BOUNDARY_TEXT,
@@ -892,12 +1085,17 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
     initial.findings.some(
       (code) => code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION || code === QC_REASON_CODES.TOOL_RESULT_UNDERLISTED,
     );
+  const deterministicComparePatch =
+    trimString(outputContext?.tool_route_mode) === "deterministic" &&
+    initial.findings.some(
+      (code) => code === QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT || code === QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED,
+    );
   const timeWindowExplicitPatchAllowed =
     initial.findings.includes(QC_REASON_CODES.TIME_WINDOW_NOT_EXPLICIT) &&
     initial.severe_findings.length > 0 &&
     initial.severe_findings.every((code) => code === QC_REASON_CODES.EMPTY_OR_TOO_SHORT);
   const severeFindingsAllowDeterministicPatch =
-    deterministicToolConsistencyPatch &&
+    (deterministicToolConsistencyPatch || deterministicComparePatch) &&
     initial.severe_findings.length > 0 &&
     initial.severe_findings.every((code) => code === QC_REASON_CODES.EMPTY_OR_TOO_SHORT);
   if (initial.findings.length === 0) {
@@ -931,7 +1129,15 @@ export function applyQualityControl(replyDraft, outputContext, routeDecision) {
   const remainingDeterministicToolFindings = rechecked.findings.filter(
     (code) => code === QC_REASON_CODES.TOOL_RESULT_CONTRADICTION || code === QC_REASON_CODES.TOOL_RESULT_UNDERLISTED,
   );
-  if (deterministicToolConsistencyPatch && rechecked.severe_findings.length === 0 && remainingDeterministicToolFindings.length === 0) {
+  const remainingCompareFindings = rechecked.findings.filter(
+    (code) => code === QC_REASON_CODES.COMPARE_WINDOW_NOT_EXPLICIT || code === QC_REASON_CODES.COMPARE_RESULT_UNDEREXPLAINED,
+  );
+  if (
+    (deterministicToolConsistencyPatch || deterministicComparePatch) &&
+    rechecked.severe_findings.length === 0 &&
+    remainingDeterministicToolFindings.length === 0 &&
+    remainingCompareFindings.length === 0
+  ) {
     return {
       finalReplyText: patchedReply,
       qcState: {
@@ -991,6 +1197,9 @@ export function buildOutputInstructionText(outputContext) {
   const requestedTimeWindowLabel = trimString(outputContext?.requested_time_window_label);
   const timeWindowCoverageCode = trimString(outputContext?.time_window_coverage_code);
   const availableTimeWindowPeriod = trimString(outputContext?.available_time_window_period);
+  const comparisonTimeWindowPeriod = trimString(outputContext?.comparison_time_window_period);
+  const comparisonTimeWindowLabel = trimString(outputContext?.comparison_time_window_label);
+  const timeCompareMode = trimString(outputContext?.time_compare_mode);
   const timeWindowInstructionText =
     requestedTimeWindowKind !== "none" && requestedTimeWindowPeriod
       ? `时间口径约束：本轮回答必须显式写出实际采用的时间区间 ${requestedTimeWindowPeriod}，不要只写“本月/近三个月”。${
@@ -1003,7 +1212,18 @@ export function buildOutputInstructionText(outputContext) {
             : ""
         }`
       : "";
+  const compareInstructionText =
+    timeCompareMode !== "none" && requestedTimeWindowPeriod && comparisonTimeWindowPeriod
+      ? `对比口径约束：本轮回答必须同时写出主窗口 ${requestedTimeWindowPeriod} 和对比窗口 ${comparisonTimeWindowPeriod}，并明确说明两者的变化或对比结论。${
+          requestedTimeWindowAnchorMode === "analysis_year" && requestedTimeWindowLabel && comparisonTimeWindowLabel
+            ? `若是按当前数据年份口径锚定，需明确说明“${requestedTimeWindowLabel}”和“${comparisonTimeWindowLabel}”分别对应的绝对区间。`
+            : ""
+        }`
+      : "";
   if (routeCode === ROUTE_DECISION_CODES.DIRECT_ANSWER) {
+    if (Boolean(outputContext?.overall_period_compare_mode)) {
+      return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：本轮是时间窗口对比问题，必须同时给出主窗口与对比窗口的结论，并至少给出一项变化结果（金额或销量）。${compareInstructionText}`;
+    }
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_DIRECT_ANSWER}\n补充约束：当问题要求医院逐月明细时，优先按月份组织医院表现要点，覆盖当前分析区间并突出关键波动。${timeWindowInstructionText}`;
     }
@@ -1038,6 +1258,9 @@ export function buildOutputInstructionText(outputContext) {
   }
 
   if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
+    if (Boolean(outputContext?.overall_period_compare_mode)) {
+      return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：时间窗口对比场景下，先给主窗口与对比窗口的方向性结论，再说明当前边界，且必须写出两个绝对时间区间。${compareInstructionText}`;
+    }
     if (hospitalMonthlyDetailMode) {
       return `${OUTPUT_POLICY_BOUNDED_ANSWER}\n补充约束：医院逐月明细场景下，先给逐月可得结论，再用业务口吻说明当前逐月覆盖边界。${timeWindowInstructionText}`;
     }
@@ -1090,6 +1313,9 @@ export function buildGeminiPayload(message, businessSnapshot, outputContext) {
     trimString(outputContext?.requested_time_window_period)
       ? `本轮实际时间区间：${trimString(outputContext?.requested_time_window_period)}。不得将其偷换成 analysis_range 尾部月份。`
       : "",
+    trimString(outputContext?.comparison_time_window_period)
+      ? `本轮对比时间区间：${trimString(outputContext?.comparison_time_window_period)}。`
+      : "",
     "",
     "business_snapshot:",
     JSON.stringify(normalizedSnapshot, null, 2),
@@ -1125,6 +1351,9 @@ export function buildGeminiPayloadFromToolResult(message, toolResult, outputCont
     "如 tool_result.coverage=full 且 rows 为空，请直接说明当前范围内贡献为0/未产生贡献。",
     trimString(outputContext?.requested_time_window_period)
       ? `本轮实际时间区间：${trimString(outputContext?.requested_time_window_period)}。不得将其偷换成 analysis_range 尾部月份。`
+      : "",
+    trimString(outputContext?.comparison_time_window_period)
+      ? `本轮对比时间区间：${trimString(outputContext?.comparison_time_window_period)}。若是对比问题，必须同时基于主窗口和对比窗口回答。`
       : "",
     "",
     "tool_result:",

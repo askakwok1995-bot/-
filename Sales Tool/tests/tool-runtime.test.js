@@ -25,10 +25,10 @@ function createQuestionJudgment(overrides = {}) {
   };
 }
 
-test("tool registry exposes 5 controlled declarations", () => {
+test("tool registry exposes 6 controlled declarations", () => {
   const declarations = buildToolDeclarations();
 
-  assert.equal(declarations.length, 5);
+  assert.equal(declarations.length, 6);
   assert.deepEqual(
     declarations.map((item) => item.name),
     [
@@ -37,6 +37,7 @@ test("tool registry exposes 5 controlled declarations", () => {
       "get_hospital_summary",
       "get_product_hospital_contribution",
       "get_trend_summary",
+      "get_period_comparison_summary",
     ],
   );
 });

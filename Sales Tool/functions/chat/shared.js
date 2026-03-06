@@ -176,6 +176,8 @@ export const QC_REASON_CODES = Object.freeze({
   TOOL_RESULT_UNDERLISTED: "tool_result_underlisted",
   TIME_WINDOW_NOT_EXPLICIT: "time_window_not_explicit",
   TIME_WINDOW_REINTERPRETED: "time_window_reinterpreted",
+  COMPARE_WINDOW_NOT_EXPLICIT: "compare_window_not_explicit",
+  COMPARE_RESULT_UNDEREXPLAINED: "compare_result_underexplained",
 });
 
 export const QC_ACTIONS = Object.freeze({

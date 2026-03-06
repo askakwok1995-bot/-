@@ -25,8 +25,13 @@ function normalizeRequestedHospitalNames(hospitalNamedContext) {
 }
 
 export function buildDeterministicToolRoute({
+  message,
   questionJudgment,
   requestedTimeWindow,
+  comparisonTimeWindow,
+  timeCompareMode = "none",
+  primaryWindowCoverageCode = "",
+  comparisonWindowCoverageCode = "",
   productFullRequested,
   hospitalMonthlyDetailRequested,
   productNamedContext,
@@ -37,6 +42,10 @@ export function buildDeterministicToolRoute({
   const hospitalNames = normalizeRequestedHospitalNames(hospitalNamedContext);
   const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
   const requestedTimeWindowKind = trimString(requestedTimeWindow?.kind);
+  const comparisonTimeWindowKind = trimString(comparisonTimeWindow?.kind);
+  const normalizedTimeCompareMode = trimString(timeCompareMode);
+  const primaryCoverageCode = trimString(primaryWindowCoverageCode);
+  const comparisonCoverage = trimString(comparisonWindowCoverageCode);
 
   if (Boolean(productHospitalContext?.productHospitalRequested) && productNames.length > 0) {
     return {
@@ -82,6 +91,28 @@ export function buildDeterministicToolRoute({
       tool_args: {
         hospital_names: hospitalNames,
         limit: 10,
+      },
+    };
+  }
+
+  if (
+    normalizedTimeCompareMode === "quarter_compare" &&
+    (primaryDimensionCode === "overall" || primaryDimensionCode === "trend") &&
+    requestedTimeWindowKind !== "none" &&
+    comparisonTimeWindowKind !== "none" &&
+    primaryCoverageCode === "full" &&
+    comparisonCoverage === "full"
+  ) {
+    return {
+      matched: true,
+      route_type: "overall_period_compare",
+      tool_name: TOOL_NAMES.GET_PERIOD_COMPARISON_SUMMARY,
+      tool_args: {
+        primary_start_month: trimString(requestedTimeWindow?.start_month),
+        primary_end_month: trimString(requestedTimeWindow?.end_month),
+        comparison_start_month: trimString(comparisonTimeWindow?.start_month),
+        comparison_end_month: trimString(comparisonTimeWindow?.end_month),
+        dimension: "overall",
       },
     };
   }

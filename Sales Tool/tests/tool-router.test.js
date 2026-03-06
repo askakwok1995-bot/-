@@ -83,6 +83,41 @@ test("tool-router routes product_full and hospital_named deterministically", () 
 });
 
 test("tool-router routes overall time-window questions deterministically after higher-priority routes", () => {
+  const overallCompareRoute = buildDeterministicToolRoute({
+    questionJudgment: createQuestionJudgment(QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL),
+    requestedTimeWindow: {
+      kind: "absolute",
+      label: "Q4",
+      start_month: "2025-10",
+      end_month: "2025-12",
+      period: "2025-10~2025-12",
+    },
+    comparisonTimeWindow: {
+      kind: "absolute",
+      label: "Q3",
+      start_month: "2025-07",
+      end_month: "2025-09",
+      period: "2025-07~2025-09",
+    },
+    timeCompareMode: "quarter_compare",
+    primaryWindowCoverageCode: "full",
+    comparisonWindowCoverageCode: "full",
+    productFullRequested: false,
+    hospitalMonthlyDetailRequested: false,
+    productNamedContext: { productNamedRequested: false, requestedProducts: [] },
+    hospitalNamedContext: { hospitalNamedRequested: false, requestedHospitals: [] },
+    productHospitalContext: { productHospitalRequested: false },
+  });
+  assert.equal(overallCompareRoute.route_type, "overall_period_compare");
+  assert.equal(overallCompareRoute.tool_name, "get_period_comparison_summary");
+  assert.deepEqual(overallCompareRoute.tool_args, {
+    primary_start_month: "2025-10",
+    primary_end_month: "2025-12",
+    comparison_start_month: "2025-07",
+    comparison_end_month: "2025-09",
+    dimension: "overall",
+  });
+
   const overallQuarterRoute = buildDeterministicToolRoute({
     questionJudgment: createQuestionJudgment(QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL),
     requestedTimeWindow: {
