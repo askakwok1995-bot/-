@@ -689,7 +689,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 预期：
 - 成功返回 `200`，响应包含 `reply`（自然文本）与 `model`。
-- 分析类问题会优先返回新的报告流结构化答案，`answer.output_shape=report_flow`，结构包含 `headline / summary / sections / followups`。
+- 分析类问题默认返回文本主答与 `answer` 底稿，`answer.output_shape=text`；拒答或澄清场景返回 `answer.output_shape=clarify`。
 - 若未登录或 token 无效，返回 `401 UNAUTHORIZED`。
 - 若未配置 `GEMINI_API_KEY`，返回 `500 CONFIG_MISSING`。
 

@@ -4,12 +4,6 @@ export const CHAT_MODES = Object.freeze({
   AUTO: "auto",
 });
 
-export const CHAT_RESPONSE_ACTIONS = Object.freeze({
-  NATURAL: "natural_answer",
-  STRUCTURED: "structured_answer",
-  CLARIFY: "clarify",
-});
-
 export const ANSWER_STYLES = Object.freeze({
   NATURAL: "natural",
 });

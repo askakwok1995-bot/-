@@ -4,11 +4,6 @@ const CHAT_STATES = {
   COMPACT: "compact",
   EXPANDED: "expanded",
 };
-const CHAT_RESPONSE_ACTIONS = {
-  NATURAL: "natural_answer",
-  STRUCTURED: "structured_answer",
-  CLARIFY: "clarify",
-};
 const CHAT_FORMAT_REASONS = {
   STRUCTURED_OK: "structured_ok",
   JSON_PARSE_FAILED: "json_parse_failed",
@@ -28,14 +23,6 @@ let initialized = false;
 
 function isValidState(value) {
   return value === CHAT_STATES.CLOSED || value === CHAT_STATES.COMPACT || value === CHAT_STATES.EXPANDED;
-}
-
-function normalizeResponseAction(value) {
-  const candidate = toText(value);
-  if (candidate === CHAT_RESPONSE_ACTIONS.NATURAL || candidate === CHAT_RESPONSE_ACTIONS.CLARIFY) {
-    return candidate;
-  }
-  return CHAT_RESPONSE_ACTIONS.STRUCTURED;
 }
 
 function toText(value) {
@@ -75,41 +62,6 @@ function normalizeAttemptDiagnostics(rawDiagnostics) {
       };
     })
     .filter((item) => item !== null);
-}
-
-function normalizeStringList(value, maxItems = 6) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => toText(item))
-    .filter((item) => item)
-    .slice(0, maxItems);
-}
-
-function normalizeSectionList(value, maxItems = 4) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const type = toText(item.type);
-      const text = toText(item.text);
-      if (!["analysis", "boundary", "suggestion"].includes(type) || !text) return null;
-      return { type, text };
-    })
-    .filter((item) => item !== null)
-    .slice(0, maxItems);
-}
-
-function normalizeStructuredPayload(value) {
-  if (!value || typeof value !== "object") return null;
-  const summary = toText(value.summary);
-  if (!summary) return null;
-
-  return {
-    headline: toText(value.headline) || "销售分析",
-    summary,
-    sections: normalizeSectionList(value.sections, 4),
-    followups: normalizeStringList(value.followups, 2),
-  };
 }
 
 function appendInlineMarkdown(container, content) {
@@ -668,57 +620,13 @@ export function initAiChatUi(options = {}) {
     liveMessage.isActive = false;
   }
 
-  function appendStructuredAssistantMessage(structured) {
-    const normalized = normalizeStructuredPayload(structured);
-    if (!normalized) return false;
-
-    const article = document.createElement("article");
-    article.className = "ai-chat-message ai-chat-message--assistant ai-chat-structured";
-
-    const headline = document.createElement("div");
-    headline.className = "ai-chat-structured-headline";
-    headline.textContent = normalized.headline;
-    article.appendChild(headline);
-
-    const summary = document.createElement("p");
-    summary.className = "ai-chat-structured-summary";
-    summary.textContent = normalized.summary;
-    article.appendChild(summary);
-
-    normalized.sections.forEach((item) => {
-      const paragraph = document.createElement("p");
-      paragraph.className = `ai-chat-structured-paragraph ai-chat-structured-paragraph--${item.type}`;
-      paragraph.textContent = item.text;
-      article.appendChild(paragraph);
-    });
-
-    if (normalized.followups.length > 0) {
-      const followups = document.createElement("div");
-      followups.className = "ai-chat-structured-followups";
-      normalized.followups.forEach((text) => {
-        const chip = document.createElement("span");
-        chip.className = "ai-chat-structured-followup-chip";
-        chip.textContent = text;
-        followups.appendChild(chip);
-      });
-      article.appendChild(followups);
-    }
-    dom.messages.appendChild(article);
-    scrollMessagesToBottom();
-    return true;
-  }
-
   function normalizeReplyPayload(payload) {
     if (typeof payload === "string") {
       return {
         reply: payload.trim(),
         surfaceReply: payload.trim(),
-        structured: null,
         mode: "auto",
-        format: "text_fallback",
-        responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
-        internalStructured: null,
         requestId: "",
         meta: null,
         fallbackNotice: "",
@@ -728,12 +636,8 @@ export function initAiChatUi(options = {}) {
       return {
         reply: "",
         surfaceReply: "",
-        structured: null,
         mode: "auto",
-        format: "text_fallback",
-        responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
-        internalStructured: null,
         requestId: "",
         meta: null,
         fallbackNotice: "",
@@ -745,13 +649,9 @@ export function initAiChatUi(options = {}) {
       toText(payload.reply) ||
       toText(payload.message) ||
       toText(payload.text);
-    const responseAction = normalizeResponseAction(payload.responseAction);
     const businessIntent = toText(payload.businessIntent) || "chat";
     const answer = payload.answer && typeof payload.answer === "object" ? payload.answer : null;
-    const structured = normalizeStructuredPayload(payload.structured);
-    const internalStructured = payload.internalStructured && typeof payload.internalStructured === "object" ? payload.internalStructured : null;
     const mode = toText(payload.mode) || "auto";
-    const format = payload.format === "structured" ? "structured" : "text_fallback";
     const requestId = toText(payload.requestId);
     const rawMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
     const meta = rawMeta
@@ -775,13 +675,9 @@ export function initAiChatUi(options = {}) {
     return {
       reply,
       surfaceReply: reply,
-      structured,
       answer,
-      internalStructured,
-      responseAction,
       businessIntent,
       mode,
-      format,
       requestId,
       meta,
       fallbackNotice: toText(payload.fallbackNotice),
@@ -832,12 +728,7 @@ export function initAiChatUi(options = {}) {
       const normalized = normalizeReplyPayload(result);
       let hasRendered = false;
 
-      const shouldRenderStructuredCard = normalized.structured && normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY;
-      if (shouldRenderStructuredCard) {
-        removeLiveMessage(liveMessage);
-        hasRendered = appendStructuredAssistantMessage(normalized.structured);
-      }
-      if (!hasRendered && normalized.reply) {
+      if (normalized.reply) {
         setLiveMessageText(liveMessage, normalized.reply);
         hasRendered = true;
       }
@@ -849,9 +740,7 @@ export function initAiChatUi(options = {}) {
         sessionConversationState = { ...normalized.conversationState };
       }
 
-      const assistantHistoryText = normalized.structured
-        ? toText(normalized.structured.summary || normalized.answer?.summary || normalized.reply)
-        : toText(normalized.answer?.summary || normalized.reply);
+      const assistantHistoryText = toText(normalized.answer?.summary || normalized.reply);
       if (assistantHistoryText) {
         pushHistory("assistant", assistantHistoryText);
       }

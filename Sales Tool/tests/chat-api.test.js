@@ -87,6 +87,9 @@ test("handleChatRequest refuse path does not call Gemini", async () => {
   assert.equal(payload.model, "local-template-refuse");
   assert.equal(geminiCalled, false);
   assert.match(payload.reply, /你可以问|整体业绩|产品表现|医院表现/u);
+  assert.equal(payload.answer?.output_shape, "clarify");
+  assert.equal("structured" in payload, false);
+  assert.equal("responseAction" in payload, false);
 });
 
 test("handleChatRequest collapses need_more_data into bounded_answer after single enhancement", async () => {
@@ -315,8 +318,11 @@ test("handleChatRequest returns bounded local reply when tool-first fails and le
   assert.equal(response.status, 200);
   assert.equal(payload.model, "local-template-tool-only-bounded");
   assert.equal(payload.answer?.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.equal(payload.answer?.output_shape, "clarify");
   assert.equal(payload.mode, "auto");
   assert.equal(payload.businessIntent, "chat");
+  assert.equal("structured" in payload, false);
+  assert.equal("responseAction" in payload, false);
   assert.match(payload.reply, /保守结论|继续追问/u);
   assert.equal(legacyAvailabilityCalled, false);
   assert.equal(legacyGeminiCalled, false);

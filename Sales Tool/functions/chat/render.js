@@ -1,5 +1,5 @@
-import { CHAT_RESPONSE_ACTIONS, buildBusinessIntent, normalizeChatMode, resolveAnswerStyle } from "./contracts.js";
-import { QUESTION_JUDGMENT_CODES, ROUTE_DECISION_CODES, normalizeNumericValue, trimString } from "./shared.js";
+import { buildBusinessIntent, normalizeChatMode, resolveAnswerStyle } from "./contracts.js";
+import { QUESTION_JUDGMENT_CODES, ROUTE_DECISION_CODES, trimString } from "./shared.js";
 
 function getReplySummary(replyText) {
   const normalized = trimString(replyText);
@@ -299,120 +299,6 @@ function buildSourcePeriod(outputContext, businessSnapshot, toolResult) {
   );
 }
 
-function endsWithSentencePunctuation(text) {
-  return /[。！？!?]$/u.test(trimString(text));
-}
-
-function ensureSentence(text) {
-  const normalized = trimString(text);
-  if (!normalized) {
-    return "";
-  }
-  return endsWithSentencePunctuation(normalized) ? normalized : `${normalized}。`;
-}
-
-function formatEvidenceParagraph(evidence = []) {
-  const parts = evidence.slice(0, 4).map((item) => {
-    const label = trimString(item?.label);
-    const value = trimString(item?.value);
-    const insight = trimString(item?.insight);
-    if (!label || !value) {
-      return "";
-    }
-    return insight ? `${label}${value}，${insight}` : `${label}${value}`;
-  }).filter((item) => item);
-  if (parts.length === 0) {
-    return "";
-  }
-  return ensureSentence(`从关键数据看，${parts.join("；")}`);
-}
-
-function formatBoundariesParagraph(boundaries = []) {
-  const parts = boundaries.slice(0, 3).map((item) => trimString(item)).filter((item) => item);
-  if (parts.length === 0) {
-    return "";
-  }
-  return ensureSentence(`需要注意的是，${parts.join("；")}`);
-}
-
-function formatActionsParagraph(actions = []) {
-  const parts = actions.slice(0, 2).map((item) => {
-    const title = trimString(item?.title);
-    const timeline = trimString(item?.timeline);
-    const metric = trimString(item?.metric);
-    if (!title) {
-      return "";
-    }
-    const meta = [timeline ? `时间上建议在${timeline}` : "", metric ? `重点看${metric}` : ""].filter((item) => item);
-    return meta.length > 0 ? `${title}，${meta.join("，")}` : title;
-  }).filter((item) => item);
-  if (parts.length === 0) {
-    return "";
-  }
-  return ensureSentence(`建议下一步优先围绕${parts.join("；")}`);
-}
-
-function hasReportIntent(questionJudgment) {
-  return trimString(questionJudgment?.report_intent?.code) === "report";
-}
-
-function buildStructuredHeadline(answer, questionJudgment) {
-  const sourcePeriod = trimString(answer?.source_period);
-  if (sourcePeriod && hasReportIntent(questionJudgment)) {
-    return `${sourcePeriod} 销售分析报告`;
-  }
-  if (sourcePeriod) {
-    return `${sourcePeriod} 销售分析`;
-  }
-  return hasReportIntent(questionJudgment) ? "销售分析报告" : "销售分析";
-}
-
-function buildStructuredSections(answer) {
-  const sections = [];
-  const analysisParagraph = formatEvidenceParagraph(Array.isArray(answer?.evidence) ? answer.evidence : []);
-  const boundaryParagraph = formatBoundariesParagraph(Array.isArray(answer?.boundaries) ? answer.boundaries : []);
-  const suggestionParagraph = formatActionsParagraph(Array.isArray(answer?.actions) ? answer.actions : []);
-
-  if (analysisParagraph) {
-    sections.push({ type: "analysis", text: analysisParagraph });
-  }
-  if (boundaryParagraph) {
-    sections.push({ type: "boundary", text: boundaryParagraph });
-  }
-  if (suggestionParagraph) {
-    sections.push({ type: "suggestion", text: suggestionParagraph });
-  }
-  if (sections.length === 0) {
-    const summary = ensureSentence(trimString(answer?.summary) || "当前区间已形成销售分析结论");
-    sections.push({ type: "analysis", text: summary });
-  }
-  return sections;
-}
-
-function buildStructuredAnswer(answer, questionJudgment) {
-  return {
-    headline: buildStructuredHeadline(answer, questionJudgment),
-    summary: trimString(answer?.summary),
-    sections: buildStructuredSections(answer),
-    followups: Array.isArray(answer?.followups) ? answer.followups.slice(0, 2) : [],
-  };
-}
-
-function shouldDeriveStructuredAnswer(answer, routeDecision) {
-  if (trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE) {
-    return false;
-  }
-  if (!trimString(answer?.summary)) {
-    return false;
-  }
-  return (
-    (Array.isArray(answer?.evidence) && answer.evidence.length > 0) ||
-    (Array.isArray(answer?.boundaries) && answer.boundaries.length > 0) ||
-    (Array.isArray(answer?.actions) && answer.actions.length > 0) ||
-    (Array.isArray(answer?.next_questions) && answer.next_questions.length > 0)
-  );
-}
-
 export function buildEvidenceBundleFromToolResult({
   toolResult,
   outputContext,
@@ -515,26 +401,16 @@ export function buildRenderedAnswer({
     route_code: trimString(routeDecision?.route?.code),
     primary_dimension_code: trimString(questionJudgment?.primary_dimension?.code),
     next_questions: nextQuestions,
-    followups: nextQuestions,
     conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
-    output_shape: "text",
+    output_shape:
+      trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE ||
+      trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.BOUNDED_ANSWER
+        ? "clarify"
+        : "text",
   };
-  const structured = shouldDeriveStructuredAnswer(answer, routeDecision) ? buildStructuredAnswer(answer, questionJudgment) : null;
-  const outputShape =
-    trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE
-      ? "clarify"
-      : structured
-        ? "report_flow"
-        : "text";
-  answer.output_shape = outputShape;
-  answer.headline = structured?.headline || buildStructuredHeadline(answer, questionJudgment);
-  answer.sections = Array.isArray(structured?.sections) ? structured.sections.slice(0, 4) : [];
   return {
     answer,
-    structured,
     surfaceReply: trimString(replyText),
-    responseAction: structured ? CHAT_RESPONSE_ACTIONS.STRUCTURED : CHAT_RESPONSE_ACTIONS.NATURAL,
-    format: structured ? "structured" : "text_fallback",
     businessIntent: buildBusinessIntent(safeMode),
     mode: safeMode,
   };
@@ -561,11 +437,8 @@ export function buildChatSuccessPayload({
   return {
     reply: trimString(rendered.surfaceReply),
     surfaceReply: trimString(rendered.surfaceReply),
-    responseAction: rendered.responseAction,
     businessIntent: rendered.businessIntent,
     mode: rendered.mode,
-    format: rendered.format,
-    structured: rendered.structured,
     answer: rendered.answer,
     model: trimString(model),
     requestId: trimString(requestId),
