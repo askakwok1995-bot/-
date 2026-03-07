@@ -212,6 +212,9 @@ function buildNonDirectResponse(toolFirstResult, requestId) {
       requestId,
     );
   }
+  if (routeCode === "bounded_answer") {
+    return null;
+  }
   return errorResponse(
     CHAT_ERROR_CODES.BAD_REQUEST,
     "当前未形成稳定分析结果，请缩小分析对象或换一种问法后重试。",
@@ -290,7 +293,10 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     }
 
     if (trimString(toolFirstResult?.outputContext?.route_code) !== "direct_answer") {
-      return buildNonDirectResponse(toolFirstResult, requestId);
+      const nonDirectResponse = buildNonDirectResponse(toolFirstResult, requestId);
+      if (nonDirectResponse) {
+        return nonDirectResponse;
+      }
     }
 
     stage = "response";

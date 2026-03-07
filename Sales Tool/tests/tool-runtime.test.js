@@ -274,6 +274,8 @@ test("runToolFirstChat falls back when planner requests more tools than max call
                             "get_trend_summary",
                             "get_overall_summary",
                             "scope_diagnostics",
+                            "scope_breakdown",
+                            "scope_timeseries",
                           ],
                           synthesis_expectation: "产品报告需要聚合、趋势、结构和诊断证据。",
                           required_tool_call_min: 1,
@@ -283,6 +285,8 @@ test("runToolFirstChat falls back when planner requests more tools than max call
                             { name: "get_trend_summary", args_json: "{\"dimension\":\"overall\"}" },
                             { name: "get_overall_summary", args_json: "{}" },
                             { name: "scope_diagnostics", args_json: "{\"dimension\":\"overall\"}" },
+                            { name: "scope_breakdown", args_json: "{\"scope_dimension\":\"overall\",\"breakdown_dimension\":\"product\"}" },
+                            { name: "scope_timeseries", args_json: "{\"dimension\":\"overall\",\"granularity\":\"monthly\"}" },
                           ],
                         },
                       },
@@ -312,8 +316,8 @@ test("runToolFirstChat falls back when planner requests more tools than max call
 
   assert.equal(result.ok, false);
   assert.equal(result.fallbackReason, "tool_loop_limit_exceeded");
-  assert.equal(result.toolRuntimeState.tool_call_count, 4);
-  assert.equal(result.toolCallTrace.length, 4);
+  assert.equal(result.toolRuntimeState.tool_call_count, 6);
+  assert.equal(result.toolCallTrace.length, 6);
 });
 
 test("runToolFirstChat downgrades report answer to bounded when required evidence is incomplete", async () => {

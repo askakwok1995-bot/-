@@ -160,7 +160,7 @@ test("handleChatRequest returns error JSON when tool-first fails", async () => {
   assert.equal(payload.error?.details?.reason, "tool_execution_failed");
 });
 
-test("handleChatRequest returns error JSON instead of bounded/refuse reply", async () => {
+test("handleChatRequest returns success payload for bounded answer and error JSON for refuse", async () => {
   const boundedResponse = await handleChatRequest(
     buildContext({
       message: "给我产品分析报告",
@@ -170,22 +170,44 @@ test("handleChatRequest returns error JSON instead of bounded/refuse reply", asy
       verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
       runToolFirstChat: async () => ({
         ok: true,
-        reply: "当前只能给出方向性判断。",
+        reply: "在当前报表区间内，产品表现已有初步结论，但趋势和结构证据仍不完整。",
         model: "tool-model",
         outputContext: {
           route_code: ROUTE_DECISION_CODES.BOUNDED_ANSWER,
         },
         plannerState: {
           question_type: "report",
+          analysis_confidence: "low",
+          missing_evidence_types: ["timeseries", "breakdown"],
+        },
+        toolRuntimeState: {
+          evidence_types_completed: ["aggregate"],
+        },
+        questionJudgment: {
+          primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT, label: "产品" },
+          granularity: { code: QUESTION_JUDGMENT_CODES.granularity.DETAIL, label: "明细级" },
+          relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
         },
         missingEvidenceTypes: ["timeseries", "breakdown"],
+        toolResult: {
+          range: { period: "2025-01~2025-12" },
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          summary: {
+            sales_amount: "2861.75万元",
+            sales_volume: "22383盒",
+          },
+          rows: [{ product_name: "Botox50", sales_amount: "1084.10万元" }],
+        },
       }),
     },
   );
   const boundedPayload = await boundedResponse.json();
-  assert.equal(boundedResponse.status, 400);
-  assert.equal(boundedPayload.error?.code, CHAT_ERROR_CODES.BAD_REQUEST);
-  assert.deepEqual(boundedPayload.error?.details?.missing_evidence_types, ["timeseries", "breakdown"]);
+  assert.equal(boundedResponse.status, 200);
+  assert.equal(boundedPayload.reply, "在当前报表区间内，产品表现已有初步结论，但趋势和结构证据仍不完整。");
+  assert.equal(boundedPayload.answer.question_type, "report");
+  assert.deepEqual(boundedPayload.answer.evidence_types, ["aggregate"]);
+  assert.deepEqual(boundedPayload.answer.missing_evidence_types, ["timeseries", "breakdown"]);
+  assert.equal(boundedPayload.answer.analysis_confidence, "low");
 
   const refuseResponse = await handleChatRequest(
     buildContext({

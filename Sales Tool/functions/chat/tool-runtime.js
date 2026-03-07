@@ -72,6 +72,7 @@ const TOOL_FIRST_SYSTEM_INSTRUCTION = [
   "7）当 question_type=contribution 时，required_evidence 至少包含 breakdown、ranking。",
   "8）当 question_type=diagnosis 或 risk 场景时，required_evidence 至少包含 timeseries、diagnostics。",
   "9）如果 required_evidence 里的证据没有取齐，不要把回答当成稳定 direct_answer。",
+  "10）复杂分析最多允许 6 次工具调用，请在这个上限内优先补齐关键证据。",
   "",
   "direct_answer 结构要求：",
   OUTPUT_POLICY_DIRECT_ANSWER,
