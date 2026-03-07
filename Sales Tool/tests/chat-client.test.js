@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createChatReplyRequester } from "../app/chat-client.js";
+
+function createRequester(fetchImpl) {
+  return createChatReplyRequester({
+    getAccessToken: async () => "token",
+    getBusinessSnapshot: () => ({
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    }),
+    fetchImpl,
+  });
+}
+
+test("createChatReplyRequester maps runtime failure reasons to readable Chinese message", async () => {
+  const requester = createRequester(async () => {
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: "internal_error",
+          message: "AI 工具分析未形成稳定结果，请缩小分析范围后重试。",
+          details: {
+            reason: "tool_loop_limit_exceeded",
+          },
+        },
+      }),
+      {
+        status: 502,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+  });
+
+  await assert.rejects(
+    requester("生成销售分析报告"),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "本次问题需要的分析视角较多，当前轮次内未完成。");
+      return true;
+    },
+  );
+});
+

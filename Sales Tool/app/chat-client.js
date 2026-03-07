@@ -313,8 +313,22 @@ async function parseJsonSafe(response) {
   }
 }
 
+const CHAT_RUNTIME_REASON_MESSAGES = Object.freeze({
+  tool_loop_limit_exceeded: "本次问题需要的分析视角较多，当前轮次内未完成。",
+  empty_final_reply: "已取到分析数据，但模型未形成最终回答。",
+  tool_execution_failed: "分析工具执行失败，请稍后重试。",
+  planner_call_missing: "模型未形成有效分析计划，请换一种问法重试。",
+  planner_relevant_without_tool: "模型未完成必要的数据分析步骤，请换一种问法重试。",
+  gemini_error: "模型服务暂时不可用，请稍后重试。",
+  invalid_analysis_range: "当前报表区间无效，请先检查报表筛选范围。",
+});
+
 function normalizeChatApiError(response, payload) {
   const status = Number(response?.status);
+  const reason = trimString(payload?.error?.details?.reason);
+  if (reason && CHAT_RUNTIME_REASON_MESSAGES[reason]) {
+    return CHAT_RUNTIME_REASON_MESSAGES[reason];
+  }
   const serverMessage = trimString(payload?.error?.message);
   if (serverMessage) return serverMessage;
   if (status === 401) return "登录状态已失效，请重新登录后再试。";

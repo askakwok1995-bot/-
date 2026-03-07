@@ -57,6 +57,7 @@ test("tool registry exposes expanded controlled declarations", () => {
 
 test("runToolFirstChat accepts macro tool plan for broad trend question", async () => {
   const toolCalls = [];
+  let firstRoundDeclarationNames = [];
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
     message: "分析销售趋势",
@@ -69,8 +70,13 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
     env: {},
     requestId: "tool-runtime-macro-trend",
     deps: {
-      requestGeminiGenerateContent: async () => {
+      requestGeminiGenerateContent: async (payload) => {
         geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          firstRoundDeclarationNames = Array.isArray(payload?.tools?.[0]?.functionDeclarations)
+            ? payload.tools[0].functionDeclarations.map((item) => item?.name)
+            : [];
+        }
         if (geminiCallCount === 1) {
           return {
             ok: true,
@@ -149,6 +155,12 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
 
   assert.equal(result.ok, true);
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.deepEqual(firstRoundDeclarationNames, [
+    "submit_analysis_plan",
+    "get_sales_overview_brief",
+    "get_sales_trend_brief",
+    "get_dimension_overview_brief",
+  ]);
   assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);

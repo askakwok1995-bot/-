@@ -31,6 +31,11 @@ const TOOL_FALLBACK_REASONS = Object.freeze({
 const PLANNER_FUNCTION_NAME = "submit_analysis_plan";
 const QUESTION_TYPE_VALUES = Object.freeze(["overview", "report", "diagnosis", "compare", "why", "contribution", "trend"]);
 const EVIDENCE_TYPE_VALUES = Object.freeze(["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"]);
+const MACRO_TOOL_NAMES = Object.freeze([
+  "get_sales_overview_brief",
+  "get_sales_trend_brief",
+  "get_dimension_overview_brief",
+]);
 const PLANNER_VIEW_NAMES = Object.freeze([
   "get_sales_overview_brief",
   "get_sales_trend_brief",
@@ -51,6 +56,50 @@ const PLANNER_VIEW_NAMES = Object.freeze([
   "get_share_breakdown",
   "get_anomaly_insights",
   "get_risk_opportunity_summary",
+]);
+const BROAD_QUERY_KEYWORDS = Object.freeze([
+  "生成销售分析报告",
+  "销售分析报告",
+  "分析销售情况",
+  "分析销售趋势",
+  "销售趋势",
+  "趋势如何",
+  "走势如何",
+  "分析医院表现",
+  "医院表现",
+  "分析产品表现",
+  "产品表现",
+  "整体表现",
+  "整体情况",
+]);
+const DEEP_DIVE_QUERY_KEYWORDS = Object.freeze([
+  "为什么",
+  "原因",
+  "贡献",
+  "哪些医院",
+  "哪家医院",
+  "逐月",
+  "每月",
+  "结构",
+  "占比",
+  "排行",
+  "top",
+  "bottom",
+  "异常",
+  "风险",
+  "机会",
+  "对比",
+  "比较",
+]);
+const GENERIC_HOSPITAL_MENTIONS = Object.freeze([
+  "医院",
+  "分析医院",
+  "医院表现",
+  "哪些医院",
+  "哪家医院",
+  "这个医院",
+  "这家医院",
+  "某医院",
 ]);
 
 const TOOL_FIRST_SYSTEM_INSTRUCTION = [
@@ -144,7 +193,16 @@ function buildInitialContents(historyWindow, message, businessSnapshot) {
   return contents;
 }
 
-function buildToolPayload(contents) {
+function buildAllowedToolDeclarations(allowedViewNames) {
+  const safeAllowed = Array.isArray(allowedViewNames) ? allowedViewNames.map((item) => trimString(item)).filter((item) => item) : [];
+  if (safeAllowed.length === 0) {
+    return buildToolDeclarations();
+  }
+  const allowedSet = new Set(safeAllowed);
+  return buildToolDeclarations().filter((item) => allowedSet.has(trimString(item?.name)));
+}
+
+function buildToolPayload(contents, allowedViewNames = PLANNER_VIEW_NAMES) {
   return {
     systemInstruction: {
       parts: [
@@ -156,7 +214,7 @@ function buildToolPayload(contents) {
     contents,
     tools: [
       {
-        functionDeclarations: [buildPlannerDeclaration(), ...buildToolDeclarations()],
+        functionDeclarations: [buildPlannerDeclaration(allowedViewNames), ...buildAllowedToolDeclarations(allowedViewNames)],
       },
     ],
     toolConfig: {
@@ -171,7 +229,11 @@ function buildToolPayload(contents) {
   };
 }
 
-function buildPlannerDeclaration() {
+function buildPlannerDeclaration(allowedViewNames = PLANNER_VIEW_NAMES) {
+  const safeAllowedViewNames = Array.isArray(allowedViewNames)
+    ? allowedViewNames.map((item) => trimString(item)).filter((item) => PLANNER_VIEW_NAMES.includes(item))
+    : PLANNER_VIEW_NAMES;
+  const enumViewNames = safeAllowedViewNames.length > 0 ? safeAllowedViewNames : PLANNER_VIEW_NAMES;
   return {
     name: PLANNER_FUNCTION_NAME,
     description: "提交本轮问题的分析规划，包括相关性、目标路由、分析视角和首批工具调用计划。",
@@ -226,7 +288,7 @@ function buildPlannerDeclaration() {
           type: "ARRAY",
           items: {
             type: "STRING",
-            enum: PLANNER_VIEW_NAMES,
+            enum: enumViewNames,
           },
         },
         refuse_reason: { type: "STRING" },
@@ -240,7 +302,7 @@ function buildPlannerDeclaration() {
             properties: {
               name: {
                 type: "STRING",
-                enum: PLANNER_VIEW_NAMES,
+                enum: enumViewNames,
               },
               args_json: { type: "STRING" },
             },
@@ -260,6 +322,37 @@ function buildPlannerDeclaration() {
       ],
     },
   };
+}
+
+function containsKeyword(text, keywords) {
+  const safeText = trimString(text).toLocaleLowerCase();
+  if (!safeText) {
+    return false;
+  }
+  return keywords.some((keyword) => safeText.includes(trimString(keyword).toLocaleLowerCase()));
+}
+
+function hasNamedProductLikeQuestion(text) {
+  return /[A-Za-z][A-Za-z0-9-]{2,}/.test(trimString(text));
+}
+
+function hasSpecificHospitalLikeQuestion(text) {
+  const matches = trimString(text).match(/[A-Za-z0-9\u4e00-\u9fa5]{2,}(医院|门诊|诊所|机构)/g) || [];
+  return matches.some((item) => !GENERIC_HOSPITAL_MENTIONS.includes(trimString(item)));
+}
+
+function shouldUseMacroOnlyFirstRound(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  if (containsKeyword(safeMessage, DEEP_DIVE_QUERY_KEYWORDS)) {
+    return false;
+  }
+  if (hasNamedProductLikeQuestion(safeMessage) || hasSpecificHospitalLikeQuestion(safeMessage)) {
+    return false;
+  }
+  return containsKeyword(safeMessage, BROAD_QUERY_KEYWORDS);
 }
 
 function deriveRequiredEvidenceByQuestionType(questionType) {
@@ -705,10 +798,17 @@ export async function runToolFirstChat({
   const contents = buildInitialContents(historyWindow, message, businessSnapshot);
   let lastToolResult = null;
   let plannerState = null;
+  const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
-    const geminiResponse = await requestGeminiGenerateContentImpl(buildToolPayload(contents), env, requestId, "tool");
+    const allowedViewNames = !state.planner_completed && roundIndex === 0 && firstRoundMacroOnly ? MACRO_TOOL_NAMES : PLANNER_VIEW_NAMES;
+    const geminiResponse = await requestGeminiGenerateContentImpl(
+      buildToolPayload(contents, allowedViewNames),
+      env,
+      requestId,
+      "tool",
+    );
     if (!geminiResponse.ok) {
       state.fallback_reason = TOOL_FALLBACK_REASONS.GEMINI_ERROR;
       logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
