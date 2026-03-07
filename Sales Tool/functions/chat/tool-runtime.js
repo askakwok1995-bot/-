@@ -29,7 +29,13 @@ const TOOL_FALLBACK_REASONS = Object.freeze({
 });
 
 const PLANNER_FUNCTION_NAME = "submit_analysis_plan";
+const QUESTION_TYPE_VALUES = Object.freeze(["overview", "report", "diagnosis", "compare", "why", "contribution", "trend"]);
+const EVIDENCE_TYPE_VALUES = Object.freeze(["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"]);
 const PLANNER_VIEW_NAMES = Object.freeze([
+  "scope_aggregate",
+  "scope_timeseries",
+  "scope_breakdown",
+  "scope_diagnostics",
   "get_overall_summary",
   "get_product_summary",
   "get_hospital_summary",
@@ -61,6 +67,11 @@ const TOOL_FIRST_SYSTEM_INSTRUCTION = [
   "2）相关问题：relevance=relevant，required_tool_call_min 至少为 1；",
   "3）若问题相关但你暂时判断可能信息不足，先规划最合适的工具验证，不要直接 bounded；",
   "4）不要覆写已给定的时间范围和 seed context 中的事实约束。",
+  "5）当 question_type=report 时，required_evidence 至少包含 aggregate、timeseries、breakdown、diagnostics。",
+  "6）当 question_type=why 时，required_evidence 至少包含 aggregate、timeseries、breakdown。",
+  "7）当 question_type=contribution 时，required_evidence 至少包含 breakdown、ranking。",
+  "8）当 question_type=diagnosis 或 risk 场景时，required_evidence 至少包含 timeseries、diagnostics。",
+  "9）如果 required_evidence 里的证据没有取齐，不要把回答当成稳定 direct_answer。",
   "",
   "direct_answer 结构要求：",
   OUTPUT_POLICY_DIRECT_ANSWER,
@@ -79,6 +90,10 @@ export function createInitialToolRuntimeState() {
     final_route_code: "",
     success: false,
     fallback_reason: "",
+    question_type: "overview",
+    evidence_types_requested: [],
+    evidence_types_completed: [],
+    missing_evidence_types: [],
   };
 }
 
@@ -194,6 +209,17 @@ function buildPlannerDeclaration() {
             ROUTE_DECISION_CODES.REFUSE,
           ],
         },
+        question_type: {
+          type: "STRING",
+          enum: QUESTION_TYPE_VALUES,
+        },
+        required_evidence: {
+          type: "ARRAY",
+          items: {
+            type: "STRING",
+            enum: EVIDENCE_TYPE_VALUES,
+          },
+        },
         requested_views: {
           type: "ARRAY",
           items: {
@@ -203,6 +229,7 @@ function buildPlannerDeclaration() {
         },
         refuse_reason: { type: "STRING" },
         bounded_reason: { type: "STRING" },
+        synthesis_expectation: { type: "STRING" },
         required_tool_call_min: { type: "NUMBER" },
         initial_tools: {
           type: "ARRAY",
@@ -219,9 +246,75 @@ function buildPlannerDeclaration() {
           },
         },
       },
-      required: ["relevance", "primary_dimension", "granularity", "route_intent", "requested_views", "required_tool_call_min"],
+      required: [
+        "relevance",
+        "primary_dimension",
+        "granularity",
+        "route_intent",
+        "question_type",
+        "required_evidence",
+        "requested_views",
+        "required_tool_call_min",
+      ],
     },
   };
+}
+
+function deriveRequiredEvidenceByQuestionType(questionType) {
+  if (questionType === "report") {
+    return ["aggregate", "timeseries", "breakdown", "diagnostics"];
+  }
+  if (questionType === "diagnosis") {
+    return ["aggregate", "timeseries", "diagnostics"];
+  }
+  if (questionType === "compare") {
+    return ["aggregate", "timeseries"];
+  }
+  if (questionType === "why") {
+    return ["aggregate", "timeseries", "breakdown"];
+  }
+  if (questionType === "contribution") {
+    return ["breakdown", "ranking"];
+  }
+  if (questionType === "trend") {
+    return ["aggregate", "timeseries"];
+  }
+  return ["aggregate"];
+}
+
+function normalizeEvidenceTypes(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(value.map((item) => trimString(item)).filter((item) => EVIDENCE_TYPE_VALUES.includes(item))));
+}
+
+function computeMissingEvidenceTypes(plannerState, completedEvidenceTypes) {
+  const requiredEvidence = Array.isArray(plannerState?.required_evidence) ? plannerState.required_evidence : [];
+  const completed = new Set(Array.isArray(completedEvidenceTypes) ? completedEvidenceTypes.map((item) => trimString(item)).filter((item) => item) : []);
+  return requiredEvidence.filter((item) => !completed.has(item));
+}
+
+function collectCompletedEvidenceTypes(executionResult) {
+  const coverageCode = trimString(executionResult?.result?.coverage?.code);
+  if (coverageCode === "none") {
+    return [];
+  }
+  const metaEvidenceTypes = Array.isArray(executionResult?.meta?.evidence_types) ? executionResult.meta.evidence_types : [];
+  return Array.from(new Set(metaEvidenceTypes.map((item) => trimString(item)).filter((item) => item)));
+}
+
+function buildAnalysisConfidence(routeCode, missingEvidenceTypes, coverageCode) {
+  if (routeCode === ROUTE_DECISION_CODES.REFUSE) {
+    return "low";
+  }
+  if (routeCode === ROUTE_DECISION_CODES.BOUNDED_ANSWER) {
+    return missingEvidenceTypes.length > 0 || coverageCode !== "full" ? "low" : "medium";
+  }
+  if (missingEvidenceTypes.length > 0 || coverageCode === "partial") {
+    return "medium";
+  }
+  return "high";
 }
 
 function extractRuntimeCalls(payload) {
@@ -342,6 +435,15 @@ function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
   const requestedViews = Array.isArray(plannerArgs?.requested_views)
     ? plannerArgs.requested_views.map((item) => trimString(item)).filter((item) => PLANNER_VIEW_NAMES.includes(item))
     : [];
+  const questionTypeCandidate = trimString(plannerArgs?.question_type);
+  const questionType = QUESTION_TYPE_VALUES.includes(questionTypeCandidate) ? questionTypeCandidate : "overview";
+  const requiredEvidence = normalizeEvidenceTypes(plannerArgs?.required_evidence);
+  const normalizedRequiredEvidence = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+    ? []
+    :
+    requiredEvidence.length > 0
+      ? Array.from(new Set([...deriveRequiredEvidenceByQuestionType(questionType), ...requiredEvidence]))
+      : deriveRequiredEvidenceByQuestionType(questionType);
   const requiredToolCallMinRaw = Number(plannerArgs?.required_tool_call_min);
   const requiredToolCallMin = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     ? 0
@@ -349,12 +451,17 @@ function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
   return {
     relevance,
     route_intent: routeIntent,
+    question_type: questionType,
+    required_evidence: normalizedRequiredEvidence,
     requested_views: requestedViews,
     refuse_reason: trimString(plannerArgs?.refuse_reason),
     bounded_reason: trimString(plannerArgs?.bounded_reason),
+    synthesis_expectation: trimString(plannerArgs?.synthesis_expectation),
     required_tool_call_min: requiredToolCallMin,
     zero_tool_refuse: relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT && routeIntent === ROUTE_DECISION_CODES.REFUSE,
     initial_tools: parsePlannerInitialTools(plannerArgs?.initial_tools),
+    missing_evidence_types: [],
+    analysis_confidence: "low",
     questionJudgment: buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment),
   };
 }
@@ -370,6 +477,8 @@ function buildPlannerFunctionResponse(plannerState, accepted, note = "") {
             accepted: Boolean(accepted),
             relevance: trimString(plannerState?.relevance),
             route_intent: trimString(plannerState?.route_intent),
+            question_type: trimString(plannerState?.question_type),
+            required_evidence: Array.isArray(plannerState?.required_evidence) ? plannerState.required_evidence : [],
             requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [],
             required_tool_call_min: plannerState?.required_tool_call_min ?? 0,
             note: trimString(note),
@@ -390,6 +499,7 @@ function deriveFinalRouteCode(lastToolResult, plannerState) {
     (Array.isArray(lastToolResult?.result?.unmatched_entities?.hospitals) && lastToolResult.result.unmatched_entities.hospitals.length > 0);
   if (
     trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.BOUNDED_ANSWER ||
+    (Array.isArray(plannerState?.missing_evidence_types) && plannerState.missing_evidence_types.length > 0) ||
     coverageCode === "partial" ||
     coverageCode === "none" ||
     hasUnmatchedEntities
@@ -409,7 +519,12 @@ export function buildToolOutputContext(questionJudgment, lastToolResult, planner
       boundary_needed: false,
       refuse_mode: true,
       planner_route_intent: trimString(plannerState?.route_intent),
+      planner_question_type: trimString(plannerState?.question_type),
+      planner_required_evidence: Array.isArray(plannerState?.required_evidence) ? plannerState.required_evidence.slice(0, 6) : [],
       planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views.slice(0, 6) : [],
+      planner_missing_evidence_types: Array.isArray(plannerState?.missing_evidence_types)
+        ? plannerState.missing_evidence_types.slice(0, 6)
+        : [],
       local_response_mode: "planner_refuse",
     };
   }
@@ -487,7 +602,12 @@ export function buildToolOutputContext(questionJudgment, lastToolResult, planner
     tool_result_delta_sales_amount_change: trimString(deltaSummary?.sales_amount_change),
     tool_result_delta_sales_volume_change: trimString(deltaSummary?.sales_volume_change),
     planner_route_intent: trimString(plannerState?.route_intent),
+    planner_question_type: trimString(plannerState?.question_type),
+    planner_required_evidence: Array.isArray(plannerState?.required_evidence) ? plannerState.required_evidence.slice(0, 6) : [],
     planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views.slice(0, 6) : [],
+    planner_missing_evidence_types: Array.isArray(plannerState?.missing_evidence_types)
+      ? plannerState.missing_evidence_types.slice(0, 6)
+      : [],
   };
 }
 
@@ -495,6 +615,9 @@ export function buildToolCallTraceEntry(call, executionResult) {
   return {
     tool_name: trimString(call?.name),
     analysis_view: trimString(executionResult?.meta?.analysis_view),
+    evidence_types: Array.isArray(executionResult?.meta?.evidence_types)
+      ? executionResult.meta.evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
     detail_request_mode: trimString(executionResult?.meta?.detail_request_mode),
     coverage_code: trimString(executionResult?.result?.coverage?.code),
     row_count: Array.isArray(executionResult?.result?.rows) ? executionResult.result.rows.length : 0,
@@ -541,6 +664,10 @@ function buildToolTracePayload({ requestId, state, toolCallTrace }) {
       state.tool_call_count > 1 ? "multi_tool_synthesis" : state.tool_call_count === 1 ? "single_tool_synthesis" : "none",
     planner_relevance: trimString(state.planner_relevance),
     planner_route_intent: trimString(state.planner_route_intent),
+    planner_question_type: trimString(state.question_type),
+    evidence_types_requested: Array.isArray(state.evidence_types_requested) ? state.evidence_types_requested : [],
+    evidence_types_completed: Array.isArray(state.evidence_types_completed) ? state.evidence_types_completed : [],
+    missing_evidence_types: Array.isArray(state.missing_evidence_types) ? state.missing_evidence_types : [],
     planner_requested_views: Array.isArray(state.planner_requested_views) ? state.planner_requested_views : [],
     planner_refuse_reason: trimString(state.planner_refuse_reason),
     planner_bounded_reason: trimString(state.planner_bounded_reason),
@@ -611,6 +738,8 @@ export async function runToolFirstChat({
       state.planner_completed = true;
       state.planner_relevance = plannerState.relevance;
       state.planner_route_intent = plannerState.route_intent;
+      state.question_type = plannerState.question_type;
+      state.evidence_types_requested = plannerState.required_evidence.slice(0, 8);
       state.planner_requested_views = plannerState.requested_views.slice(0, 6);
       state.planner_refuse_reason = plannerState.refuse_reason;
       state.planner_bounded_reason = plannerState.bounded_reason;
@@ -664,6 +793,9 @@ export async function runToolFirstChat({
         }
         state.tool_call_count += 1;
         state.used_tools.push(trimString(call.name));
+        state.evidence_types_completed = Array.from(
+          new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
+        );
         lastToolResult = executionResult;
         toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
         contents.push({
@@ -706,9 +838,18 @@ export async function runToolFirstChat({
         };
       }
       const plannerQuestionJudgment = plannerState?.questionJudgment || questionJudgment;
+      const missingEvidenceTypes = computeMissingEvidenceTypes(plannerState, state.evidence_types_completed);
+      plannerState.missing_evidence_types = missingEvidenceTypes;
       const outputContext = buildToolOutputContext(plannerQuestionJudgment, lastToolResult, plannerState);
+      const coverageCode = trimString(lastToolResult?.result?.coverage?.code);
+      plannerState.analysis_confidence = buildAnalysisConfidence(
+        trimString(outputContext.route_code),
+        missingEvidenceTypes,
+        coverageCode,
+      );
       state.success = true;
       state.final_route_code = trimString(outputContext.route_code);
+      state.missing_evidence_types = missingEvidenceTypes;
       logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
       return {
         ok: true,
@@ -716,6 +857,10 @@ export async function runToolFirstChat({
         model: geminiResponse.model,
         outputContext,
         plannerState,
+        questionType: trimString(plannerState?.question_type),
+        evidenceTypesCompleted: state.evidence_types_completed.slice(0, 8),
+        missingEvidenceTypes,
+        analysisConfidence: trimString(plannerState?.analysis_confidence),
         questionJudgment: plannerQuestionJudgment,
         toolResult: lastToolResult?.result || null,
         toolRuntimeState: state,
@@ -753,6 +898,9 @@ export async function runToolFirstChat({
       }
       state.tool_call_count += 1;
       state.used_tools.push(trimString(call.name));
+      state.evidence_types_completed = Array.from(
+        new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
+      );
       lastToolResult = executionResult;
       toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
       contents.push({

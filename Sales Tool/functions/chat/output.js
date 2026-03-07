@@ -242,7 +242,12 @@ export function buildPhase2Trace({
     toolRouteFallbackReason: trimString(toolRouteFallbackReason),
     planner_relevance: trimString(plannerState?.relevance),
     planner_route_intent: trimString(plannerState?.route_intent),
+    planner_question_type: trimString(plannerState?.question_type),
+    planner_required_evidence: Array.isArray(plannerState?.required_evidence) ? plannerState.required_evidence : [],
     planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [],
+    planner_missing_evidence_types: Array.isArray(plannerState?.missing_evidence_types)
+      ? plannerState.missing_evidence_types
+      : [],
     planner_refuse_reason: trimString(plannerState?.refuse_reason),
     planner_bounded_reason: trimString(plannerState?.bounded_reason),
     planner_zero_tool_refuse: Boolean(plannerState?.zero_tool_refuse),

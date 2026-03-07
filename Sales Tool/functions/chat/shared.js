@@ -12,7 +12,7 @@ export const SUPABASE_AUTH_USER_PATH = "/auth/v1/user";
 export const MAX_MESSAGE_LENGTH = 4000;
 export const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 export const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
-export const TOOL_RUNTIME_MAX_CALLS = 3;
+export const TOOL_RUNTIME_MAX_CALLS = 4;
 export const TOOL_RUNTIME_MAX_ROUNDS = 4;
 
 export const CHAT_ERROR_CODES = Object.freeze({
@@ -255,7 +255,7 @@ export const OUTPUT_POLICY_DIRECT_ANSWER = [
   "输出策略（direct_answer）：请用简体中文自然回答。",
   "结构固定：",
   "1）先用1-2句给出明确结论；",
-  "2）再给1-2条依据（优先引用当前business_snapshot的业务信号/数据点，用自然句表达，不要报字段名）；",
+  "2）再给2-4句关键依据，优先覆盖至少2类不同证据（例如聚合结论、趋势、结构、诊断提示），用自然句表达，不要报字段名；",
   "3）如适用，再补1条下一步动作建议（可选）。",
   "禁止：提及任何内部过程或系统判断（如“路由/补强/重判/trace/need_more_data/bounded_answer/phase”等），也不要描述系统怎么做的过程。",
 ].join("\n");

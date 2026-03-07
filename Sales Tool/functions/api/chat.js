@@ -440,6 +440,7 @@ function buildSuccessChatResponse({
   forcedBounded = false,
   toolResult = null,
   plannerState = null,
+  toolRuntimeState = null,
   requestedProducts = [],
   requestedHospitals = [],
   requestedTimeWindow = null,
@@ -454,14 +455,16 @@ function buildSuccessChatResponse({
   const qcResult = applyQualityControlImpl(replyDraft, outputContext, routeDecision);
   const finalReply = qcResult.finalReplyText;
   const evidenceBundle = toolResult
-    ? buildEvidenceBundleFromToolResult({
-        toolResult,
-        outputContext,
-        questionJudgment,
-        routeDecision,
-        requestedProducts,
-        requestedHospitals,
-      })
+      ? buildEvidenceBundleFromToolResult({
+          toolResult,
+          outputContext,
+          questionJudgment,
+          routeDecision,
+          plannerState,
+          toolRuntimeState,
+          requestedProducts,
+          requestedHospitals,
+        })
     : buildEvidenceBundleFromSnapshot({
         businessSnapshot,
         outputContext,
@@ -916,6 +919,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           toolRouteName,
           toolRouteFallbackReason: "",
           toolResult: directToolResult.toolResult,
+          toolRuntimeState,
           requestedProducts,
           requestedHospitals,
           requestedTimeWindow,
@@ -976,6 +980,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           toolRouteFallbackReason: "",
           toolResult: toolFirstResult.toolResult,
           plannerState: toolFirstResult.plannerState,
+          toolRuntimeState,
           requestedProducts,
           requestedHospitals,
           requestedTimeWindow,

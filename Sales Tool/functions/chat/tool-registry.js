@@ -1,4 +1,8 @@
 export const TOOL_NAMES = Object.freeze({
+  SCOPE_AGGREGATE: "scope_aggregate",
+  SCOPE_TIMESERIES: "scope_timeseries",
+  SCOPE_BREAKDOWN: "scope_breakdown",
+  SCOPE_DIAGNOSTICS: "scope_diagnostics",
   GET_OVERALL_SUMMARY: "get_overall_summary",
   GET_PRODUCT_SUMMARY: "get_product_summary",
   GET_HOSPITAL_SUMMARY: "get_hospital_summary",
@@ -33,6 +37,98 @@ function stringEnumSchema(description, values) {
 
 export function buildToolDeclarations() {
   return [
+    {
+      name: TOOL_NAMES.SCOPE_AGGREGATE,
+      description: "按时间窗、维度和命名对象集合返回聚合指标、coverage 和命中情况，是整体/产品/医院分析的基础原语。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dimension: stringEnumSchema("分析维度，只能是 overall、product 或 hospital。", ["overall", "product", "hospital"]),
+          target_names: arrayOfStringsSchema("可选。产品或医院维度下需要分析的对象名称列表。"),
+          granularity: stringEnumSchema("返回粒度，只能是 summary 或 detail。", ["summary", "detail"]),
+          focus: {
+            type: "STRING",
+            description: "可选。希望重点关注的主题，例如达成率、销量、变化原因。",
+          },
+          limit: {
+            type: "NUMBER",
+            description: "可选。需要返回的对象条数上限，后端会按安全上限裁剪。",
+          },
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.SCOPE_TIMESERIES,
+      description: "按时间窗、维度和命名对象集合返回逐月序列、变化率和趋势摘要，是趋势分析原语。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dimension: stringEnumSchema("分析维度，只能是 overall、product 或 hospital。", ["overall", "product", "hospital"]),
+          target_names: arrayOfStringsSchema("可选。产品或医院维度下需要分析的对象名称列表。"),
+          granularity: stringEnumSchema("趋势粒度，只能是 summary、monthly 或 detail。", ["summary", "monthly", "detail"]),
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的月份条数上限，后端会按安全上限裁剪。",
+          },
+        },
+        required: ["dimension"],
+      },
+    },
+    {
+      name: TOOL_NAMES.SCOPE_BREAKDOWN,
+      description: "按产品、医院或月份返回结构拆分、占比、集中度和 Top/Bottom 排序，是结构分析原语。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          scope_dimension: stringEnumSchema("当前分析对象维度，只能是 overall、product 或 hospital。", ["overall", "product", "hospital"]),
+          target_names: arrayOfStringsSchema("可选。scope_dimension 为 product 或 hospital 时，需要分析的命名对象集合。"),
+          breakdown_dimension: stringEnumSchema("拆分维度，只能是 product、hospital 或 month。", ["product", "hospital", "month"]),
+          ranking: stringEnumSchema("排序方向，只能是 top 或 bottom。", ["top", "bottom"]),
+          metric: stringEnumSchema("排序指标，只能是 sales_amount、sales_volume、sales_share 或 change_value。", [
+            "sales_amount",
+            "sales_volume",
+            "sales_share",
+            "change_value",
+          ]),
+          include_share: {
+            type: "BOOLEAN",
+            description: "是否优先返回贡献占比和结构集中度信息。",
+          },
+          concentration: {
+            type: "BOOLEAN",
+            description: "是否需要输出结构集中度相关提示。",
+          },
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的拆分条数上限，后端会按安全上限裁剪。",
+          },
+        },
+        required: ["scope_dimension", "breakdown_dimension"],
+      },
+    },
+    {
+      name: TOOL_NAMES.SCOPE_DIAGNOSTICS,
+      description: "基于时间窗、维度和命名对象集合返回风险机会、异常点和结构问题提示，是诊断分析原语。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dimension: stringEnumSchema("分析维度，只能是 overall、product 或 hospital。", ["overall", "product", "hospital"]),
+          target_names: arrayOfStringsSchema("可选。产品或医院维度下需要分析的对象名称列表。"),
+          include_anomaly: {
+            type: "BOOLEAN",
+            description: "是否返回异动月份/异常点。",
+          },
+          include_risk: {
+            type: "BOOLEAN",
+            description: "是否返回风险与机会提示。",
+          },
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的诊断条数上限，后端会按安全上限裁剪。",
+          },
+        },
+      },
+    },
     {
       name: TOOL_NAMES.GET_OVERALL_SUMMARY,
       description: "获取当前报表区间内的整体业绩摘要、关键变化和趋势概览。",

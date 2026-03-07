@@ -21,7 +21,11 @@ function buildContext(body) {
 
 test("buildChatSuccessPayload keeps auto mode answer contract stable", () => {
   const evidenceBundle = {
+    question_type: "overview",
     source_period: "2025-01~2025-12",
+    evidence_types: ["aggregate"],
+    missing_evidence_types: [],
+    analysis_confidence: "high",
     evidence: [{ label: "销售额", value: "12.00万元", insight: "当前分析区间" }],
     actions: [],
     boundaries: ["当前回答基于现有口径给出方向性结论，暂不支持更细颗粒度拆解。"],
@@ -61,6 +65,10 @@ test("buildChatSuccessPayload keeps auto mode answer contract stable", () => {
   assert.equal(repeatedAutoPayload.businessIntent, "chat");
   assert.equal(autoPayload.answer.style, "natural");
   assert.equal(repeatedAutoPayload.answer.style, "natural");
+  assert.equal(autoPayload.answer.question_type, "overview");
+  assert.deepEqual(autoPayload.answer.evidence_types, ["aggregate"]);
+  assert.deepEqual(autoPayload.answer.missing_evidence_types, []);
+  assert.equal(autoPayload.answer.analysis_confidence, "high");
   assert.equal(autoPayload.answer.source_period, repeatedAutoPayload.answer.source_period);
   assert.deepEqual(autoPayload.answer.evidence, repeatedAutoPayload.answer.evidence);
   assert.equal("structured" in autoPayload, false);
@@ -147,7 +155,11 @@ test("handleChatRequest accepts explicit auto mode", async () => {
 
 test("buildChatSuccessPayload returns text-first answer contract for ordinary analysis questions", () => {
   const evidenceBundle = {
+    question_type: "overview",
     source_period: "2025-01~2025-02",
+    evidence_types: ["aggregate", "timeseries"],
+    missing_evidence_types: [],
+    analysis_confidence: "high",
     evidence: [
       { label: "销售额", value: "468.81万元", insight: "2月较1月有所回落" },
       { label: "销量", value: "3719盒", insight: "当前分析区间" },
@@ -176,6 +188,10 @@ test("buildChatSuccessPayload returns text-first answer contract for ordinary an
   assert.equal(payload.answer.output_shape, "text");
   assert.equal(payload.answer.summary, "2025年1月至2月，销售额呈现下滑趋势，2月份销售表现较1月有所回落。");
   assert.equal(payload.answer.source_period, "2025-01~2025-02");
+  assert.equal(payload.answer.question_type, "overview");
+  assert.deepEqual(payload.answer.evidence_types, ["aggregate", "timeseries"]);
+  assert.deepEqual(payload.answer.missing_evidence_types, []);
+  assert.equal(payload.answer.analysis_confidence, "high");
   assert.equal("structured" in payload, false);
   assert.equal("responseAction" in payload, false);
   assert.ok(Array.isArray(payload.answer.evidence));

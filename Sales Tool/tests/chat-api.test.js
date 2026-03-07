@@ -115,6 +115,16 @@ test("handleChatRequest uses planner-driven tool-first refuse path instead of lo
         fallback_reason: "",
       },
       toolCallTrace: [],
+      toolResult: {
+        coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+        range: { period: "2025-01~2025-02" },
+        summary: {
+          sales_amount: "22.00万元",
+          sales_volume: "210盒",
+          key_business_signals: ["最近月销售额上升。"],
+        },
+        rows: [{ period: "2025-02", sales_amount: "12.00万元" }],
+      },
     }),
     callGemini: async () => {
       geminiCalled = true;
@@ -128,6 +138,10 @@ test("handleChatRequest uses planner-driven tool-first refuse path instead of lo
   assert.equal(geminiCalled, false);
   assert.match(payload.reply, /医药销售数据分析|整体业绩|产品表现|医院贡献/u);
   assert.equal(payload.answer?.output_shape, "clarify");
+  assert.equal(payload.answer?.question_type, "overview");
+  assert.deepEqual(payload.answer?.evidence_types, []);
+  assert.deepEqual(payload.answer?.missing_evidence_types, []);
+  assert.equal(payload.answer?.analysis_confidence, "low");
   assert.equal("structured" in payload, false);
   assert.equal("responseAction" in payload, false);
 });
@@ -246,11 +260,16 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
       plannerState: {
         relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
         route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        question_type: "overview",
+        required_evidence: ["aggregate"],
         requested_views: ["get_overall_summary", "get_trend_summary"],
+        missing_evidence_types: [],
         refuse_reason: "",
         bounded_reason: "",
+        synthesis_expectation: "先给整体结论，再补趋势依据。",
         required_tool_call_min: 1,
         zero_tool_refuse: false,
+        analysis_confidence: "high",
       },
       questionJudgment: {
         primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.TREND, label: "趋势" },
@@ -270,6 +289,17 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
         final_route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
         success: true,
         fallback_reason: "",
+        evidence_types_completed: ["aggregate"],
+      },
+      toolResult: {
+        coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+        range: { period: "2025-01~2025-02" },
+        summary: {
+          sales_amount: "22.00万元",
+          sales_volume: "210盒",
+          key_business_signals: ["最近月销售额上升。"],
+        },
+        rows: [{ period: "2025-02", sales_amount: "12.00万元" }],
       },
       toolCallTrace: [],
     }),
@@ -292,6 +322,10 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
   );
   assert.equal(payload.answer?.output_shape, "text");
   assert.equal(payload.answer?.primary_dimension_code, QUESTION_JUDGMENT_CODES.primary_dimension.TREND);
+  assert.equal(payload.answer?.question_type, "overview");
+  assert.deepEqual(payload.answer?.evidence_types, ["aggregate"]);
+  assert.deepEqual(payload.answer?.missing_evidence_types, []);
+  assert.equal(payload.answer?.analysis_confidence, "high");
   assert.equal(legacyAvailabilityCalled, false);
   assert.equal(legacyGeminiCalled, false);
 });

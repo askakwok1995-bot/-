@@ -304,6 +304,8 @@ export function buildEvidenceBundleFromToolResult({
   outputContext,
   questionJudgment,
   routeDecision,
+  plannerState = null,
+  toolRuntimeState = null,
   requestedProducts = [],
   requestedHospitals = [],
 } = {}) {
@@ -313,11 +315,23 @@ export function buildEvidenceBundleFromToolResult({
   collectToolRowsEvidence(safeToolResult, evidence);
   return {
     source: "tool",
+    question_type: trimString(plannerState?.question_type) || "overview",
     source_period: buildSourcePeriod(outputContext, {}, safeToolResult),
     coverage_code: trimString(safeToolResult?.coverage?.code) || trimString(outputContext?.tool_result_coverage_code),
     diagnostic_flags: Array.isArray(safeToolResult?.diagnostic_flags)
       ? safeToolResult.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
       : [],
+    evidence_types: Array.isArray(toolRuntimeState?.evidence_types_completed)
+      ? toolRuntimeState.evidence_types_completed.map((item) => trimString(item)).filter((item) => item)
+      : Array.isArray(plannerState?.required_evidence)
+        ? plannerState.required_evidence.map((item) => trimString(item)).filter((item) => item)
+        : [],
+    missing_evidence_types: Array.isArray(plannerState?.missing_evidence_types)
+      ? plannerState.missing_evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
+    analysis_confidence: trimString(plannerState?.analysis_confidence) || (
+      trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.DIRECT_ANSWER ? "high" : "low"
+    ),
     evidence,
     boundaries: buildBoundaries({
       routeDecision,
@@ -356,9 +370,16 @@ export function buildEvidenceBundleFromSnapshot({
   collectSnapshotRowsEvidence(questionJudgment, safeSnapshot, evidence);
   return {
     source: "snapshot",
+    question_type: "overview",
     source_period: buildSourcePeriod(outputContext, safeSnapshot, null),
     coverage_code: trimString(outputContext?.time_window_coverage_code) || "unknown",
     diagnostic_flags: [],
+    evidence_types:
+      trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE
+        ? []
+        : ["aggregate"],
+    missing_evidence_types: [],
+    analysis_confidence: trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.DIRECT_ANSWER ? "medium" : "low",
     evidence,
     boundaries: buildBoundaries({
       routeDecision,
@@ -390,6 +411,7 @@ export function buildRenderedAnswer({
   const answer = {
     style: resolveAnswerStyle(safeMode),
     summary,
+    question_type: trimString(safeBundle.question_type) || "overview",
     evidence,
     actions,
     boundaries,
@@ -400,6 +422,13 @@ export function buildRenderedAnswer({
       : [],
     route_code: trimString(routeDecision?.route?.code),
     primary_dimension_code: trimString(questionJudgment?.primary_dimension?.code),
+    evidence_types: Array.isArray(safeBundle.evidence_types)
+      ? safeBundle.evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
+    missing_evidence_types: Array.isArray(safeBundle.missing_evidence_types)
+      ? safeBundle.missing_evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
+    analysis_confidence: trimString(safeBundle.analysis_confidence) || "medium",
     next_questions: nextQuestions,
     conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
     output_shape:
