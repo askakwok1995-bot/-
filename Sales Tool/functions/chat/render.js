@@ -322,6 +322,88 @@ function buildSourcePeriod(outputContext, businessSnapshot, toolResult) {
   );
 }
 
+function endsWithSentencePunctuation(text) {
+  return /[。！？!?]$/u.test(trimString(text));
+}
+
+function ensureSentence(text) {
+  const normalized = trimString(text);
+  if (!normalized) {
+    return "";
+  }
+  return endsWithSentencePunctuation(normalized) ? normalized : `${normalized}。`;
+}
+
+function joinSentenceParts(parts, delimiter = "；") {
+  const safeParts = parts.map((item) => trimString(item)).filter((item) => item);
+  if (safeParts.length === 0) {
+    return "";
+  }
+  return ensureSentence(safeParts.join(delimiter));
+}
+
+function formatEvidenceSentence(evidence = []) {
+  const parts = evidence.slice(0, 4).map((item) => {
+    const label = trimString(item?.label);
+    const value = trimString(item?.value);
+    const insight = trimString(item?.insight);
+    if (!label || !value) {
+      return "";
+    }
+    return insight ? `${label}${value}，${insight}` : `${label}${value}`;
+  }).filter((item) => item);
+  if (parts.length === 0) {
+    return "";
+  }
+  return ensureSentence(`关键依据方面，${parts.join("；")}`);
+}
+
+function formatBoundariesSentence(boundaries = []) {
+  const parts = boundaries.slice(0, 3).map((item) => trimString(item)).filter((item) => item);
+  if (parts.length === 0) {
+    return "";
+  }
+  return ensureSentence(`需要注意的是，${parts.join("；")}`);
+}
+
+function formatActionsSentence(actions = []) {
+  const parts = actions.slice(0, 2).map((item) => {
+    const title = trimString(item?.title);
+    const timeline = trimString(item?.timeline);
+    const metric = trimString(item?.metric);
+    if (!title) {
+      return "";
+    }
+    const meta = [timeline ? `时间上建议在${timeline}` : "", metric ? `重点看${metric}` : ""].filter((item) => item);
+    return meta.length > 0 ? `${title}，${meta.join("，")}` : title;
+  }).filter((item) => item);
+  if (parts.length === 0) {
+    return "";
+  }
+  return ensureSentence(`建议下一步重点围绕${parts.join("；")}`);
+}
+
+function hasReportIntent(questionJudgment) {
+  return trimString(questionJudgment?.report_intent?.code) === "report";
+}
+
+function buildReportReply(answer) {
+  const sourcePeriod = trimString(answer?.source_period);
+  const title = sourcePeriod ? `${sourcePeriod} 销售分析报告` : "销售分析报告";
+  const summarySentence = ensureSentence(trimString(answer?.summary) || "当前区间已形成销售分析结论");
+  const evidenceSentence = formatEvidenceSentence(Array.isArray(answer?.evidence) ? answer.evidence : []);
+  const boundariesSentence = formatBoundariesSentence(Array.isArray(answer?.boundaries) ? answer.boundaries : []);
+  const actionsSentence = formatActionsSentence(Array.isArray(answer?.actions) ? answer.actions : []);
+  const body = [
+    `${title}`,
+    sourcePeriod ? ensureSentence(`本报告基于 ${sourcePeriod} 的当前可见业务数据生成，${trimString(summarySentence).replace(/。$/u, "")}`) : summarySentence,
+    evidenceSentence,
+    boundariesSentence,
+    actionsSentence,
+  ].filter((item) => item);
+  return body.join("\n\n");
+}
+
 function shouldDeriveStructuredAnswer(answer, routeDecision) {
   if (trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE) {
     return false;
@@ -421,6 +503,7 @@ export function buildRenderedAnswer({
   const boundaries = Array.isArray(safeBundle.boundaries) ? safeBundle.boundaries.slice(0, 6) : [];
   const actions = Array.isArray(safeBundle.actions) ? safeBundle.actions.slice(0, 6) : [];
   const nextQuestions = Array.isArray(safeBundle.next_questions) ? safeBundle.next_questions.slice(0, 6) : [];
+  const reportIntent = hasReportIntent(questionJudgment);
   const answer = {
     style: resolveAnswerStyle(safeMode),
     summary,
@@ -434,11 +517,16 @@ export function buildRenderedAnswer({
     next_questions: nextQuestions,
     conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
     highlights: buildHighlights(summary, evidence, boundaries),
+    output_shape: "text",
   };
-  const structured = shouldDeriveStructuredAnswer(answer, routeDecision) ? buildStructuredAnswer(answer) : null;
+  const structured = reportIntent || !shouldDeriveStructuredAnswer(answer, routeDecision) ? null : buildStructuredAnswer(answer);
+  const outputShape = reportIntent ? "report" : structured ? "structured" : "text";
+  answer.output_shape = outputShape;
+  const surfaceReply = reportIntent ? buildReportReply(answer) : trimString(replyText);
   return {
     answer,
     structured,
+    surfaceReply,
     responseAction: structured ? CHAT_RESPONSE_ACTIONS.STRUCTURED : CHAT_RESPONSE_ACTIONS.NATURAL,
     format: structured ? "structured" : "text_fallback",
     businessIntent: buildBusinessIntent(safeMode),
@@ -465,8 +553,8 @@ export function buildChatSuccessPayload({
     conversationState,
   });
   return {
-    reply: trimString(replyText),
-    surfaceReply: trimString(replyText),
+    reply: trimString(rendered.surfaceReply),
+    surfaceReply: trimString(rendered.surfaceReply),
     responseAction: rendered.responseAction,
     businessIntent: rendered.businessIntent,
     mode: rendered.mode,

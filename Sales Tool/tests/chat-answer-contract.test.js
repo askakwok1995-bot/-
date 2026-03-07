@@ -55,6 +55,8 @@ test("buildChatSuccessPayload keeps auto mode answer contract stable", () => {
 
   assert.equal(autoPayload.responseAction, "structured_answer");
   assert.equal(repeatedAutoPayload.responseAction, "structured_answer");
+  assert.equal(autoPayload.answer.output_shape, "structured");
+  assert.equal(repeatedAutoPayload.answer.output_shape, "structured");
   assert.equal(autoPayload.mode, "auto");
   assert.equal(repeatedAutoPayload.mode, "auto");
   assert.equal(autoPayload.businessIntent, "chat");
@@ -135,6 +137,98 @@ test("handleChatRequest accepts explicit auto mode", async () => {
   assert.equal(payload.mode, "auto");
   assert.equal(payload.answer?.style, "natural");
   assert.equal(payload.responseAction, "structured_answer");
+  assert.equal(payload.answer?.output_shape, "structured");
+});
+
+test("buildChatSuccessPayload renders report questions as natural report text instead of structured card", () => {
+  const evidenceBundle = {
+    source_period: "2025-01~2025-12",
+    evidence: [
+      { label: "销售额", value: "12.00万元", insight: "当前分析区间" },
+      { label: "销量", value: "300盒", insight: "当前分析区间" },
+    ],
+    actions: [{ title: "继续跟踪重点产品表现", timeline: "下次复盘前", metric: "销售额/贡献占比" }],
+    boundaries: ["当前回答基于现有口径给出方向性结论，暂不支持更细颗粒度拆解。"],
+    next_questions: ["按产品拆开看这个时间段的贡献结构。"],
+  };
+  const questionJudgment = {
+    primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, label: "整体" },
+    report_intent: { code: "report", label: "报告请求" },
+  };
+  const routeDecision = {
+    route: { code: ROUTE_DECISION_CODES.DIRECT_ANSWER, label: "直接回答" },
+  };
+
+  const payload = buildChatSuccessPayload({
+    mode: "auto",
+    replyText: "当前整体表现稳中向上。",
+    evidenceBundle,
+    questionJudgment,
+    routeDecision,
+    model: "stub-model",
+    requestId: "req-report",
+  });
+
+  assert.equal(payload.responseAction, "natural_answer");
+  assert.equal(payload.structured, null);
+  assert.equal(payload.answer.output_shape, "report");
+  assert.match(payload.reply, /销售分析报告/u);
+  assert.match(payload.reply, /关键依据方面/u);
+  assert.match(payload.reply, /建议下一步重点围绕/u);
+  assert.doesNotMatch(payload.reply, /继续追问|边界说明|下一步\n/u);
+});
+
+test("handleChatRequest returns natural report text for explicit report questions", async () => {
+  const context = buildContext({
+    message: "请给我一份2025年度销售分析报告",
+    mode: "auto",
+    business_snapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+  });
+
+  const response = await handleChatRequest(context, "req-answer-report", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async () => ({
+      ok: true,
+      reply: "2025年度整体销售保持增长，核心驱动主要来自重点产品与年末月份拉动。",
+      model: "tool-model",
+      outputContext: {
+        route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        boundary_needed: false,
+        refuse_mode: false,
+      },
+      toolRuntimeState: {
+        attempted: true,
+        used_tools: ["get_overall_summary"],
+        tool_call_count: 1,
+        rounds: 1,
+        final_route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        success: true,
+        fallback_reason: "",
+      },
+      toolCallTrace: [],
+      toolResult: {
+        coverage: { code: "full", message: "当前分析区间已完整覆盖。" },
+        range: { period: "2025-01~2025-12" },
+        summary: {
+          sales_amount: "12.00万元",
+          amount_achievement: "80.00%",
+          sales_volume: "300盒",
+          key_business_signals: ["最近月销售额上升。"],
+        },
+        rows: [{ period: "2025-10", sales_amount: "4.00万元" }],
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.responseAction, "natural_answer");
+  assert.equal(payload.structured, null);
+  assert.equal(payload.answer?.output_shape, "report");
+  assert.match(payload.reply, /销售分析报告/u);
+  assert.match(payload.reply, /建议下一步重点围绕/u);
 });
 
 test("handleChatRequest inherits previous time window from conversation_state on follow-up", async () => {

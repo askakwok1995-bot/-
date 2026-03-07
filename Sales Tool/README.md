@@ -689,6 +689,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 
 预期：
 - 成功返回 `200`，响应包含 `reply`（自然文本）与 `model`。
+- 明确的“销售分析报告/生成报告”类问题会返回自然段报告文本，`answer.output_shape=report`，不走结构化卡片。
 - 若未登录或 token 无效，返回 `401 UNAUTHORIZED`。
 - 若未配置 `GEMINI_API_KEY`，返回 `500 CONFIG_MISSING`。
 

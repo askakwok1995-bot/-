@@ -11,6 +11,15 @@ import {
   trimString,
 } from "./shared.js";
 
+const REPORT_INTENT_KEYWORDS = Object.freeze([
+  "销售分析报告",
+  "分析报告",
+  "生成报告",
+  "生成一份报告",
+  "生成区间内的销售分析报告",
+  "报告",
+]);
+
 export function isHospitalMonthlyDetailRequest(message, questionJudgment) {
   const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
   const granularityCode = trimString(questionJudgment?.granularity?.code);
@@ -88,11 +97,19 @@ export function judgePrimaryDimension(text, relevanceCode) {
   return QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
 }
 
+export function judgeReportIntent(text, relevanceCode) {
+  if (relevanceCode === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT || !text) {
+    return false;
+  }
+  return containsAnyKeyword(text, REPORT_INTENT_KEYWORDS);
+}
+
 export function buildQuestionJudgment(message) {
   const text = normalizeQuestionText(message);
   const relevanceCode = judgeRelevance(text);
   const granularityCode = judgeGranularity(text);
   const primaryDimensionCode = judgePrimaryDimension(text, relevanceCode);
+  const reportIntent = judgeReportIntent(text, relevanceCode);
 
   return {
     primary_dimension: {
@@ -106,6 +123,10 @@ export function buildQuestionJudgment(message) {
     relevance: {
       code: relevanceCode,
       label: QUESTION_JUDGMENT_LABELS.relevance[relevanceCode],
+    },
+    report_intent: {
+      code: reportIntent ? "report" : "none",
+      label: reportIntent ? "报告请求" : "非报告请求",
     },
   };
 }

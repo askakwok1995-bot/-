@@ -919,7 +919,9 @@ export function initAiChatUi(options = {}) {
       let hasRendered = false;
 
       const shouldRenderStructuredCard =
-        normalized.structured && normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY;
+        normalized.structured &&
+        normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY &&
+        toText(normalized.answer?.output_shape) !== "report";
       if (shouldRenderStructuredCard) {
         removeLiveMessage(liveMessage);
         hasRendered = appendStructuredAssistantMessage(normalized.structured);
