@@ -6,9 +6,6 @@ const CHAT_STATES = {
 };
 const CHAT_MODES = {
   AUTO: "auto",
-  BRIEFING: "briefing",
-  DIAGNOSIS: "diagnosis",
-  ACTION_PLAN: "action-plan",
 };
 const CHAT_RESPONSE_ACTIONS = {
   NATURAL: "natural_answer",
@@ -37,12 +34,7 @@ function isValidState(value) {
 }
 
 function isValidMode(value) {
-  return (
-    value === CHAT_MODES.AUTO ||
-    value === CHAT_MODES.BRIEFING ||
-    value === CHAT_MODES.DIAGNOSIS ||
-    value === CHAT_MODES.ACTION_PLAN
-  );
+  return value === CHAT_MODES.AUTO;
 }
 
 function normalizeMode(value) {
@@ -350,7 +342,6 @@ export function initAiChatUi(options = {}) {
     sheet: document.getElementById("ai-chat-sheet"),
     resizeBtn: document.getElementById("ai-chat-resize-btn"),
     closeBtn: document.getElementById("ai-chat-close-btn"),
-    modeButtons: Array.from(document.querySelectorAll(".ai-chat-mode-btn[data-chat-mode]")),
     messages: document.getElementById("ai-chat-messages"),
     form: document.getElementById("ai-chat-form"),
     input: document.getElementById("ai-chat-input"),
@@ -414,19 +405,8 @@ export function initAiChatUi(options = {}) {
     dom.resizeBtn.setAttribute("aria-label", "放大对话窗口");
   }
 
-  function updateModeControls() {
-    dom.modeButtons.forEach((button) => {
-      if (!(button instanceof HTMLButtonElement)) return;
-      const buttonMode = normalizeMode(button.dataset.chatMode);
-      const isActive = buttonMode === currentMode;
-      button.classList.toggle("is-active", isActive);
-      button.setAttribute("aria-pressed", isActive ? "true" : "false");
-    });
-  }
-
   function setMode(nextMode) {
     currentMode = normalizeMode(nextMode);
-    updateModeControls();
   }
 
   function getMode() {
@@ -740,7 +720,7 @@ export function initAiChatUi(options = {}) {
     liveMessage.isActive = false;
   }
 
-  function appendStructuredAssistantMessage(structured, mode) {
+  function appendStructuredAssistantMessage(structured) {
     const normalized = normalizeStructuredPayload(structured);
     if (!normalized) return false;
 
@@ -753,9 +733,9 @@ export function initAiChatUi(options = {}) {
     article.appendChild(summary);
 
     const sections = [
-      { title: "亮点", key: "highlights" },
-      { title: "风险", key: "risks" },
-      { title: "追问建议", key: "nextQuestions" },
+      { title: "结论要点", key: "highlights" },
+      { title: "边界说明", key: "risks" },
+      { title: "继续追问", key: "nextQuestions" },
     ];
 
     sections.forEach((item) => {
@@ -783,7 +763,7 @@ export function initAiChatUi(options = {}) {
       section.className = "ai-chat-structured-section";
       const title = document.createElement("h4");
       title.className = "ai-chat-structured-title";
-      title.textContent = "关键证据";
+      title.textContent = "依据";
       section.appendChild(title);
       const list = document.createElement("ul");
       list.className = "ai-chat-structured-list";
@@ -808,7 +788,7 @@ export function initAiChatUi(options = {}) {
       section.className = "ai-chat-structured-section";
       const title = document.createElement("h4");
       title.className = "ai-chat-structured-title";
-      title.textContent = "执行动作";
+      title.textContent = "下一步";
       section.appendChild(title);
       const list = document.createElement("ul");
       list.className = "ai-chat-structured-list";
@@ -830,8 +810,7 @@ export function initAiChatUi(options = {}) {
       section.appendChild(list);
       article.appendChild(section);
     }
-
-    article.dataset.chatMode = normalizeMode(mode);
+    article.dataset.chatMode = CHAT_MODES.AUTO;
     dom.messages.appendChild(article);
     scrollMessagesToBottom();
     return true;
@@ -843,7 +822,7 @@ export function initAiChatUi(options = {}) {
         reply: payload.trim(),
         surfaceReply: payload.trim(),
         structured: null,
-        mode: currentMode,
+        mode: CHAT_MODES.AUTO,
         format: "text_fallback",
         responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
@@ -858,7 +837,7 @@ export function initAiChatUi(options = {}) {
         reply: "",
         surfaceReply: "",
         structured: null,
-        mode: currentMode,
+        mode: CHAT_MODES.AUTO,
         format: "text_fallback",
         responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
@@ -875,11 +854,11 @@ export function initAiChatUi(options = {}) {
       toText(payload.message) ||
       toText(payload.text);
     const responseAction = normalizeResponseAction(payload.responseAction);
-    const businessIntent = toText(payload.businessIntent) || (responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED ? normalizeMode(payload.mode) : "chat");
+    const businessIntent = toText(payload.businessIntent) || "chat";
     const answer = payload.answer && typeof payload.answer === "object" ? payload.answer : null;
     const structured = normalizeStructuredPayload(payload.structured);
     const internalStructured = payload.internalStructured && typeof payload.internalStructured === "object" ? payload.internalStructured : null;
-    const mode = normalizeMode(payload.mode || currentMode);
+    const mode = normalizeMode(payload.mode);
     const format = payload.format === "structured" ? "structured" : "text_fallback";
     const requestId = toText(payload.requestId);
     const rawMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
@@ -963,10 +942,10 @@ export function initAiChatUi(options = {}) {
       let hasRendered = false;
 
       const shouldRenderStructuredCard =
-        normalized.responseAction === CHAT_RESPONSE_ACTIONS.STRUCTURED && normalized.structured;
+        normalized.structured && normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY;
       if (shouldRenderStructuredCard) {
         removeLiveMessage(liveMessage);
-        hasRendered = appendStructuredAssistantMessage(normalized.structured, normalized.mode);
+        hasRendered = appendStructuredAssistantMessage(normalized.structured);
       }
       if (!hasRendered && normalized.reply) {
         setLiveMessageText(liveMessage, normalized.reply);
@@ -1032,14 +1011,6 @@ export function initAiChatUi(options = {}) {
   dom.closeBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     close();
-  });
-
-  dom.modeButtons.forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setMode(button.dataset.chatMode);
-    });
   });
 
   dom.sheet.addEventListener("click", (event) => {

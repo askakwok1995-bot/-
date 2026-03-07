@@ -16,7 +16,9 @@ test("handleChatRequest returns structured JSON error and requestId when pre-gem
         message: "你好",
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_LEGACY_FALLBACK: "1",
+    },
   };
 
   const originalConsoleError = console.error;
@@ -61,7 +63,9 @@ test("handleChatRequest refuse path does not call Gemini", async () => {
         message: "今天天气怎么样",
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_LEGACY_FALLBACK: "1",
+    },
   };
 
   let geminiCalled = false;
@@ -98,7 +102,9 @@ test("handleChatRequest collapses need_more_data into bounded_answer after singl
         business_snapshot: {},
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_LEGACY_FALLBACK: "1",
+    },
   };
 
   let routeCallCount = 0;
@@ -229,7 +235,7 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
   assert.equal(legacyGeminiCalled, false);
 });
 
-test("handleChatRequest falls back to legacy phase2 when tool-first fails", async () => {
+test("handleChatRequest returns bounded local reply when tool-first fails and legacy fallback is disabled", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
       method: "POST",
@@ -303,11 +309,92 @@ test("handleChatRequest falls back to legacy phase2 when tool-first fails", asyn
 
   const payload = await response.json();
   assert.equal(response.status, 200);
+  assert.equal(payload.model, "local-template-tool-only-bounded");
+  assert.equal(payload.answer?.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.equal(payload.mode, "auto");
+  assert.equal(payload.businessIntent, "chat");
+  assert.match(payload.reply, /保守结论|继续追问/u);
+  assert.equal(legacyAvailabilityCalled, false);
+  assert.equal(legacyGeminiCalled, false);
+});
+
+test("handleChatRequest only enters legacy emergency fallback when CHAT_ENABLE_LEGACY_FALLBACK=1", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "这个月整体怎么样",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {
+      CHAT_ENABLE_LEGACY_FALLBACK: "1",
+    },
+  };
+
+  let legacyAvailabilityCalled = false;
+  let legacyGeminiCalled = false;
+  const response = await handleChatRequest(context, "req-tool-first-legacy-emergency", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async () => ({
+      ok: false,
+      fallbackReason: "tool_execution_failed",
+      toolRuntimeState: {
+        attempted: true,
+        used_tools: ["get_overall_summary"],
+        tool_call_count: 1,
+        rounds: 1,
+        final_route_code: "",
+        success: false,
+        fallback_reason: "tool_execution_failed",
+      },
+      toolCallTrace: [],
+    }),
+    buildQuestionJudgment: () => ({
+      primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, label: "整体" },
+      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+    }),
+    buildDataAvailability: () => {
+      legacyAvailabilityCalled = true;
+      return {
+        has_business_data: { code: DATA_AVAILABILITY_CODES.has_business_data.AVAILABLE, label: "有" },
+        dimension_availability: { code: DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE, label: "具备" },
+        answer_depth: { code: DATA_AVAILABILITY_CODES.answer_depth.FOCUSED, label: "重点分析" },
+        gap_hint_needed: { code: DATA_AVAILABILITY_CODES.gap_hint_needed.NO, label: "否" },
+        detail_request_mode: "generic",
+        hospital_monthly_support: "none",
+        product_hospital_support: "none",
+        hospital_named_support: "none",
+        product_full_support: "none",
+        product_named_support: "none",
+        product_named_match_mode: "none",
+        requested_product_count_value: 0,
+      };
+    },
+    buildRouteDecision: () => ({
+      route: { code: ROUTE_DECISION_CODES.DIRECT_ANSWER, label: "直接回答" },
+      reason_codes: ["sufficient"],
+    }),
+    callGemini: async () => {
+      legacyGeminiCalled = true;
+      return {
+        ok: true,
+        reply: "当前整体销售表现稳定，现有业务信号显示核心产品和医院贡献仍然集中，建议继续跟踪重点对象的变化。",
+        model: "legacy-model",
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
   assert.equal(payload.model, "legacy-model");
-  assert.equal(
-    payload.reply,
-    "当前整体销售表现稳定，现有业务信号显示核心产品和医院贡献仍然集中，建议继续跟踪重点对象的变化。",
-  );
   assert.equal(legacyAvailabilityCalled, true);
   assert.equal(legacyGeminiCalled, true);
 });
@@ -917,7 +1004,7 @@ test("handleChatRequest uses local deterministic fallback reply when Gemini dire
   assert.doesNotMatch(payload.reply, /high demand|超时|暂时无法完成/u);
 });
 
-test("handleChatRequest falls back once to legacy when deterministic direct-tool fails", async () => {
+test("handleChatRequest returns bounded local reply when deterministic direct-tool fails and legacy fallback is disabled", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
       method: "POST",
@@ -1000,6 +1087,8 @@ test("handleChatRequest falls back once to legacy when deterministic direct-tool
   const payload = await response.json();
   assert.equal(response.status, 200);
   assert.equal(autoToolCalled, false);
-  assert.equal(legacyGeminiCalled, true);
-  assert.equal(payload.model, "legacy-model");
+  assert.equal(legacyGeminiCalled, false);
+  assert.equal(payload.model, "local-template-tool-only-bounded");
+  assert.equal(payload.answer?.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.match(payload.reply, /Botox50|继续追问|保守结论/u);
 });

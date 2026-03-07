@@ -301,6 +301,88 @@ function buildTimeBoundaryRouteDecision() {
   };
 }
 
+function buildEmergencyBoundedDataAvailability() {
+  return {
+    has_business_data: { code: "available", label: "有" },
+    dimension_availability: { code: "partial", label: "部分具备" },
+    answer_depth: { code: "overall", label: "总体判断" },
+    gap_hint_needed: { code: "yes", label: "是" },
+    detail_request_mode: "generic",
+    hospital_monthly_support: "none",
+    product_hospital_support: "none",
+    hospital_named_support: "none",
+    product_full_support: "none",
+    product_named_support: "none",
+    product_named_match_mode: "none",
+    requested_product_count_value: 0,
+    product_hospital_hospital_count_value: 0,
+    product_hospital_zero_result: "no",
+  };
+}
+
+function buildEmergencyBoundedRouteDecision() {
+  return {
+    route: { code: ROUTE_DECISION_CODES.BOUNDED_ANSWER, label: "带边界回答" },
+    reason_codes: ["legacy_fallback_disabled"],
+  };
+}
+
+function isTruthyEnvFlag(value) {
+  const safeValue = trimString(value).toLocaleLowerCase();
+  return safeValue === "1" || safeValue === "true" || safeValue === "yes" || safeValue === "on";
+}
+
+function isLegacyFallbackEnabled(env) {
+  return isTruthyEnvFlag(getEnvString(env, "CHAT_ENABLE_LEGACY_FALLBACK"));
+}
+
+function buildEmergencyFollowupPrompts(questionJudgment, sourcePeriod) {
+  const periodText = trimString(sourcePeriod) || "当前时间范围";
+  const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  if (primaryDimensionCode === "product") {
+    return [
+      `这个产品在 ${periodText} 主要由哪些医院贡献？`,
+      `按月份看这个产品在 ${periodText} 的波动情况。`,
+    ];
+  }
+  if (primaryDimensionCode === "hospital") {
+    return [
+      `这家医院在 ${periodText} 的核心贡献产品是什么？`,
+      `按月份看这家医院在 ${periodText} 的波动情况。`,
+    ];
+  }
+  return [
+    `按产品拆开看 ${periodText} 的贡献结构。`,
+    `按医院看 ${periodText} 的主要贡献来源。`,
+  ];
+}
+
+function buildEmergencyBoundedReply({
+  questionJudgment,
+  businessSnapshot,
+  requestedTimeWindow,
+  comparisonTimeWindow,
+  timeCompareMode,
+  toolFallbackReason,
+} = {}) {
+  if (toolFallbackReason === "invalid_analysis_range") {
+    return "当前报表还没有有效的分析时间范围，请先在报表区选择起始月和结束月，再继续问整体、产品或医院表现。";
+  }
+
+  const sourcePeriod =
+    trimString(requestedTimeWindow?.period) ||
+    trimString(businessSnapshot?.analysis_range?.period) ||
+    "当前报表范围";
+  const primaryDimensionLabel = trimString(questionJudgment?.primary_dimension?.label) || "当前业务";
+  const compareHint =
+    timeCompareMode !== "none" && trimString(comparisonTimeWindow?.period)
+      ? `当前问题涉及 ${sourcePeriod} 对比 ${trimString(comparisonTimeWindow.period)}，`
+      : "";
+  const prompts = buildEmergencyFollowupPrompts(questionJudgment, sourcePeriod);
+
+  return `${compareHint}我先按 ${sourcePeriod} 给出保守结论：这类问题更适合围绕明确的时间范围、${primaryDimensionLabel}对象和命名范围继续追问。你可以继续问“${prompts[0]}”或“${prompts[1]}”。`;
+}
+
 function overrideQuestionJudgmentPrimaryDimension(questionJudgment, primaryDimensionCode) {
   const safeCode = trimString(primaryDimensionCode);
   const base = questionJudgment && typeof questionJudgment === "object" ? questionJudgment : null;
@@ -430,10 +512,11 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
   const buildOutputContextImpl = deps.buildOutputContext || buildOutputContext;
   const buildRefuseReplyTemplateImpl = deps.buildRefuseReplyTemplate || buildRefuseReplyTemplate;
   const callGeminiImpl = deps.callGemini || callGemini;
-  const normalizeOutputReplyImpl = deps.normalizeOutputReply || normalizeOutputReply;
-  const applyQualityControlImpl = deps.applyQualityControl || applyQualityControl;
-  const buildPhase2TraceImpl = deps.buildPhase2Trace || buildPhase2Trace;
-  const logPhase2TraceImpl = deps.logPhase2Trace || logPhase2Trace;
+    const normalizeOutputReplyImpl = deps.normalizeOutputReply || normalizeOutputReply;
+    const applyQualityControlImpl = deps.applyQualityControl || applyQualityControl;
+    const buildPhase2TraceImpl = deps.buildPhase2Trace || buildPhase2Trace;
+    const logPhase2TraceImpl = deps.logPhase2Trace || logPhase2Trace;
+    const legacyFallbackEnabled = isLegacyFallbackEnabled(context.env);
   const runToolFirstChatImpl = deps.runToolFirstChat || runToolFirstChat;
   const createInitialToolRuntimeStateImpl = deps.createInitialToolRuntimeState || createInitialToolRuntimeState;
   const buildDeterministicToolRouteImpl = deps.buildDeterministicToolRoute || buildDeterministicToolRoute;
@@ -620,7 +703,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         model: "local-template-time-boundary",
         requestId,
         env: context.env,
-        toolRouteMode: "legacy",
+        toolRouteMode: "tool_only",
         toolRouteType: "none",
         toolRouteName: "",
         toolRouteFallbackReason:
@@ -670,7 +753,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         model: "local-template-time-boundary",
         requestId,
         env: context.env,
-        toolRouteMode: "legacy",
+        toolRouteMode: "tool_only",
         toolRouteType: "none",
         toolRouteName: "",
         toolRouteFallbackReason:
@@ -751,7 +834,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     let toolRuntimeState = createInitialToolRuntimeStateImpl();
     let toolCallTrace = [];
     let toolFallbackReason = "";
-    let toolRouteMode = "legacy";
+    let toolRouteMode = "tool_only";
     let toolRouteType = "none";
     let toolRouteName = "";
     const deterministicToolRoute = buildDeterministicToolRouteImpl({
@@ -832,7 +915,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           logPhase2TraceImpl,
         });
       }
-      toolRouteMode = "legacy";
+      toolRouteMode = "tool_only";
     } else if (toolWindow.valid) {
       toolRouteMode = "auto";
       stage = "tool";
@@ -890,11 +973,59 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           logPhase2TraceImpl,
         });
       }
-      toolRouteMode = "legacy";
+      toolRouteMode = "tool_only";
+    }
+
+    if (!legacyFallbackEnabled) {
+      const emergencyDataAvailability = buildEmergencyBoundedDataAvailability();
+      const emergencyRouteDecision = buildEmergencyBoundedRouteDecision();
+      const emergencyOutputContext = {
+        ...buildOutputContextImpl(emergencyRouteDecision, planningQuestionJudgment, emergencyDataAvailability),
+        ...requestedTimeWindowFields,
+        ...comparisonTimeWindowFields,
+        local_response_mode:
+          toolFallbackReason === "invalid_analysis_range" ? "analysis_range_required" : "legacy_disabled_bounded",
+      };
+      return buildSuccessChatResponse({
+        mode,
+        businessSnapshot: scopedBusinessSnapshot,
+        questionJudgment: planningQuestionJudgment,
+        dataAvailability: emergencyDataAvailability,
+        sessionState,
+        routeDecision: emergencyRouteDecision,
+        retrievalState: buildToolPathRetrievalState(toolRuntimeState, toolRouteType),
+        outputContext: emergencyOutputContext,
+        replyText: buildEmergencyBoundedReply({
+          questionJudgment: planningQuestionJudgment,
+          businessSnapshot: scopedBusinessSnapshot,
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          timeCompareMode,
+          toolFallbackReason,
+        }),
+        model: toolFallbackReason === "invalid_analysis_range" ? "local-template-analysis-range" : "local-template-tool-only-bounded",
+        requestId,
+        env: context.env,
+        toolRouteMode: "legacy_disabled",
+        toolRouteType,
+        toolRouteName,
+        toolRouteFallbackReason: toolFallbackReason || "tool_path_unstable",
+        forcedBounded: true,
+        requestedProducts,
+        requestedHospitals,
+        requestedTimeWindow,
+        comparisonTimeWindow,
+        timeCompareMode,
+        normalizeOutputReplyImpl,
+        applyQualityControlImpl,
+        buildPhase2TraceImpl,
+        logPhase2TraceImpl,
+      });
     }
 
     // Legacy fallback is a single保底链路：仅在 analysis_range 无效、tool-first 失败/超限/异常
     // 或未形成稳定最终回答时进入。新业务能力应优先进入 tool executors，而不是继续扩 fallback。
+    toolRouteMode = "legacy_emergency";
     const effectiveQuestionJudgment = buildEffectiveQuestionJudgment(questionJudgment, {
       productFullRequested,
       productHospitalRequested,

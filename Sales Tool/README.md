@@ -738,17 +738,17 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 - `minimal_patch`：就地补丁（去内部词、补示例、补边界句、去尾部重复）。  
 - `safe_fallback`：严重异常或补丁后仍不稳定时，按 route 走最小安全模板。  
 
-### 11.14 Tool-first（Hybrid V1）
+### 11.14 Tool-first（当前主路径）
 
-当前聊天后端已引入 `tool-first + legacy fallback` 的混合路径：
+当前聊天后端的主路径已收敛为 `deterministic + AUTO tool-first`：
 
 1. 轻量前置判断只保留两类用途：
    - `relevance=irrelevant` 时直接走现有 `refuse`
-   - `analysis_range` 无效时跳过 tool-first，回退现有 Phase 2 保底链路
-2. 对于相关业务问题，优先使用 Gemini `function calling`
-3. tool-first 失败、空回复、工具异常、超限时，只回退 legacy Phase 2 一次
-4. `/api/chat` 对外请求/响应结构不变，前端 UI 不需要改造
-5. 新增业务语义默认优先进入 tool executors；legacy fallback 只做保底，不再作为主扩展面
+   - 时间范围缺失、年份歧义、覆盖不完整时直接走本地 `bounded_answer`
+2. 对于相关业务问题，优先使用确定性工具路由或 Gemini `function calling`
+3. `legacy fallback` 已降级为应急路径，只有 `CHAT_ENABLE_LEGACY_FALLBACK=1` 时才会启用
+4. 默认情况下，tool 路径未形成稳定回答时，服务端返回本地保守边界答复，不再自动回退旧 Phase 2
+5. 新增业务语义默认只进入 tool executors；legacy 不再作为主扩展面
 
 V1 首批仅开放 5 类受控业务工具：
 
@@ -772,14 +772,15 @@ V1 首批仅开放 5 类受控业务工具：
 - 不重新发明第三套统计口径
 - `product_full / product_named / hospital_named / product_hospital / hospital_monthly` 的现有成熟匹配规则继续复用，只是从“静态补强优先”迁移为“工具执行器优先”
 
-回退规则：
+应急规则：
 
-- 只要 tool-first 未形成稳定最终文本，就回退到 legacy Phase 2 一次
-- 若 tool-first 和 fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`
+- 默认不开启 legacy；若 tool-first 未形成稳定回答，直接收敛为本地 `bounded_answer`
+- 仅在显式开启 `CHAT_ENABLE_LEGACY_FALLBACK=1` 时，才允许进入 legacy emergency fallback 一次
+- 若 tool-first 和 emergency fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`
 
 ### 11.15 高置信问题确定性工具路由（Phase T1）
 
-在 Hybrid V1 的 `tool-first + legacy fallback` 之上，当前已新增一层确定性工具路由，用于解决“同一个高置信结构化问题有时调工具、有时不调”的不稳定问题。
+在当前 `deterministic + AUTO tool-first` 主路径之上，系统已新增一层确定性工具路由，用于解决“同一个高置信结构化问题有时调工具、有时不调”的不稳定问题。
 
 固定优先级：
 
@@ -794,7 +795,7 @@ V1 首批仅开放 5 类受控业务工具：
 - 后端直接指定并执行唯一工具
 - direct-tool 路径一次只执行 1 个工具，不做二次 tool loop
 - direct-tool 成功时，以工具结果作为唯一主事实源，再调用 Gemini 只负责自然语言表达
-- direct-tool 失败或 `analysis_range` 无效时，回退 legacy fallback 一次
+- direct-tool 失败或 `analysis_range` 无效时，默认回本地保守边界答复；仅在显式开启 legacy emergency fallback 时才进入旧链路
 
 当前纳入确定性工具路由的高置信问法：
 
@@ -845,14 +846,14 @@ V1 已支持：
 
 覆盖判定：
 
-- `full`：请求时间区间完全落在当前 `analysis_range` 内，允许继续执行 deterministic tool、AUTO tool-first 或 legacy fallback
+- `full`：请求时间区间完全落在当前 `analysis_range` 内，允许继续执行 deterministic tool、AUTO tool-first，必要时才进入 legacy emergency fallback
 - `partial`：请求时间区间仅部分落在当前 `analysis_range` 内，不自动裁交集回答，直接进入时间边界说明路径
 - `none`：请求时间区间完全不在当前 `analysis_range` 内，不自动改成报表尾部时间，直接进入时间边界说明路径
 
 当前收口规则：
 
 - 若 `time_window_coverage=full`，工具执行使用请求子窗口，而不是整段 `analysis_range`
-- 若 `time_window_coverage=partial|none`，不再进入 deterministic tool、AUTO tool-first 或 legacy fallback 业务回答链
+- 若 `time_window_coverage=partial|none`，不再进入 deterministic tool、AUTO tool-first 或 legacy emergency fallback 业务回答链
 - 时间边界回答必须同时写出：
   - 用户请求的真实时间区间
   - 当前可用分析区间
@@ -891,7 +892,7 @@ V1 已支持：
 
 当前时间边界规则继续保持收口：
 
-- 裸季度命中但无唯一年份锚点时，不进入 deterministic tool、不进入 AUTO tool-first、不进入 legacy fallback 业务回答
+- 裸季度命中但无唯一年份锚点时，不进入 deterministic tool、不进入 AUTO tool-first、不进入 legacy emergency fallback 业务回答
 - 必须明确说明“用户提到的是未写年份的季度，当前可用区间无法唯一确定所属年份”
 - 可补一句“若你希望，我可以按当前报表所在年份的 Q4 来分析”，但不自动替用户选年份
 

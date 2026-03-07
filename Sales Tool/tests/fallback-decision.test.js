@@ -126,7 +126,7 @@ test("product_hospital zero-result remains answerable instead of missing data", 
   assert.equal(dataAvailability.gap_hint_needed.code, "no");
 });
 
-test("handleChatRequest skips tool-first and goes legacy fallback when analysis_range is invalid", async () => {
+test("handleChatRequest returns local analysis-range boundary reply when analysis_range is invalid and legacy fallback is disabled", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
       method: "POST",
@@ -197,6 +197,8 @@ test("handleChatRequest skips tool-first and goes legacy fallback when analysis_
   assert.equal(response.status, 200);
   assert.equal(directToolCalled, false);
   assert.equal(toolCalled, false);
-  assert.equal(legacyGeminiCalled, true);
-  assert.equal(payload.model, "legacy-model");
+  assert.equal(legacyGeminiCalled, false);
+  assert.equal(payload.model, "local-template-analysis-range");
+  assert.equal(payload.answer?.route_code, "bounded_answer");
+  assert.match(payload.reply, /分析时间范围|起始月和结束月/u);
 });

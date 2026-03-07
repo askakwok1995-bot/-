@@ -1,4 +1,4 @@
-import { CHAT_MODES, CHAT_RESPONSE_ACTIONS, buildBusinessIntent, isStructuredChatMode, normalizeChatMode, resolveAnswerStyle } from "./contracts.js";
+import { CHAT_RESPONSE_ACTIONS, buildBusinessIntent, normalizeChatMode, resolveAnswerStyle } from "./contracts.js";
 import { QUESTION_JUDGMENT_CODES, ROUTE_DECISION_CODES, normalizeNumericValue, trimString } from "./shared.js";
 
 function getReplySummary(replyText) {
@@ -322,6 +322,21 @@ function buildSourcePeriod(outputContext, businessSnapshot, toolResult) {
   );
 }
 
+function shouldDeriveStructuredAnswer(answer, routeDecision) {
+  if (trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE) {
+    return false;
+  }
+  if (!trimString(answer?.summary)) {
+    return false;
+  }
+  return (
+    (Array.isArray(answer?.evidence) && answer.evidence.length > 0) ||
+    (Array.isArray(answer?.boundaries) && answer.boundaries.length > 0) ||
+    (Array.isArray(answer?.actions) && answer.actions.length > 0) ||
+    (Array.isArray(answer?.next_questions) && answer.next_questions.length > 0)
+  );
+}
+
 export function buildEvidenceBundleFromToolResult({
   toolResult,
   outputContext,
@@ -420,7 +435,7 @@ export function buildRenderedAnswer({
     conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
     highlights: buildHighlights(summary, evidence, boundaries),
   };
-  const structured = isStructuredChatMode(safeMode) ? buildStructuredAnswer(answer) : null;
+  const structured = shouldDeriveStructuredAnswer(answer, routeDecision) ? buildStructuredAnswer(answer) : null;
   return {
     answer,
     structured,

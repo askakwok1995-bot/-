@@ -19,7 +19,7 @@ function buildContext(body) {
   };
 }
 
-test("buildChatSuccessPayload keeps core facts stable across auto and diagnosis modes", () => {
+test("buildChatSuccessPayload keeps core facts stable when deprecated modes are normalized to auto", () => {
   const evidenceBundle = {
     source_period: "2025-01~2025-12",
     evidence: [{ label: "销售额", value: "12.00万元", insight: "当前分析区间" }],
@@ -43,23 +43,29 @@ test("buildChatSuccessPayload keeps core facts stable across auto and diagnosis 
     model: "stub-model",
     requestId: "req-auto",
   });
-  const diagnosisPayload = buildChatSuccessPayload({
+  const deprecatedModePayload = buildChatSuccessPayload({
     mode: "diagnosis",
     replyText: "当前整体表现稳中向上。",
     evidenceBundle,
     questionJudgment,
     routeDecision,
     model: "stub-model",
-    requestId: "req-diagnosis",
+    requestId: "req-deprecated-mode",
   });
 
-  assert.equal(autoPayload.responseAction, "natural_answer");
-  assert.equal(diagnosisPayload.responseAction, "structured_answer");
-  assert.equal(autoPayload.answer.source_period, diagnosisPayload.answer.source_period);
-  assert.deepEqual(autoPayload.answer.evidence, diagnosisPayload.answer.evidence);
+  assert.equal(autoPayload.responseAction, "structured_answer");
+  assert.equal(deprecatedModePayload.responseAction, "structured_answer");
+  assert.equal(autoPayload.mode, "auto");
+  assert.equal(deprecatedModePayload.mode, "auto");
+  assert.equal(autoPayload.businessIntent, "chat");
+  assert.equal(deprecatedModePayload.businessIntent, "chat");
+  assert.equal(autoPayload.answer.style, "natural");
+  assert.equal(deprecatedModePayload.answer.style, "natural");
+  assert.equal(autoPayload.answer.source_period, deprecatedModePayload.answer.source_period);
+  assert.deepEqual(autoPayload.answer.evidence, deprecatedModePayload.answer.evidence);
 });
 
-test("handleChatRequest returns structured answer envelope when diagnosis mode is requested", async () => {
+test("handleChatRequest keeps deprecated mode input backward compatible but returns single default envelope", async () => {
   const context = buildContext({
     message: "这个情况如何",
     mode: "diagnosis",
@@ -106,9 +112,9 @@ test("handleChatRequest returns structured answer envelope when diagnosis mode i
   const payload = await response.json();
   assert.equal(response.status, 200);
   assert.equal(payload.responseAction, "structured_answer");
-  assert.equal(payload.businessIntent, "diagnosis");
-  assert.equal(payload.mode, "diagnosis");
-  assert.equal(payload.answer?.style, "diagnosis");
+  assert.equal(payload.businessIntent, "chat");
+  assert.equal(payload.mode, "auto");
+  assert.equal(payload.answer?.style, "natural");
   assert.equal(payload.answer?.source_period, "2025-01~2025-12");
   assert.ok(payload.structured?.summary);
   assert.ok(payload.structured?.evidence?.some((item) => item.value === "12.00万元"));
