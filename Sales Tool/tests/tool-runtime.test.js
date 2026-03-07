@@ -813,6 +813,191 @@ test("runToolFirstChat continues after planner resubmission succeeds", async () 
   assert.equal(result.ok, true);
   assert.equal(geminiCallCount, 3);
   assert.deepEqual(toolCalls, ["get_share_breakdown"]);
-  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
   assert.deepEqual(result.evidenceTypesCompleted, ["breakdown", "ranking"]);
+  assert.deepEqual(result.missingEvidenceTypes, []);
+  assert.equal(result.analysisConfidence, "high");
+});
+
+test("runToolFirstChat keeps planner required_evidence for report when explicitly provided", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析产品销售结构",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-report-required-evidence-explicit",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["breakdown"],
+                            requested_views: ["get_share_breakdown"],
+                            required_tool_call_min: 1,
+                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内，产品销售结构集中，头部产品贡献占比较高。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async () => ({
+        result: {
+          range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+          matched_entities: { products: [], hospitals: [] },
+          unmatched_entities: { products: [], hospitals: [] },
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          summary: { sales_amount: "2826.20万元" },
+          rows: [{ row_label: "结构:Botox50", sales_share: "37.68%" }],
+        },
+        meta: {
+          detail_request_mode: "generic",
+          coverage_code: "full",
+          evidence_types: ["breakdown", "ranking"],
+        },
+      }),
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.deepEqual(result.plannerState?.required_evidence, ["breakdown"]);
+  assert.deepEqual(result.evidenceTypesCompleted, ["breakdown", "ranking"]);
+  assert.deepEqual(result.missingEvidenceTypes, []);
+});
+
+test("runToolFirstChat falls back to question_type default evidence only when planner required_evidence is empty", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "给我产品分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-report-required-evidence-fallback",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "detail",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: [],
+                            requested_views: ["scope_aggregate"],
+                            synthesis_expectation: "需要完整产品报告。",
+                            required_tool_call_min: 1,
+                            initial_tools: [{ name: "scope_aggregate", args_json: "{\"dimension\":\"product\"}" }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前产品表现有一定基础，但更完整的报告仍需要补充趋势、结构和风险证据。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async () => ({
+        result: {
+          range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+          matched_entities: { products: ["Botox50"], hospitals: [] },
+          unmatched_entities: { products: [], hospitals: [] },
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          summary: { sales_amount: "18.00万元" },
+          rows: [{ product_name: "Botox50", sales_amount: "18.00万元" }],
+        },
+        meta: {
+          detail_request_mode: "generic",
+          coverage_code: "full",
+          evidence_types: ["aggregate"],
+          matched_products: ["Botox50"],
+        },
+      }),
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.deepEqual(result.plannerState?.required_evidence, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
+  assert.deepEqual(result.missingEvidenceTypes, ["timeseries", "breakdown", "diagnostics"]);
 });

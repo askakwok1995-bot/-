@@ -507,9 +507,8 @@ function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
   const requiredEvidence = normalizeEvidenceTypes(plannerArgs?.required_evidence);
   const normalizedRequiredEvidence = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     ? []
-    :
-    requiredEvidence.length > 0
-      ? Array.from(new Set([...deriveRequiredEvidenceByQuestionType(questionType), ...requiredEvidence]))
+    : requiredEvidence.length > 0
+      ? requiredEvidence
       : deriveRequiredEvidenceByQuestionType(questionType);
   const requiredToolCallMinRaw = Number(plannerArgs?.required_tool_call_min);
   const requiredToolCallMin = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
