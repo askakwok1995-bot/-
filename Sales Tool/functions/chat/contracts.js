@@ -1,8 +1,7 @@
+import { trimString } from "./shared.js";
+
 export const CHAT_MODES = Object.freeze({
   AUTO: "auto",
-  BRIEFING: "briefing",
-  DIAGNOSIS: "diagnosis",
-  ACTION_PLAN: "action-plan",
 });
 
 export const CHAT_RESPONSE_ACTIONS = Object.freeze({
@@ -13,19 +12,19 @@ export const CHAT_RESPONSE_ACTIONS = Object.freeze({
 
 export const ANSWER_STYLES = Object.freeze({
   NATURAL: "natural",
-  BRIEFING: "briefing",
-  DIAGNOSIS: "diagnosis",
-  ACTION_PLAN: "action_plan",
 });
 
 export function normalizeChatMode(value) {
-  void value;
+  const candidate = trimString(value).toLocaleLowerCase();
+  if (candidate === CHAT_MODES.AUTO) {
+    return CHAT_MODES.AUTO;
+  }
   return CHAT_MODES.AUTO;
 }
 
-export function isStructuredChatMode(mode) {
-  normalizeChatMode(mode);
-  return false;
+export function isValidChatMode(value) {
+  const candidate = trimString(value).toLocaleLowerCase();
+  return !candidate || candidate === CHAT_MODES.AUTO;
 }
 
 export function resolveAnswerStyle(mode) {

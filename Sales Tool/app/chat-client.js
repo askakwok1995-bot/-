@@ -31,7 +31,6 @@ function createEmptyBusinessSnapshot() {
   };
 }
 
-const DEFAULT_CHAT_MODE = "auto";
 
 function isValidYm(value) {
   const matched = trimString(value).match(/^(\d{4})-(\d{2})$/);
@@ -339,7 +338,6 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
 
     const requestBody = {
       message: safeMessage,
-      mode: DEFAULT_CHAT_MODE,
       history: Array.isArray(options?.history) ? options.history : [],
       business_snapshot: typeof getBusinessSnapshot === "function" ? getBusinessSnapshot() : createEmptyBusinessSnapshot(),
       conversation_state:
@@ -375,7 +373,7 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
       surfaceReply: reply,
       responseAction: trimString(payload?.responseAction) || "natural_answer",
       businessIntent: trimString(payload?.businessIntent) || "chat",
-      mode: trimString(payload?.mode) || DEFAULT_CHAT_MODE,
+      mode: trimString(payload?.mode) || "auto",
       format: trimString(payload?.format),
       structured: payload?.structured && typeof payload.structured === "object" ? payload.structured : null,
       answer: payload?.answer && typeof payload.answer === "object" ? payload.answer : null,

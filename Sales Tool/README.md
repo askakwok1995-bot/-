@@ -290,7 +290,7 @@ window.__APP_CONFIG__ = {
 
 `POST /api/chat` 请求体新增可选字段 `business_snapshot`（向后兼容）：
 
-- `message/mode/history` 兼容保留；
+- `message/history` 兼容保留；`mode` 仅支持 `auto` 或省略；
 - `business_snapshot` 为业务输入层，首版采用“8类骨架完整、5类必填、3类可空”的最小摘要策略。
 
 骨架字段（snake_case）：

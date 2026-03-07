@@ -4,9 +4,6 @@ const CHAT_STATES = {
   COMPACT: "compact",
   EXPANDED: "expanded",
 };
-const CHAT_MODES = {
-  AUTO: "auto",
-};
 const CHAT_RESPONSE_ACTIONS = {
   NATURAL: "natural_answer",
   STRUCTURED: "structured_answer",
@@ -31,15 +28,6 @@ let initialized = false;
 
 function isValidState(value) {
   return value === CHAT_STATES.CLOSED || value === CHAT_STATES.COMPACT || value === CHAT_STATES.EXPANDED;
-}
-
-function isValidMode(value) {
-  return value === CHAT_MODES.AUTO;
-}
-
-function normalizeMode(value) {
-  const candidate = String(value || "").trim();
-  return isValidMode(candidate) ? candidate : CHAT_MODES.AUTO;
 }
 
 function normalizeResponseAction(value) {
@@ -369,7 +357,6 @@ export function initAiChatUi(options = {}) {
   }
 
   let state = CHAT_STATES.CLOSED;
-  let currentMode = normalizeMode(options.initialMode);
   let sendHandler = null;
   let isSending = false;
   let sessionHistory = [];
@@ -403,14 +390,6 @@ export function initAiChatUi(options = {}) {
 
     dom.resizeBtn.setAttribute("data-mode", "expand");
     dom.resizeBtn.setAttribute("aria-label", "放大对话窗口");
-  }
-
-  function setMode(nextMode) {
-    currentMode = normalizeMode(nextMode);
-  }
-
-  function getMode() {
-    return currentMode;
   }
 
   function applyState(nextState) {
@@ -810,7 +789,6 @@ export function initAiChatUi(options = {}) {
       section.appendChild(list);
       article.appendChild(section);
     }
-    article.dataset.chatMode = CHAT_MODES.AUTO;
     dom.messages.appendChild(article);
     scrollMessagesToBottom();
     return true;
@@ -822,7 +800,7 @@ export function initAiChatUi(options = {}) {
         reply: payload.trim(),
         surfaceReply: payload.trim(),
         structured: null,
-        mode: CHAT_MODES.AUTO,
+        mode: "auto",
         format: "text_fallback",
         responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
@@ -837,7 +815,7 @@ export function initAiChatUi(options = {}) {
         reply: "",
         surfaceReply: "",
         structured: null,
-        mode: CHAT_MODES.AUTO,
+        mode: "auto",
         format: "text_fallback",
         responseAction: CHAT_RESPONSE_ACTIONS.NATURAL,
         businessIntent: "chat",
@@ -858,7 +836,7 @@ export function initAiChatUi(options = {}) {
     const answer = payload.answer && typeof payload.answer === "object" ? payload.answer : null;
     const structured = normalizeStructuredPayload(payload.structured);
     const internalStructured = payload.internalStructured && typeof payload.internalStructured === "object" ? payload.internalStructured : null;
-    const mode = normalizeMode(payload.mode);
+    const mode = toText(payload.mode) || "auto";
     const format = payload.format === "structured" ? "structured" : "text_fallback";
     const requestId = toText(payload.requestId);
     const rawMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
@@ -927,7 +905,6 @@ export function initAiChatUi(options = {}) {
     try {
       const result = await Promise.resolve(
         sendHandler(text, {
-          mode: currentMode,
           history: getSessionHistory(),
           conversationState: getConversationState(),
           onThinking: (message) => {
@@ -1042,8 +1019,6 @@ export function initAiChatUi(options = {}) {
     openExpanded,
     close,
     getState: () => state,
-    getMode,
-    setMode,
     getSessionHistory,
     clearSessionHistory,
     setSendHandler: (handler) => {

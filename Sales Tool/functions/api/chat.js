@@ -45,7 +45,7 @@ import {
   resolveConversationContext,
   resolveConversationEntityScope,
 } from "../chat/conversation-state.js";
-import { normalizeChatMode } from "../chat/contracts.js";
+import { isValidChatMode, normalizeChatMode } from "../chat/contracts.js";
 import { buildChatSuccessPayload, buildEvidenceBundleFromSnapshot, buildEvidenceBundleFromToolResult } from "../chat/render.js";
 import {
   applyRequestedTimeWindowToSnapshot,
@@ -547,8 +547,18 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       return errorResponse(CHAT_ERROR_CODES.BAD_REQUEST, "请求体必须是合法 JSON。", 400, requestId);
     }
 
+    const rawMode = trimString(body?.mode);
+    if (!isValidChatMode(rawMode)) {
+      return errorResponse(
+        CHAT_ERROR_CODES.BAD_REQUEST,
+        "mode 仅支持 auto；briefing、diagnosis、action-plan 已移除。",
+        400,
+        requestId,
+      );
+    }
+
     const message = trimString(body?.message);
-    const mode = normalizeChatMode(body?.mode);
+    const mode = normalizeChatMode(rawMode);
     const incomingConversationState = normalizeConversationState(body?.conversation_state);
     if (!message) {
       return errorResponse(CHAT_ERROR_CODES.MESSAGE_REQUIRED, "message 不能为空。", 400, requestId);
