@@ -1059,7 +1059,6 @@ export function initAiChatUi(options = {}) {
   window[CHAT_API_KEY] = api;
   initialized = true;
   updateComposerState();
-  updateModeControls();
   refreshSystemIntro();
 
   if (isValidState(options.initialState) && options.initialState !== CHAT_STATES.CLOSED) {
