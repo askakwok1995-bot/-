@@ -42,6 +42,10 @@ function pushEvidenceItem(bucket, label, value, insight = "") {
 }
 
 function buildRowValueText(row) {
+  const directText = trimString(row?.text);
+  if (directText) {
+    return directText;
+  }
   const salesAmount = trimString(row?.sales_amount);
   const salesVolume = trimString(row?.sales_volume);
   const salesShare = trimString(row?.sales_share);
@@ -110,6 +114,7 @@ function collectToolRowsEvidence(toolResult, bucket) {
   const rows = Array.isArray(toolResult?.rows) ? toolResult.rows : [];
   rows.slice(0, 3).forEach((row, index) => {
     const label =
+      trimString(row?.row_label) ||
       trimString(row?.hospital_name) ||
       trimString(row?.product_name) ||
       trimString(row?.period) ||

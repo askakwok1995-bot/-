@@ -79,3 +79,44 @@ test("scope_diagnostics returns unified envelope with diagnostics evidence", asy
   assert.ok(Array.isArray(result.result.rows));
   assert.deepEqual(result.meta.evidence_types, ["diagnostics"]);
 });
+
+test("get_sales_overview_brief returns macro overview envelope", async () => {
+  const runtimeContext = createRuntimeContext();
+  const result = await executeToolByName(TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF, { limit: 4 }, runtimeContext);
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(Array.isArray(result.result.rows));
+  assert.ok(result.result.rows.some((row) => String(row.row_label || "").startsWith("趋势:")));
+  assert.ok(Array.isArray(result.result.summary.top_products));
+  assert.ok(Array.isArray(result.result.summary.top_hospitals));
+  assert.deepEqual(result.meta.evidence_types, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
+  assert.equal(result.meta.analysis_view, "sales_overview_brief");
+});
+
+test("get_sales_trend_brief returns macro trend envelope", async () => {
+  const runtimeContext = createRuntimeContext();
+  const result = await executeToolByName(TOOL_NAMES.GET_SALES_TREND_BRIEF, { limit: 4 }, runtimeContext);
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(Array.isArray(result.result.rows));
+  assert.ok(result.result.rows.some((row) => String(row.row_label || "").startsWith("趋势:")));
+  assert.ok("anomaly_count" in (result.result.summary || {}));
+  assert.deepEqual(result.meta.evidence_types, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
+  assert.equal(result.meta.analysis_view, "sales_trend_brief");
+});
+
+test("get_dimension_overview_brief returns macro dimension envelope", async () => {
+  const runtimeContext = createRuntimeContext();
+  const result = await executeToolByName(
+    TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF,
+    { dimension: "hospital", limit: 4 },
+    runtimeContext,
+  );
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(Array.isArray(result.result.rows));
+  assert.ok(result.result.rows.some((row) => String(row.row_label || "").startsWith("医院:")));
+  assert.equal(result.result.summary.overview_dimension, "hospital");
+  assert.deepEqual(result.meta.evidence_types, ["aggregate", "breakdown", "ranking"]);
+  assert.equal(result.meta.analysis_view, "hospital_overview_brief");
+});

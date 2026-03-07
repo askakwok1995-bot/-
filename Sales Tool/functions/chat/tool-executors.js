@@ -39,6 +39,9 @@ import {
 
 const TOOL_TREND_LIMIT = ON_DEMAND_MAX_WINDOW_MONTHS;
 const TOOL_EVIDENCE_TYPE_MAP = Object.freeze({
+  [TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF]: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+  [TOOL_NAMES.GET_SALES_TREND_BRIEF]: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+  [TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF]: ["aggregate", "breakdown", "ranking"],
   [TOOL_NAMES.SCOPE_AGGREGATE]: ["aggregate"],
   [TOOL_NAMES.SCOPE_TIMESERIES]: ["timeseries"],
   [TOOL_NAMES.SCOPE_BREAKDOWN]: ["breakdown", "ranking"],
@@ -98,6 +101,41 @@ function buildCoverageMessage(code, matchedCount, totalCount, zeroResultText = "
     return `当前请求范围仅部分覆盖（已覆盖 ${matchedCount}/${totalCount || matchedCount}）。`;
   }
   return "当前请求范围暂无可用覆盖。";
+}
+
+function mergeTextArrays(...values) {
+  return uniqueStrings(values.flatMap((value) => (Array.isArray(value) ? value : [])));
+}
+
+function toMacroRowLabel(prefix, row, fallback) {
+  const name =
+    trimString(row?.product_name) ||
+    trimString(row?.hospital_name) ||
+    trimString(row?.period) ||
+    trimString(row?.ym) ||
+    trimString(row?.signal_type) ||
+    trimString(fallback);
+  return prefix && name ? `${prefix}${name}` : name;
+}
+
+function decorateRows(rows, prefix = "", limit = rows?.length || 0, fallback = "") {
+  return (Array.isArray(rows) ? rows : [])
+    .slice(0, limit)
+    .map((row) => ({
+      ...row,
+      row_label: toMacroRowLabel(prefix, row, fallback),
+    }));
+}
+
+function decorateTextRows(rows, prefixMap = {}) {
+  return (Array.isArray(rows) ? rows : []).map((row, index) => {
+    const signalType = trimString(row?.signal_type);
+    const prefix = prefixMap[signalType] || prefixMap.default || "";
+    return {
+      ...row,
+      row_label: toMacroRowLabel(prefix, row, `条目${index + 1}`),
+    };
+  });
 }
 
 function buildEnvelope(windowInfo, payload = {}) {
@@ -1407,8 +1445,248 @@ async function executeRiskOpportunitySummary(args, ctx) {
   };
 }
 
+async function executeSalesOverviewBrief(args, ctx) {
+  const safeLimit = toPositiveInt(args?.limit, 4, 6);
+  const [overall, trend, products, hospitals, diagnostics] = await Promise.all([
+    executeOverallSummary({}, ctx),
+    executeTrendSummary(
+      {
+        dimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+        granularity: "monthly",
+      },
+      ctx,
+    ),
+    executeProductSummary(
+      {
+        include_all_products: true,
+        limit: Math.max(3, safeLimit),
+      },
+      ctx,
+    ),
+    executeHospitalSummary(
+      {
+        limit: Math.max(3, safeLimit),
+      },
+      ctx,
+    ),
+    executeRiskOpportunitySummary(
+      {
+        dimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+      },
+      ctx,
+    ),
+  ]);
+
+  const summary = {
+    ...(overall.result.summary && typeof overall.result.summary === "object" ? overall.result.summary : {}),
+    key_business_signals: mergeTextArrays(
+      overall.result.summary?.key_business_signals,
+      diagnostics.result.summary?.risk_alerts,
+      diagnostics.result.summary?.opportunity_hints,
+    ).slice(0, 4),
+    risk_alerts: Array.isArray(diagnostics.result.summary?.risk_alerts) ? diagnostics.result.summary.risk_alerts.slice(0, 2) : [],
+    opportunity_hints: Array.isArray(diagnostics.result.summary?.opportunity_hints)
+      ? diagnostics.result.summary.opportunity_hints.slice(0, 2)
+      : [],
+    top_products: decorateRows(products.result.rows, "", 3).map((row) => trimString(row?.product_name)).filter((item) => item),
+    top_hospitals: decorateRows(hospitals.result.rows, "", 3).map((row) => trimString(row?.hospital_name)).filter((item) => item),
+  };
+
+  return {
+    result: {
+      ...overall.result,
+      coverage: overall.result.coverage,
+      boundaries: mergeTextArrays(
+        overall.result.boundaries,
+        products.result.boundaries,
+        hospitals.result.boundaries,
+        diagnostics.result.boundaries,
+      ).slice(0, 4),
+      diagnostic_flags: mergeTextArrays(
+        overall.result.diagnostic_flags,
+        trend.result.diagnostic_flags,
+        products.result.diagnostic_flags,
+        hospitals.result.diagnostic_flags,
+        diagnostics.result.diagnostic_flags,
+        ["view_sales_overview_brief"],
+      ),
+      summary,
+      rows: [
+        ...decorateRows(trend.result.rows, "趋势:", Math.min(3, safeLimit)),
+        ...decorateRows(products.result.rows, "产品:", Math.min(3, safeLimit)),
+        ...decorateRows(hospitals.result.rows, "医院:", Math.min(3, safeLimit)),
+        ...decorateTextRows(diagnostics.result.rows.slice(0, 2), {
+          risk: "风险:",
+          opportunity: "机会:",
+          default: "诊断:",
+        }),
+      ].slice(0, Math.max(6, safeLimit * 2)),
+    },
+    meta: {
+      tool_name: TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF,
+      detail_request_mode: "macro_overview",
+      coverage_code: trimString(overall.result.coverage?.code) || "none",
+      analysis_view: "sales_overview_brief",
+      evidence_types: TOOL_EVIDENCE_TYPE_MAP[TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF],
+    },
+  };
+}
+
+async function executeSalesTrendBrief(args, ctx) {
+  const safeLimit = toPositiveInt(args?.limit, 4, 6);
+  const [overall, trend, breakdown, diagnostics] = await Promise.all([
+    executeOverallSummary({}, ctx),
+    executeTrendSummary(
+      {
+        dimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+        granularity: "monthly",
+      },
+      ctx,
+    ),
+    executeShareBreakdown(
+      {
+        dimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        limit: Math.max(3, safeLimit),
+      },
+      ctx,
+    ),
+    executeAnomalyInsights(
+      {
+        dimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+        limit: Math.max(3, safeLimit),
+      },
+      ctx,
+    ),
+  ]);
+
+  const summary = {
+    ...(overall.result.summary && typeof overall.result.summary === "object" ? overall.result.summary : {}),
+    trend_focus: "当前报表区间趋势概览",
+    key_business_signals: mergeTextArrays(
+      overall.result.summary?.key_business_signals,
+      trend.result.summary?.key_business_signals,
+    ).slice(0, 4),
+    anomaly_count: normalizeNumericValue(diagnostics.result.summary?.anomaly_count) ?? diagnostics.result.rows.length,
+  };
+
+  return {
+    result: {
+      ...overall.result,
+      coverage: trend.result.coverage,
+      boundaries: mergeTextArrays(
+        trend.result.boundaries,
+        breakdown.result.boundaries,
+        diagnostics.result.boundaries,
+      ).slice(0, 4),
+      diagnostic_flags: mergeTextArrays(
+        trend.result.diagnostic_flags,
+        breakdown.result.diagnostic_flags,
+        diagnostics.result.diagnostic_flags,
+        ["view_sales_trend_brief"],
+      ),
+      summary,
+      rows: [
+        ...decorateRows(trend.result.rows, "趋势:", Math.min(4, safeLimit)),
+        ...decorateRows(breakdown.result.rows, "结构:", Math.min(3, safeLimit)),
+        ...decorateTextRows(diagnostics.result.rows.slice(0, 2), {
+          default: "异动:",
+        }),
+      ].slice(0, Math.max(6, safeLimit * 2)),
+    },
+    meta: {
+      tool_name: TOOL_NAMES.GET_SALES_TREND_BRIEF,
+      detail_request_mode: "macro_trend",
+      coverage_code: trimString(trend.result.coverage?.code) || "none",
+      analysis_view: "sales_trend_brief",
+      evidence_types: TOOL_EVIDENCE_TYPE_MAP[TOOL_NAMES.GET_SALES_TREND_BRIEF],
+    },
+  };
+}
+
+async function executeDimensionOverviewBrief(args, ctx) {
+  const dimension = trimString(args?.dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+  const safeDimension =
+    dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
+      ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
+      : QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+  const safeLimit = toPositiveInt(args?.limit, 5, safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? 10 : 10);
+  const [summaryResult, rankingResult, breakdownResult] = await Promise.all([
+    safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT
+      ? executeProductSummary(
+          {
+            include_all_products: true,
+            limit: safeLimit,
+          },
+          ctx,
+        )
+      : executeHospitalSummary(
+          {
+            limit: safeLimit,
+          },
+          ctx,
+        ),
+    executeEntityRanking(
+      {
+        dimension: safeDimension,
+        ranking: "bottom",
+        metric: "sales_amount",
+        limit: Math.min(3, safeLimit),
+      },
+      ctx,
+    ),
+    executeShareBreakdown(
+      {
+        dimension: safeDimension,
+        limit: Math.min(5, safeLimit),
+      },
+      ctx,
+    ),
+  ]);
+
+  const summary = {
+    ...(summaryResult.result.summary && typeof summaryResult.result.summary === "object" ? summaryResult.result.summary : {}),
+    overview_dimension: safeDimension,
+    concentration_hint:
+      trimString(breakdownResult.result.rows?.[0]?.sales_share) || trimString(breakdownResult.result.rows?.[0]?.sales_amount),
+  };
+
+  return {
+    result: {
+      ...summaryResult.result,
+      coverage: summaryResult.result.coverage,
+      boundaries: mergeTextArrays(
+        summaryResult.result.boundaries,
+        rankingResult.result.boundaries,
+        breakdownResult.result.boundaries,
+      ).slice(0, 4),
+      diagnostic_flags: mergeTextArrays(
+        summaryResult.result.diagnostic_flags,
+        rankingResult.result.diagnostic_flags,
+        breakdownResult.result.diagnostic_flags,
+        [`view_${safeDimension}_overview_brief`],
+      ),
+      summary,
+      rows: [
+        ...decorateRows(summaryResult.result.rows, safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? "产品:" : "医院:", Math.min(4, safeLimit)),
+        ...decorateRows(rankingResult.result.rows, "待关注:", Math.min(2, safeLimit), "待关注对象"),
+        ...decorateRows(breakdownResult.result.rows, "结构:", Math.min(3, safeLimit)),
+      ].slice(0, Math.max(6, safeLimit * 2)),
+    },
+    meta: {
+      tool_name: TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF,
+      detail_request_mode: "macro_dimension_overview",
+      coverage_code: trimString(summaryResult.result.coverage?.code) || "none",
+      analysis_view: `${safeDimension}_overview_brief`,
+      evidence_types: TOOL_EVIDENCE_TYPE_MAP[TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF],
+    },
+  };
+}
+
 export function createToolExecutors(deps = {}) {
   return {
+    [TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF]: (args, ctx) => executeSalesOverviewBrief(args, ctx, deps),
+    [TOOL_NAMES.GET_SALES_TREND_BRIEF]: (args, ctx) => executeSalesTrendBrief(args, ctx, deps),
+    [TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF]: (args, ctx) => executeDimensionOverviewBrief(args, ctx, deps),
     [TOOL_NAMES.SCOPE_AGGREGATE]: (args, ctx) => executeScopeAggregate(args, ctx, deps),
     [TOOL_NAMES.SCOPE_TIMESERIES]: (args, ctx) => executeScopeTimeseries(args, ctx, deps),
     [TOOL_NAMES.SCOPE_BREAKDOWN]: (args, ctx) => executeScopeBreakdown(args, ctx, deps),

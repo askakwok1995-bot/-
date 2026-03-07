@@ -28,10 +28,13 @@ function createQuestionJudgment(overrides = {}) {
 test("tool registry exposes expanded controlled declarations", () => {
   const declarations = buildToolDeclarations();
 
-  assert.equal(declarations.length, 16);
+  assert.equal(declarations.length, 19);
   assert.deepEqual(
     declarations.map((item) => item.name),
     [
+      "get_sales_overview_brief",
+      "get_sales_trend_brief",
+      "get_dimension_overview_brief",
       "scope_aggregate",
       "scope_timeseries",
       "scope_breakdown",
@@ -50,6 +53,106 @@ test("tool registry exposes expanded controlled declarations", () => {
       "get_risk_opportunity_summary",
     ],
   );
+});
+
+test("runToolFirstChat accepts macro tool plan for broad trend question", async () => {
+  const toolCalls = [];
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析销售趋势",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-macro-trend",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "overall",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "trend",
+                            required_evidence: ["aggregate", "timeseries"],
+                            requested_views: ["get_sales_trend_brief"],
+                            synthesis_expectation: "先给出当前报表区间的趋势判断，再补一条关键波动依据。",
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_sales_trend_brief",
+                                args_json: "{\"limit\":4}",
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内销售整体呈上升趋势，最近月份波动放大。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_sales_trend_brief"],
+            summary: { sales_amount: "30.00万元" },
+            rows: [{ row_label: "趋势:2025-03", sales_amount: "12.00万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_trend",
+            coverage_code: "full",
+            analysis_view: "sales_trend_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
+  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
+  assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
+  assert.deepEqual(result.missingEvidenceTypes, []);
 });
 
 test("runToolFirstChat completes after single tool call and returns final reply", async () => {

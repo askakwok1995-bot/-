@@ -1,4 +1,7 @@
 export const TOOL_NAMES = Object.freeze({
+  GET_SALES_OVERVIEW_BRIEF: "get_sales_overview_brief",
+  GET_SALES_TREND_BRIEF: "get_sales_trend_brief",
+  GET_DIMENSION_OVERVIEW_BRIEF: "get_dimension_overview_brief",
   SCOPE_AGGREGATE: "scope_aggregate",
   SCOPE_TIMESERIES: "scope_timeseries",
   SCOPE_BREAKDOWN: "scope_breakdown",
@@ -37,6 +40,47 @@ function stringEnumSchema(description, values) {
 
 export function buildToolDeclarations() {
   return [
+    {
+      name: TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF,
+      description: "面向泛分析问题返回当前报表区间的销售概览，包括整体摘要、关键趋势、Top产品、Top医院和风险机会摘要。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的关键条目条数上限，后端会按安全上限裁剪。",
+          },
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.GET_SALES_TREND_BRIEF,
+      description: "面向趋势问题返回当前报表区间的趋势结论、关键波动月份和必要的结构支撑。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的趋势或结构条目条数上限，后端会按安全上限裁剪。",
+          },
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF,
+      description: "面向产品或医院的泛表现问题，返回该维度的整体表现、Top/Bottom与结构概览。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dimension: stringEnumSchema("分析维度，只能是 product 或 hospital。", ["product", "hospital"]),
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的关键条目条数上限，后端会按安全上限裁剪。",
+          },
+        },
+        required: ["dimension"],
+      },
+    },
     {
       name: TOOL_NAMES.SCOPE_AGGREGATE,
       description: "按时间窗、维度和命名对象集合返回聚合指标、coverage 和命中情况，是整体/产品/医院分析的基础原语。",
