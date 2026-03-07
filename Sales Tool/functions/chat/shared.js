@@ -117,139 +117,12 @@ export const QUESTION_JUDGMENT_LABELS = Object.freeze({
   }),
 });
 
-export const DATA_AVAILABILITY_CODES = Object.freeze({
-  has_business_data: Object.freeze({
-    AVAILABLE: "available",
-    UNAVAILABLE: "unavailable",
-  }),
-  dimension_availability: Object.freeze({
-    AVAILABLE: "available",
-    PARTIAL: "partial",
-    UNAVAILABLE: "unavailable",
-  }),
-  answer_depth: Object.freeze({
-    OVERALL: "overall",
-    FOCUSED: "focused",
-    DETAILED: "detailed",
-  }),
-  gap_hint_needed: Object.freeze({
-    YES: "yes",
-    NO: "no",
-  }),
-});
-
-export const DATA_AVAILABILITY_LABELS = Object.freeze({
-  has_business_data: Object.freeze({
-    [DATA_AVAILABILITY_CODES.has_business_data.AVAILABLE]: "有",
-    [DATA_AVAILABILITY_CODES.has_business_data.UNAVAILABLE]: "无",
-  }),
-  dimension_availability: Object.freeze({
-    [DATA_AVAILABILITY_CODES.dimension_availability.AVAILABLE]: "具备",
-    [DATA_AVAILABILITY_CODES.dimension_availability.PARTIAL]: "部分具备",
-    [DATA_AVAILABILITY_CODES.dimension_availability.UNAVAILABLE]: "不具备",
-  }),
-  answer_depth: Object.freeze({
-    [DATA_AVAILABILITY_CODES.answer_depth.OVERALL]: "总体判断",
-    [DATA_AVAILABILITY_CODES.answer_depth.FOCUSED]: "重点分析",
-    [DATA_AVAILABILITY_CODES.answer_depth.DETAILED]: "细节分析",
-  }),
-  gap_hint_needed: Object.freeze({
-    [DATA_AVAILABILITY_CODES.gap_hint_needed.YES]: "是",
-    [DATA_AVAILABILITY_CODES.gap_hint_needed.NO]: "否",
-  }),
-});
-
 export const ROUTE_DECISION_CODES = Object.freeze({
   DIRECT_ANSWER: "direct_answer",
   BOUNDED_ANSWER: "bounded_answer",
   REFUSE: "refuse",
   NEED_MORE_DATA: "need_more_data",
 });
-
-export const ROUTE_DECISION_LABELS = Object.freeze({
-  [ROUTE_DECISION_CODES.DIRECT_ANSWER]: "直接回答",
-  [ROUTE_DECISION_CODES.BOUNDED_ANSWER]: "带边界回答",
-  [ROUTE_DECISION_CODES.REFUSE]: "拒绝/收住",
-  [ROUTE_DECISION_CODES.NEED_MORE_DATA]: "进入后续补强",
-});
-
-export const ROUTE_REASON_CODES = Object.freeze({
-  IRRELEVANT: "irrelevant",
-  NO_BUSINESS_DATA: "no_business_data",
-  DIMENSION_UNAVAILABLE: "dimension_unavailable",
-  DETAIL_REQUESTED_BUT_INSUFFICIENT: "detail_requested_but_insufficient",
-  PRODUCT_FULL_SCOPE_INSUFFICIENT: "product_full_scope_insufficient",
-  PRODUCT_NAMED_SCOPE_INSUFFICIENT: "product_named_scope_insufficient",
-  PRODUCT_HOSPITAL_SCOPE_INSUFFICIENT: "product_hospital_scope_insufficient",
-  HOSPITAL_NAMED_SCOPE_INSUFFICIENT: "hospital_named_scope_insufficient",
-  DIMENSION_PARTIAL: "dimension_partial",
-  GAP_HINT_NEEDED: "gap_hint_needed",
-  SUFFICIENT: "sufficient",
-});
-
-export const QC_REASON_CODES = Object.freeze({
-  EMPTY_OR_TOO_SHORT: "empty_or_too_short",
-  CONTAINS_INTERNAL_PROCESS_WORDS: "contains_internal_process_words",
-  REFUSE_MISSING_EXAMPLES: "refuse_missing_examples",
-  BOUNDED_MISSING_BOUNDARY_SENTENCE: "bounded_missing_boundary_sentence",
-  HIGH_DUPLICATION: "high_duplication",
-  IRRELEVANT_REFUSE_MISMATCH: "irrelevant_refuse_mismatch",
-  TOOL_RESULT_CONTRADICTION: "tool_result_contradiction",
-  TOOL_RESULT_UNDERLISTED: "tool_result_underlisted",
-  TIME_WINDOW_NOT_EXPLICIT: "time_window_not_explicit",
-  TIME_WINDOW_REINTERPRETED: "time_window_reinterpreted",
-  COMPARE_WINDOW_NOT_EXPLICIT: "compare_window_not_explicit",
-  COMPARE_RESULT_UNDEREXPLAINED: "compare_result_underexplained",
-});
-
-export const QC_ACTIONS = Object.freeze({
-  PASS_THROUGH: "pass_through",
-  MINIMAL_PATCH: "minimal_patch",
-  SAFE_FALLBACK: "safe_fallback",
-});
-
-export const QC_MIN_EFFECTIVE_CHARS = 20;
-export const QC_HIGH_DUP_SENTENCE_MIN = 4;
-export const QC_HIGH_DUP_UNIQUE_RATIO_MAX = 0.6;
-export const QC_ROUTE_MISMATCH_SHORT_MAX_CHARS = 80;
-export const QC_NON_SEVERE_FALLBACK_MIN = 2;
-
-export const INTERNAL_PROCESS_WORDS = Object.freeze([
-  "路由",
-  "补强",
-  "内部判定",
-  "系统判断",
-  "调取",
-  "重判",
-  "追踪",
-  "need_more_data",
-  "bounded_answer",
-  "routedecision",
-  "dataavailability",
-  "sessionstate",
-  "business_snapshot",
-  "retrievalstate",
-  "outputcontext",
-  "phase2trace",
-]);
-
-export const QC_STRONG_REFUSE_WORDS = Object.freeze(["超出职责", "无法回答", "不在范围", "不属于我的职责", "不在我当前"]);
-export const QC_BUSINESS_EVIDENCE_WORDS = Object.freeze(["金额", "盒数", "%", "top", "达成率", "环比", "同比"]);
-export const QC_BOUNDARY_HINT_WORDS = Object.freeze([
-  "在当前范围内",
-  "基于现有信息",
-  "目前只能",
-  "暂时无法",
-  "信息有限",
-  "口径有限",
-]);
-export const QC_REFUSE_EXAMPLES_TEXT = [
-  "你可以问：",
-  "- 本月整体业绩和达成率的核心变化是什么？",
-  "- 当前哪个产品最值得优先推进，原因是什么？",
-  "- 近三个月医院表现有哪些关键波动，对应风险和机会在哪里？",
-].join("\n");
-export const QC_BOUNDED_BOUNDARY_TEXT = "在当前范围内，基于现有信息，以上结论可用于方向判断；暂时无法支持更细颗粒度拆解。";
 
 export const OUTPUT_POLICY_DIRECT_ANSWER = [
   "输出策略（direct_answer）：请用简体中文自然回答。",
@@ -268,12 +141,6 @@ export const OUTPUT_POLICY_BOUNDED_ANSWER = [
   "3）最后给1-2条继续深入方向/下一步关注点（只说业务上下一步怎么看/怎么验证，不要求用户手动补数据，不提调取/补强/导入/系统处理）。",
   "边界句必须命中至少1个边界提示词：在当前范围内 / 基于现有信息 / 目前只能 / 暂时无法 / 信息有限 / 口径有限（任选其一）。",
   "禁止：任何内部过程词、系统状态描述、让用户“去补数据/去导入/去调取”的指令。",
-].join("\n");
-
-export const OUTPUT_POLICY_REFUSE = [
-  "输出策略（refuse）：请简洁说明该问题不属于医药销售分析助手的职责范围（1句即可），然后给2-3个用户可问的示例问题（用项目符号列出）。",
-  "示例覆盖方向中的任意2-3类：整体业绩、产品表现、医院表现、趋势波动、风险/机会。",
-  "禁止：展开回答原问题；不要说教；不要出现内部过程词。",
 ].join("\n");
 
 export const ON_DEMAND_MAX_WINDOW_MONTHS = 24;

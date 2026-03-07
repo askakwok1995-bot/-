@@ -4,12 +4,12 @@ import {
   HOSPITAL_NAMED_TRIGGER_KEYWORDS,
   ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP,
   ON_DEMAND_PRODUCT_NAMED_SAFE_CAP,
+  PRODUCT_HOSPITAL_SCOPE_KEYWORDS,
   QUESTION_JUDGMENT_CODES,
   containsAnyKeyword,
   normalizeQuestionText,
   trimString,
 } from "./shared.js";
-import { isProductHospitalRequest } from "./judgment.js";
 import { fetchProductsCatalog } from "./retrieval-data.js";
 import {
   normalizeHospitalAliasKey,
@@ -17,6 +17,13 @@ import {
   normalizeProductFamilyKey,
   normalizeProductNameForMatch,
 } from "../../domain/entity-matchers.js";
+
+function isProductHospitalRequest(message, _questionJudgment, productNamedRequested) {
+  if (!productNamedRequested) {
+    return false;
+  }
+  return containsAnyKeyword(normalizeQuestionText(message), PRODUCT_HOSPITAL_SCOPE_KEYWORDS);
+}
 
 function isGenericHospitalMention(value) {
   const text = trimString(value);

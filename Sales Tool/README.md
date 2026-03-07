@@ -121,21 +121,17 @@
 │   │   └── chat.js            # AI HTTP 入口与 phase 串联
 │   └── chat/
 │       ├── shared.js          # AI 共享常量、格式化与基础工具
-│       ├── judgment.js        # 问题判定层
-│       ├── availability-core.js    # 数据可用性通用判定
-│       ├── availability-support.js # 模式化 support code 解析
-│       ├── availability.js    # 数据可用性层兼容出口
-│       ├── session.js         # 会话状态层
-│       ├── routing-rules.js   # 路由 reason 与决策表
-│       ├── routing.js         # 路由层兼容出口
-│       ├── retrieval-context.js     # 命名识别与检索上下文解析
-│       ├── retrieval-data.js        # 按需补强数据拉取与窗口解析
-│       ├── retrieval-enhancement.js # 按需补强聚合与快照增强
-│       ├── retrieval.js             # 按需补强层兼容出口
-│       ├── tool-registry.js         # Tool calling 工具声明
-│       ├── tool-executors.js        # Tool calling 工具执行器
-│       ├── tool-runtime.js          # Tool-first 运行时与 fallback 编排
-│       └── output.js          # 输出层、QC、trace
+│       ├── session.js         # 历史窗口归一化
+│       ├── conversation-state.js # 会话上下文归一化
+│       ├── retrieval-context.js  # 命名识别辅助
+│       ├── retrieval-data.js     # 数据拉取与窗口解析
+│       ├── retrieval-enhancement.js # 聚合与快照增强
+│       ├── time-intent.js      # 时间窗口辅助解析
+│       ├── tool-registry.js    # Tool calling 工具声明
+│       ├── tool-executors.js   # Tool calling 工具执行器
+│       ├── tool-runtime.js     # Planner + tool-first 主运行时
+│       ├── render.js           # 最小 answer/reply 契约
+│       └── output.js           # Gemini 请求与日志
 ├── config.example.js          # Supabase 配置模板
 ├── config.js                  # 运行时配置（构建生成，已 gitignore）
 ├── dist/                      # Cloudflare Pages 静态产物目录（构建生成，已 gitignore）
@@ -143,12 +139,11 @@
 │   ├── generate-config.js     # 按环境变量生成 config.js（本地）
 │   └── build-pages.js         # 生成 dist/ 并写入 dist/config.js（部署）
 ├── tests/
-│   ├── phase2-domain.test.js  # Phase 2 纯函数回归测试
-│   ├── chat-api.test.js       # /api/chat 结构化错误与编排回归测试
-│   ├── fallback-decision.test.js # fallback support/routing 决策回归测试
-│   ├── output-tool-consistency.test.js # deterministic tool 输出一致性与 QC 回归测试
-│   ├── tool-router.test.js    # 高置信问题确定性工具路由测试
-│   └── tool-runtime.test.js   # Tool-first 运行时与工具编排回归测试
+│   ├── chat-api.test.js       # /api/chat 单链成功/失败回归测试
+│   ├── chat-answer-contract.test.js # 最小 answer 契约测试
+│   ├── tool-runtime.test.js   # Tool-first 运行时与规划回归测试
+│   ├── tool-executors.test.js # 原语工具回归测试
+│   └── time-intent.test.js    # 时间辅助函数回归测试
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -719,75 +714,28 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 5. findings 分级：  
    - 严重项：`empty_or_too_short`、`irrelevant_refuse_mismatch`；  
    - 非严重项：其余四项。  
-6. `safe_fallback` 条件：  
-   - 命中任一严重项；或  
-   - 非严重项 `>=2` 且执行一次 `minimal_patch` 后复检仍命中 `>=1`。  
-7. QC 最多执行“一次 patch + 一次复检”，不做循环改写。  
+### 11.14 AI 对话助手（当前主路径）
 
-检测项（6类）：
+当前聊天后端已收敛为单一路径：
 
-- `empty_or_too_short`
-- `contains_internal_process_words`
-- `refuse_missing_examples`
-- `bounded_missing_boundary_sentence`
-- `high_duplication`
-- `irrelevant_refuse_mismatch`
+`鉴权 / 请求校验 -> planner-enhanced tool-first -> Gemini 基于 tool 结果生成文本 -> answer/reply 返回`
 
-动作（3类）：
+当前原则：
 
-- `pass_through`：无问题原样返回。  
-- `minimal_patch`：就地补丁（去内部词、补示例、补边界句、去尾部重复）。  
-- `safe_fallback`：严重异常或补丁后仍不稳定时，按 route 走最小安全模板。  
+1. 不再保留 deterministic 主路  
+2. 不再保留 legacy fallback  
+3. tool-first 未形成稳定结果时直接返回结构化错误 JSON  
+4. 不再做本地 QC patch、safe_fallback、本地模板答复  
+5. 成功响应只保留 `reply + answer + model + requestId`
 
-### 11.14 Tool-first（当前主路径）
+当前受控工具面以分析原语为核心：
 
-当前聊天后端的主路径已收敛为 `deterministic + AUTO tool-first`：
+- `scope_aggregate`
+- `scope_timeseries`
+- `scope_breakdown`
+- `scope_diagnostics`
 
-1. 轻量前置判断只保留两类用途：
-   - `relevance=irrelevant` 时直接走现有 `refuse`
-   - 时间范围缺失、年份歧义、覆盖不完整时直接走本地 `bounded_answer`
-2. 对于相关业务问题，优先使用确定性工具路由或 Gemini `function calling`
-3. `legacy fallback` 已降级为应急路径，只有 `CHAT_ENABLE_LEGACY_FALLBACK=1` 时才会启用
-4. 默认情况下，tool 路径未形成稳定回答时，服务端返回本地保守边界答复，不再自动回退旧 Phase 2
-5. 新增业务语义默认只进入 tool executors；legacy 不再作为主扩展面
-
-V1 首批仅开放 5 类受控业务工具：
-
-- `get_overall_summary`
-- `get_product_summary`
-- `get_hospital_summary`
-- `get_product_hospital_contribution`
-- `get_trend_summary`
-
-固定约束：
-
-- 工具默认受当前 `analysis_range` 约束；若命中受支持的时间意图且覆盖完整，则按请求子窗口执行
-- 不开放自由 SQL
-- 同一请求最多 3 次工具调用、最多 2 轮 tool loop
-- `refuse` 仍不调用 Gemini
-- tool-first 成功后继续走现有 `normalizeOutputReply + QC`
-
-实现原则：
-
-- 工具执行层优先复用 `domain/report-snapshot.js`、`domain/entity-matchers.js` 以及现有 `infra/*-repository.js`
-- 不重新发明第三套统计口径
-- `product_full / product_named / hospital_named / product_hospital / hospital_monthly` 的现有成熟匹配规则继续复用，只是从“静态补强优先”迁移为“工具执行器优先”
-
-应急规则：
-
-- 默认不开启 legacy；若 tool-first 未形成稳定回答，直接收敛为本地 `bounded_answer`
-- 仅在显式开启 `CHAT_ENABLE_LEGACY_FALLBACK=1` 时，才允许进入 legacy emergency fallback 一次
-- 若 tool-first 和 emergency fallback 都失败，仍返回现有结构化错误：`error.code + error.message + requestId`
-
-### 11.15 高置信问题确定性工具路由（Phase T1）
-
-在当前 `deterministic + AUTO tool-first` 主路径之上，系统已新增一层确定性工具路由，用于解决“同一个高置信结构化问题有时调工具、有时不调”的不稳定问题。
-
-固定优先级：
-
-- `product_hospital`
-- `hospital_monthly`
-- `product_full`
+其余工具仅作为兼容包装层存在，后续继续向原语化收敛。
 - `hospital_named`
 
 命中后行为：
@@ -809,162 +757,23 @@ V1 首批仅开放 5 类受控业务工具：
 当前不纳入 T1 的问法：
 
 - 普通整体摘要
-- 普通趋势摘要
-- 普通命名产品摘要（如“诺和盈1mg怎么样”）
+### 11.16 时间窗口辅助
 
-这些问题仍继续走现有 `AUTO tool-first`，避免确定性路由扩范围过大。
+- 当前仍保留 `time-intent.js` 作为辅助函数，用于把显式时间表达映射到请求子窗口。
+- 这层不再负责主链拦截，也不再产出本地时间边界答复。
+- 若解析出可执行时间窗，tool runtime 会优先在该子窗口内执行；否则默认使用当前 `analysis_range`。
 
-输出一致性约束：
+### 11.17 当前最小契约
 
-- 当 deterministic tool 结果 `coverage=full` 且 `rows>0` 时，最终回答不得写成“数据不足/未提供细分/无法判断”。
-- 当 deterministic `product_hospital` 结果 `rows>=3` 时，回复至少体现多家医院，不应只说 Top1。
-- 当 deterministic `product_hospital` 结果 `coverage=full` 且 `rows=0` 时，必须明确写成“当前范围内贡献为0/未产生贡献”，而不是“缺数据”。
-
-### 11.16 相对时间意图标准化（Phase T1.1）
-
-当前聊天后端已新增“相对时间意图标准化”层，用于解决“本月 / 近三个月 / 前两个月”被默认解释成报表尾部月份的问题。
-
-固定口径：
-
-- 相对时间默认按真实世界时间解释，不再默认锚定 `analysis_range.end_month`
-- 业务时区固定为 `Asia/Shanghai`
-- `近N个月 / 前N个月` 默认按完整自然月计算，不包含当前未结束月；`本月` 例外，仍指当前自然月
-- 一旦识别到相对或绝对时间意图，系统会先转成绝对时间区间，再与当前 `analysis_range` 做覆盖判定
-
-V1 已支持：
-
-- `本月`
-- `上月`
-- `近三个月` / `最近三个月`
-- `前两个月`
-- `今年`
-- `去年`
-- `本季度`
-- `上季度`
-- `YYYY-MM`
-- `YYYY年M月`
-- `YYYY年Qx`
-
-覆盖判定：
-
-- `full`：请求时间区间完全落在当前 `analysis_range` 内，允许继续执行 deterministic tool、AUTO tool-first，必要时才进入 legacy emergency fallback
-- `partial`：请求时间区间仅部分落在当前 `analysis_range` 内，不自动裁交集回答，直接进入时间边界说明路径
-- `none`：请求时间区间完全不在当前 `analysis_range` 内，不自动改成报表尾部时间，直接进入时间边界说明路径
-
-当前收口规则：
-
-- 若 `time_window_coverage=full`，工具执行使用请求子窗口，而不是整段 `analysis_range`
-- 若 `time_window_coverage=partial|none`，不再进入 deterministic tool、AUTO tool-first 或 legacy emergency fallback 业务回答链
-- 时间边界回答必须同时写出：
-  - 用户请求的真实时间区间
-  - 当前可用分析区间
-- 不允许把“近三个月 / 本月”偷换成“当前报表最后三个月 / 最后一个月”
-
-输出/QC 约束：
-
-- 只要命中了时间意图，最终回答必须显式写出绝对时间区间
-- 若回复把相对时间自动重解释为报表尾部月份，QC 会直接回退到统一时间边界模板
-
-### 11.16.1 裸季度表达与 deterministic 本地降级（Phase T1.2）
-
-在 Phase T1.1 的基础上，当前已继续补齐两类体验问题：
-
-1. `Q4季度销售情况如何` 这类未写年份的裸季度表达
-2. deterministic tool 已有有效结果，但 Gemini 上游高负载/超时/上游错误时的本地降级
-
-裸季度表达当前已支持：
-
-- `Q1` / `Q2` / `Q3` / `Q4`
-- `Q1季度` / `Q4季度`
-- `第一季度` / `第四季度`
-- `1季度` / `4季度`
-
-固定解释规则：
-
-- 若 `analysis_range` 为单一年份完整区间（如 `2025-01~2025-12`），则裸季度默认按当前数据年份解释  
-  例如：`Q4季度` -> `2025-10~2025-12`
-- 若 `analysis_range` 不是单一年份完整区间，则不自动猜年份，直接进入时间边界说明
-- 显式年份表达仍优先：`2024年Q4`、`2024年第四季度`
-
-内部补充字段：
-
-- `requested_time_window.anchor_mode = explicit|analysis_year|none`
-- `local_response_mode = none|tool_result_fallback|time_boundary`
-
-当前时间边界规则继续保持收口：
-
-- 裸季度命中但无唯一年份锚点时，不进入 deterministic tool、不进入 AUTO tool-first、不进入 legacy emergency fallback 业务回答
-- 必须明确说明“用户提到的是未写年份的季度，当前可用区间无法唯一确定所属年份”
-- 可补一句“若你希望，我可以按当前报表所在年份的 Q4 来分析”，但不自动替用户选年份
-
-deterministic tool 本地降级规则：
-
-- 仅覆盖 deterministic route，不扩到全部 AUTO tool-first
-- 当 deterministic tool 已拿到有效 `toolResult`，但 Gemini 返回：
-  - `UPSTREAM_TIMEOUT`
-  - `UPSTREAM_ERROR`
-  - `UPSTREAM_RATE_LIMIT`
-  - `UPSTREAM_NETWORK_ERROR`
-- 则优先基于工具结果返回本地模板回答，不再把英文 high demand / upstream error 直接暴露给用户
-
-本地模板约束：
-
-- 必须显式写出绝对时间区间
-- 若季度是按当前数据年份锚定出来的，需明确写成：
-  - `按当前数据年份口径，这里将 Q4季度 解释为 2025年Q4（2025-10~2025-12）`
-- `product_hospital` 在 `rows=0` 时必须明确写“当前范围内该产品医院贡献为0/未产生贡献”
-- 本地降级文本仍继续经过 `normalizeOutputReply + QC`
-
-### 11.16.2 整体时间窗口确定性工具路由（Phase T1.3）
-
-在 T1.2 的基础上，当前已把一类高置信“整体/趋势 + 时间窗口”问题纳入 deterministic route，避免这类问题继续落回 `AUTO tool-first`，从而在 Gemini 高负载或超时时出现同题不同答。
-
-当前新增 deterministic route：
-
-- `overall_time_window`
-
-典型问法：
-
-- `Q4季度销售情况如何`
-- `本月销售趋势如何`
-- `近三个月整体趋势如何`
-- `上月整体表现如何`
-
-固定规则：
-
-- 若命中 `requested_time_window.kind !== none` 且主维度为 `overall` 或 `trend`，并且未被更高优先级 deterministic route 抢占，则直接走：
-  - `get_overall_summary`
-  - 或 `get_trend_summary(dimension="overall")`
-- 命中 `overall_time_window` 后，不再进入 Gemini `AUTO function calling`
-- direct tool 成功后，最终回答必须以工具结果为主事实源，不再回退成全年汇总口径
-
-输出约束：
-
-- 回答必须显式写出绝对时间区间
-- 若季度是按当前数据年份锚定出的，需明确写成：
-  - `按当前数据年份口径，这里将 Q4季度 解释为 2025年Q4（2025-10~2025-12）`
-- 若已拿到有效整体/趋势结果，不允许再写“数据不足”或把问题重新解释成全年汇总
-
-当前 deterministic local fallback 也已覆盖 `overall_time_window`：
-
-- 若 `overall_time_window` 的 direct tool 已成功拿到有效 `toolResult`
-- 但 Gemini 上游返回：
-  - `UPSTREAM_TIMEOUT`
-  - `UPSTREAM_ERROR`
-  - `UPSTREAM_RATE_LIMIT`
-  - `UPSTREAM_NETWORK_ERROR`
-- 则优先使用本地模板回答：
-  - 写清采用的绝对时间区间
-  - 给出整体结论
-  - 摘要最近月份/季度关键变化
-  - 附 1 条简短建议
-
-### 11.17 Legacy Fallback 收敛
-
-- `availability` 已拆为两层：
-  - `availability-core.js`：通用判定（`has_business_data / dimension_availability / answer_depth / gap_hint_needed`）
-  - `availability-support.js`：模式化支撑解析（`product_full / product_named / hospital_named / product_hospital / hospital_monthly`）
-- `routing` 已拆为：
-  - `routing-rules.js`：reason code 与优先级决策表
-  - `routing.js`：最终 `routeDecision` 组装
-- `product_hospital` 与 `product_named` 的 fallback 判据保持互斥；当 `detail_request_mode=product_hospital` 时，路由主看 `product_hospital_support`，不会再被 `product_named_support` 误收敛。
+- 成功：`{ reply, answer, model, requestId }`
+- 失败：`{ error: { code, message }, requestId }`
+- `answer` 当前最小字段：
+  - `summary`
+  - `evidence[]`
+  - `actions[]`
+  - `source_period`
+  - `question_type`
+  - `evidence_types[]`
+  - `missing_evidence_types[]`
+  - `analysis_confidence`
+  - `conversation_state`
