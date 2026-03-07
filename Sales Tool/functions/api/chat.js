@@ -14,7 +14,6 @@ import { runToolFirstChat } from "../chat/tool-runtime.js";
 import { normalizeConversationState } from "../chat/conversation-state.js";
 import { isValidChatMode } from "../chat/contracts.js";
 import { buildChatSuccessPayload, buildEvidenceBundleFromToolResult } from "../chat/render.js";
-import { applyRequestedTimeWindowToSnapshot, parseTimeIntent } from "../chat/time-intent.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
@@ -177,28 +176,16 @@ function createDefaultQuestionJudgment() {
   };
 }
 
-function buildConversationStatePayload(incomingConversationState, questionJudgment, requestedTimeWindow, toolResult) {
+function buildConversationStatePayload(incomingConversationState, questionJudgment, toolResult) {
   const baseState = normalizeConversationState(incomingConversationState);
-  const nextState = {
+  return {
     ...baseState,
     primary_dimension_code:
       trimString(questionJudgment?.primary_dimension?.code) || trimString(baseState.primary_dimension_code),
     source_period:
       trimString(toolResult?.range?.period) ||
-      trimString(requestedTimeWindow?.period) ||
       trimString(baseState.source_period),
   };
-  if (trimString(requestedTimeWindow?.period)) {
-    nextState.requested_time_window = {
-      kind: trimString(requestedTimeWindow?.kind) || "none",
-      label: trimString(requestedTimeWindow?.label),
-      start_month: trimString(requestedTimeWindow?.start_month),
-      end_month: trimString(requestedTimeWindow?.end_month),
-      period: trimString(requestedTimeWindow?.period),
-      anchor_mode: trimString(requestedTimeWindow?.anchor_mode) || "none",
-    };
-  }
-  return nextState;
 }
 
 function buildToolFirstFailureResponse(toolFirstResult, requestId) {
@@ -227,7 +214,7 @@ function buildNonDirectResponse(toolFirstResult, requestId) {
   }
   return errorResponse(
     CHAT_ERROR_CODES.BAD_REQUEST,
-    "当前未形成稳定分析结果，请缩小时间范围或对象后重试。",
+    "当前未形成稳定分析结果，请缩小分析对象或换一种问法后重试。",
     400,
     requestId,
     {
@@ -237,32 +224,11 @@ function buildNonDirectResponse(toolFirstResult, requestId) {
   );
 }
 
-function scopeBusinessSnapshotByTimeIntent(message, businessSnapshot, parseTimeIntentImpl, applyRequestedTimeWindowToSnapshotImpl) {
-  const timeIntent = parseTimeIntentImpl(message, {
-    analysisRange: businessSnapshot?.analysis_range,
-  });
-  const requestedTimeWindow = timeIntent?.requested_time_window || null;
-  const hasConcreteWindow =
-    trimString(requestedTimeWindow?.kind) !== "none" &&
-    trimString(requestedTimeWindow?.start_month) &&
-    trimString(requestedTimeWindow?.end_month);
-  const scopedSnapshot = hasConcreteWindow
-    ? applyRequestedTimeWindowToSnapshotImpl(businessSnapshot, requestedTimeWindow)
-    : businessSnapshot;
-  return {
-    scopedSnapshot,
-    requestedTimeWindow: hasConcreteWindow ? requestedTimeWindow : null,
-  };
-}
-
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
   const normalizeSessionHistoryWindowImpl = deps.normalizeSessionHistoryWindow || normalizeSessionHistoryWindow;
   const normalizeBusinessSnapshotImpl = deps.normalizeBusinessSnapshot || normalizeBusinessSnapshot;
   const runToolFirstChatImpl = deps.runToolFirstChat || runToolFirstChat;
-  const parseTimeIntentImpl = deps.parseTimeIntent || parseTimeIntent;
-  const applyRequestedTimeWindowToSnapshotImpl =
-    deps.applyRequestedTimeWindowToSnapshot || applyRequestedTimeWindowToSnapshot;
   let stage = "auth";
 
   try {
@@ -306,19 +272,12 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const incomingConversationState = normalizeConversationState(body?.conversation_state);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
-    const { scopedSnapshot, requestedTimeWindow } = scopeBusinessSnapshotByTimeIntent(
-      message,
-      normalizedBusinessSnapshot,
-      parseTimeIntentImpl,
-      applyRequestedTimeWindowToSnapshotImpl,
-    );
 
     stage = "tool";
     const toolFirstResult = await runToolFirstChatImpl({
       message,
       historyWindow,
-      businessSnapshot: scopedSnapshot,
-      requestedTimeWindow,
+      businessSnapshot: normalizedBusinessSnapshot,
       questionJudgment: createDefaultQuestionJudgment(),
       authToken: authResult.token,
       env: context.env,
@@ -338,7 +297,6 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const conversationState = buildConversationStatePayload(
       incomingConversationState,
       toolFirstResult.questionJudgment,
-      requestedTimeWindow,
       toolFirstResult.toolResult,
     );
     const evidenceBundle = buildEvidenceBundleFromToolResult({

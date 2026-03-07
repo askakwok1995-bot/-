@@ -36,7 +36,6 @@ import {
   normalizeProductNameForMatch,
   resolveHospitalNamedMatches,
 } from "../../domain/entity-matchers.js";
-import { applyRequestedTimeWindowToSnapshot } from "./time-intent.js";
 
 const TOOL_TREND_LIMIT = ON_DEMAND_MAX_WINDOW_MONTHS;
 const TOOL_EVIDENCE_TYPE_MAP = Object.freeze({
@@ -378,12 +377,8 @@ function buildPeriodComparisonSummary(primaryMetrics, comparisonMetrics) {
   };
 }
 
-function buildToolExecutionContext({ businessSnapshot, requestedTimeWindow = null, authToken, env }, deps = {}) {
+function buildToolExecutionContext({ businessSnapshot, authToken, env }, deps = {}) {
   const normalizedSnapshot = normalizeBusinessSnapshot(businessSnapshot);
-  const scopedSnapshot =
-    trimString(requestedTimeWindow?.period) && trimString(requestedTimeWindow?.kind) !== "none"
-      ? applyRequestedTimeWindowToSnapshot(normalizedSnapshot, requestedTimeWindow)
-      : normalizedSnapshot;
   const resolveWindowImpl = deps.resolveRetrievalWindowFromSnapshot || resolveRetrievalWindowFromSnapshot;
   const fetchSalesRecordsByWindowImpl = deps.fetchSalesRecordsByWindow || fetchSalesRecordsByWindow;
   const fetchProductsCatalogImpl = deps.fetchProductsCatalog || fetchProductsCatalog;
@@ -396,7 +391,7 @@ function buildToolExecutionContext({ businessSnapshot, requestedTimeWindow = nul
     snapshot: normalizedSnapshot,
     async getWindowInfo() {
       if (!windowInfoCache) {
-        windowInfoCache = resolveWindowImpl(scopedSnapshot);
+        windowInfoCache = resolveWindowImpl(normalizedSnapshot);
       }
       return windowInfoCache;
     },

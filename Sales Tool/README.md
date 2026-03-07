@@ -126,7 +126,6 @@
 │       ├── retrieval-context.js  # 命名识别辅助
 │       ├── retrieval-data.js     # 数据拉取与窗口解析
 │       ├── retrieval-enhancement.js # 聚合与快照增强
-│       ├── time-intent.js      # 时间窗口辅助解析
 │       ├── tool-registry.js    # Tool calling 工具声明
 │       ├── tool-executors.js   # Tool calling 工具执行器
 │       ├── tool-runtime.js     # Planner + tool-first 主运行时
@@ -143,7 +142,7 @@
 │   ├── chat-answer-contract.test.js # 最小 answer 契约测试
 │   ├── tool-runtime.test.js   # Tool-first 运行时与规划回归测试
 │   ├── tool-executors.test.js # 原语工具回归测试
-│   └── time-intent.test.js    # 时间辅助函数回归测试
+│   └── infra-app.test.js      # 前端依赖装配回归测试
 ├── package.json
 ├── package-lock.json
 └── vendor/
@@ -757,13 +756,7 @@ curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
 当前不纳入 T1 的问法：
 
 - 普通整体摘要
-### 11.16 时间窗口辅助
-
-- 当前仍保留 `time-intent.js` 作为辅助函数，用于把显式时间表达映射到请求子窗口。
-- 这层不再负责主链拦截，也不再产出本地时间边界答复。
-- 若解析出可执行时间窗，tool runtime 会优先在该子窗口内执行；否则默认使用当前 `analysis_range`。
-
-### 11.17 当前最小契约
+### 11.16 当前最小契约
 
 - 成功：`{ reply, answer, model, requestId }`
 - 失败：`{ error: { code, message }, requestId }`

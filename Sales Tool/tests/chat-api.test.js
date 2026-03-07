@@ -72,16 +72,6 @@ test("handleChatRequest returns tool-first success with minimal payload", async 
     history: [{ role: "user", content: "上个月表现如何" }],
     conversation_state: {
       primary_dimension_code: "overall",
-      requested_time_window: {
-        kind: "absolute",
-        label: "Q1",
-        start_month: "2025-01",
-        end_month: "2025-03",
-        period: "2025-01~2025-03",
-        anchor_mode: "explicit",
-      },
-      comparison_time_window: { kind: "none", label: "", start_month: "", end_month: "", period: "", anchor_mode: "none" },
-      time_compare_mode: "none",
       entity_scope: { products: [], hospitals: [] },
       source_period: "2025-01~2025-03",
     },
@@ -92,22 +82,11 @@ test("handleChatRequest returns tool-first success with minimal payload", async 
 
   const response = await handleChatRequest(context, "req-tool-success", {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
-    parseTimeIntent: () => ({
-      requested_time_window: {
-        kind: "absolute",
-        label: "1月到2月",
-        start_month: "2025-01",
-        end_month: "2025-02",
-        period: "2025-01~2025-02",
-        anchor_mode: "explicit",
-      },
-    }),
-    runToolFirstChat: async ({ requestedTimeWindow, businessSnapshot }) => {
-      assert.equal(requestedTimeWindow?.period, "2025-01~2025-02");
-      assert.equal(businessSnapshot?.analysis_range?.period, "2025-01~2025-02");
+    runToolFirstChat: async ({ businessSnapshot }) => {
+      assert.equal(businessSnapshot?.analysis_range?.period, "2025-01~2025-12");
       return {
         ok: true,
-        reply: "2025年1月至2月整体销售保持增长，近期趋势延续向上。",
+        reply: "在当前报表区间 2025-01~2025-12 内，整体销售保持增长，近期趋势延续向上。",
         model: "tool-model",
         outputContext: {
           route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
@@ -130,14 +109,14 @@ test("handleChatRequest returns tool-first success with minimal payload", async 
           evidence_types_completed: ["aggregate", "timeseries"],
         },
         toolResult: {
-          range: { period: "2025-01~2025-02" },
+          range: { period: "2025-01~2025-12" },
           coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
           summary: {
-            sales_amount: "468.81万元",
-            sales_volume: "3719盒",
+            sales_amount: "2861.75万元",
+            sales_volume: "22383盒",
             key_business_signals: ["最近月销售额上升。"],
           },
-          rows: [{ period: "2025-02", sales_amount: "202.52万元", sales_volume: "1527盒" }],
+          rows: [{ period: "2025-12", sales_amount: "508.27万元", sales_volume: "3391盒" }],
         },
       };
     },
@@ -145,13 +124,14 @@ test("handleChatRequest returns tool-first success with minimal payload", async 
 
   const payload = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(payload.reply, "2025年1月至2月整体销售保持增长，近期趋势延续向上。");
+  assert.equal(payload.reply, "在当前报表区间 2025-01~2025-12 内，整体销售保持增长，近期趋势延续向上。");
   assert.equal(payload.model, "tool-model");
   assert.equal(payload.answer.question_type, "overview");
   assert.deepEqual(payload.answer.evidence_types, ["aggregate", "timeseries"]);
   assert.deepEqual(payload.answer.missing_evidence_types, []);
   assert.equal(payload.answer.analysis_confidence, "high");
-  assert.equal(payload.answer.conversation_state?.requested_time_window?.period, "2025-01~2025-02");
+  assert.equal(payload.answer.conversation_state?.source_period, "2025-01~2025-12");
+  assert.equal("requested_time_window" in (payload.answer.conversation_state || {}), false);
   assert.equal("mode" in payload, false);
   assert.equal("businessIntent" in payload, false);
   assert.equal("surfaceReply" in payload, false);

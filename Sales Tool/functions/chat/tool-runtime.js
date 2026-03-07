@@ -97,16 +97,13 @@ export function createInitialToolRuntimeState() {
   };
 }
 
-function buildToolSeedPrompt(message, businessSnapshot, requestedTimeWindow = null) {
+function buildToolSeedPrompt(message, businessSnapshot) {
   const normalizedSnapshot = normalizeBusinessSnapshot(businessSnapshot);
   const promptLines = [
     "以下是当前分析范围内的轻量业务快照（seed context），可作为初始背景，但不是唯一数据来源。",
+    "所有分析必须以当前报表区间为准，不解释用户问题中的时间词。",
     "如需更具体的数据，请优先调用业务工具。",
   ];
-  const requestedPeriod = trimString(requestedTimeWindow?.period);
-  if (requestedPeriod) {
-    promptLines.push(`本轮用户请求的实际时间区间为 ${requestedPeriod}，请严格按该区间理解“本月/近三个月”等时间表达，不要偷换成报表尾部月份。`);
-  }
   promptLines.push(
     "",
     "seed_context:",
@@ -122,7 +119,7 @@ function mapHistoryRole(role) {
   return safeRole === "assistant" ? "model" : "user";
 }
 
-function buildInitialContents(historyWindow, message, businessSnapshot, requestedTimeWindow = null) {
+function buildInitialContents(historyWindow, message, businessSnapshot) {
   const contents = [];
   const safeHistory = Array.isArray(historyWindow) ? historyWindow : [];
   safeHistory.forEach((item) => {
@@ -137,7 +134,7 @@ function buildInitialContents(historyWindow, message, businessSnapshot, requeste
   });
   contents.push({
     role: "user",
-    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot, requestedTimeWindow) }],
+    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot) }],
   });
   return contents;
 }
@@ -680,7 +677,6 @@ export async function runToolFirstChat({
   message,
   historyWindow,
   businessSnapshot,
-  requestedTimeWindow = null,
   questionJudgment,
   authToken,
   env,
@@ -692,7 +688,6 @@ export async function runToolFirstChat({
   const runtimeContext = createToolRuntimeContext(
     {
       businessSnapshot,
-      requestedTimeWindow,
       authToken,
       env,
     },
@@ -702,7 +697,7 @@ export async function runToolFirstChat({
   const executeToolByNameImpl = deps.executeToolByName || executeToolByName;
   const requestGeminiGenerateContentImpl = deps.requestGeminiGenerateContent || requestGeminiGenerateContent;
 
-  const contents = buildInitialContents(historyWindow, message, businessSnapshot, requestedTimeWindow);
+  const contents = buildInitialContents(historyWindow, message, businessSnapshot);
   let lastToolResult = null;
   let plannerState = null;
 
