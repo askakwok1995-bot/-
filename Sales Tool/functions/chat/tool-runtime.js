@@ -1,17 +1,12 @@
 import {
-  ASSISTANT_ROLE_DEFINITION,
-  OUTPUT_POLICY_BOUNDED_ANSWER,
-  OUTPUT_POLICY_DIRECT_ANSWER,
-  PLANNER_ROLE_DEFINITION,
   QUESTION_JUDGMENT_CODES,
   QUESTION_JUDGMENT_LABELS,
   ROUTE_DECISION_CODES,
   TOOL_RUNTIME_MAX_CALLS,
   TOOL_RUNTIME_MAX_ROUNDS,
-  buildAssistantRoleSystemInstruction,
-  buildPlannerRoleSystemInstruction,
   normalizeBusinessSnapshot,
   normalizeNumericValue,
+  TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT,
   trimString,
 } from "./shared.js";
 import { buildToolDeclarations } from "./tool-registry.js";
@@ -102,38 +97,6 @@ const GENERIC_HOSPITAL_MENTIONS = Object.freeze([
   "某医院",
 ]);
 
-const TOOL_FIRST_SYSTEM_INSTRUCTION = [
-  "当前链路已为你提供一组受控业务工具。",
-  `第一轮必须先调用 ${PLANNER_FUNCTION_NAME}，输出你对问题的规划判断。`,
-  "planner 必须显式判断：是否相关、是否拒答、是否需要带边界回答、需要哪些分析视角、首批工具调用计划。",
-  "相关问题默认至少调用一个工具后再决定是否带边界回答；只有明显无关的问题才允许零工具直接拒答。",
-  "对范围大、对象不明确的泛分析问题，优先使用高层宏工具：get_sales_overview_brief、get_sales_trend_brief、get_dimension_overview_brief。",
-  "只有当用户明确要求原因、贡献来源、结构、异常、风险机会或继续深挖时，再优先拆成多原语工具组合。",
-  "对“分析/为什么/结构/贡献来源/风险机会”类问题，通常先拿整体结论，再补趋势、结构、排行或风险中的至少一个支撑视角。",
-  "如果目前只拿到单一摘要视角，且用户问题明显需要解释原因、结构或异常，不要急于结束，继续调用更合适的工具。",
-  "工具结果是本轮回答的主要事实依据；若工具结果 coverage=partial/none、存在未匹配实体，或结论仍有明显边界，请按 bounded_answer 风格回答。",
-  "若工具结果 coverage=full，按 direct_answer 风格回答；若 coverage=full 且 rows 为空但结果明确为0贡献，请直接说明“当前范围内贡献为0/未产生贡献”，不要写成“数据不足”。",
-  "最终总结时必须综合本轮全部已调用工具的结果，不要只基于最后一个工具回复。",
-  "禁止输出任何内部过程词、工具名、函数名、调取过程。",
-  "",
-  "planner 规则：",
-  "1）无关问题：relevance=irrelevant，route_intent=refuse，可不调工具；",
-  "2）相关问题：relevance=relevant，required_tool_call_min 至少为 1；",
-  "3）若问题相关但你暂时判断可能信息不足，先规划最合适的工具验证，不要直接 bounded；",
-  "4）不要覆写已给定的报表区间和 seed context 中的事实约束。",
-  "5）范围大、对象不明确的 report/overview/trend 问题，优先选择一个高层宏工具，先形成第一版可回答结果。",
-  "6）只有当用户明确要求原因、贡献来源、结构、风险机会、异常，或继续深挖时，再把 required_evidence 扩展为多证据组合。",
-  "7）contribution 场景至少要拿到 breakdown 或 ranking 之一；diagnosis/risk 场景至少要拿到 diagnostics 或 timeseries 之一。",
-  "8）如果当前 required_evidence 对应的关键信息没有取齐，不要把回答当成稳定 direct_answer。",
-  "9）复杂分析最多允许 6 次工具调用，请在这个上限内优先选择更高信息密度的工具。",
-  "",
-  "direct_answer 结构要求：",
-  OUTPUT_POLICY_DIRECT_ANSWER,
-  "",
-  "bounded_answer 结构要求：",
-  OUTPUT_POLICY_BOUNDED_ANSWER,
-].join("\n");
-
 export function createInitialToolRuntimeState() {
   return {
     attempted: false,
@@ -207,7 +170,7 @@ function buildToolPayload(contents, allowedViewNames = PLANNER_VIEW_NAMES) {
     systemInstruction: {
       parts: [
         {
-          text: `${buildPlannerRoleSystemInstruction(PLANNER_ROLE_DEFINITION)}\n\n${buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION)}\n\n${TOOL_FIRST_SYSTEM_INSTRUCTION}`,
+          text: TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT,
         },
       ],
     },

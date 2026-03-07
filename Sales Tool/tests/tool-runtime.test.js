@@ -58,6 +58,7 @@ test("tool registry exposes expanded controlled declarations", () => {
 test("runToolFirstChat accepts macro tool plan for broad trend question", async () => {
   const toolCalls = [];
   let firstRoundDeclarationNames = [];
+  let firstRoundSystemInstruction = "";
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
     message: "分析销售趋势",
@@ -76,6 +77,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
           firstRoundDeclarationNames = Array.isArray(payload?.tools?.[0]?.functionDeclarations)
             ? payload.tools[0].functionDeclarations.map((item) => item?.name)
             : [];
+          firstRoundSystemInstruction = String(payload?.systemInstruction?.parts?.[0]?.text || "");
         }
         if (geminiCallCount === 1) {
           return {
@@ -155,6 +157,14 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
 
   assert.equal(result.ok, true);
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.match(firstRoundSystemInstruction, /工作流状态机/u);
+  assert.match(firstRoundSystemInstruction, /\[阶段 1：首轮规划阶段\]/u);
+  assert.match(firstRoundSystemInstruction, /\[阶段 2：深挖取数阶段\]/u);
+  assert.match(firstRoundSystemInstruction, /\[阶段 3：最终总结阶段\]/u);
+  assert.match(firstRoundSystemInstruction, /强制且只能调用 submit_analysis_plan/u);
+  assert.match(firstRoundSystemInstruction, /策略 A：Direct Answer/u);
+  assert.match(firstRoundSystemInstruction, /策略 B：Bounded Answer/u);
+  assert.equal((firstRoundSystemInstruction.match(/角色定位：/g) || []).length, 1);
   assert.deepEqual(firstRoundDeclarationNames, [
     "submit_analysis_plan",
     "get_sales_overview_brief",
