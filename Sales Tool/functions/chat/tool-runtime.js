@@ -21,6 +21,7 @@ const TOOL_FALLBACK_REASONS = Object.freeze({
   EMPTY_FINAL_REPLY: "empty_final_reply",
   PLANNER_CALL_MISSING: "planner_call_missing",
   PLANNER_RELEVANT_WITHOUT_TOOL: "planner_relevant_without_tool",
+  PLANNER_REJECTED_WITHOUT_RESUBMISSION: "planner_rejected_without_resubmission",
 });
 
 const PLANNER_FUNCTION_NAME = "submit_analysis_plan";
@@ -445,6 +446,14 @@ function parsePlannerInitialTools(value) {
     .filter((item) => item !== null);
 }
 
+function hasOwnStringField(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key) && trimString(value?.[key]);
+}
+
+function hasOwnNumericField(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key) && Number.isFinite(Number(value?.[key]));
+}
+
 function buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment) {
   const fallback = fallbackQuestionJudgment && typeof fallbackQuestionJudgment === "object" ? fallbackQuestionJudgment : {};
   const primaryDimensionCandidate = trimString(plannerArgs?.primary_dimension);
@@ -521,6 +530,82 @@ function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
     missing_evidence_types: [],
     analysis_confidence: "low",
     questionJudgment: buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment),
+  };
+}
+
+function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
+  const safeArgs = plannerArgs && typeof plannerArgs === "object" ? plannerArgs : {};
+  const allowedSet = new Set(
+    Array.isArray(allowedViewNames)
+      ? allowedViewNames.map((item) => trimString(item)).filter((item) => item)
+      : PLANNER_VIEW_NAMES,
+  );
+
+  if (!hasOwnStringField(safeArgs, "relevance")) {
+    return {
+      accepted: false,
+      note: "缺失 relevance，请先明确判断这是相关问题还是无关问题。",
+    };
+  }
+
+  if (
+    trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.REFUSE &&
+    trimString(plannerState?.relevance) !== QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+  ) {
+    return {
+      accepted: false,
+      note: "只有明显无关的问题才能使用 refuse；若问题相关，请改为 direct_answer 或 bounded_answer 并规划工具。",
+    };
+  }
+
+  const initialTools = Array.isArray(plannerState?.initial_tools) ? plannerState.initial_tools : [];
+  const requestedViews = Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [];
+  const hasRequestedViews = requestedViews.length > 0;
+  const hasInitialTools = initialTools.length > 0;
+  const isZeroToolRefuse =
+    trimString(plannerState?.relevance) === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT &&
+    trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.REFUSE;
+
+  if (!isZeroToolRefuse && !hasRequestedViews && !hasInitialTools) {
+    return {
+      accepted: false,
+      note: "相关问题必须至少提供 requested_views 或 initial_tools 其中之一，不能两者都为空。",
+    };
+  }
+
+  if (!isZeroToolRefuse && hasRequestedViews && !hasInitialTools) {
+    return {
+      accepted: false,
+      note: "requested_views 已给出，但 initial_tools 为空。请给出首批工具调用计划后再继续。",
+    };
+  }
+
+  if (trimString(plannerState?.relevance) === QUESTION_JUDGMENT_CODES.relevance.RELEVANT) {
+    if (!hasOwnNumericField(safeArgs, "required_tool_call_min") || Number(plannerState?.required_tool_call_min) < 1) {
+      return {
+        accepted: false,
+        note: "相关问题的 required_tool_call_min 必须大于等于 1。",
+      };
+    }
+  }
+
+  if (initialTools.some((item) => !allowedSet.has(trimString(item?.name)))) {
+    return {
+      accepted: false,
+      note: "initial_tools 中包含当前阶段不可调用的工具，请改用当前允许暴露的工具。",
+    };
+  }
+
+  if (requestedViews.some((item) => !allowedSet.has(trimString(item)))) {
+    return {
+      accepted: false,
+      note: "requested_views 中包含当前阶段不可用的工具，请改用当前允许暴露的工具。",
+    };
+  }
+
+  return {
+    accepted: true,
+    note: "planner_accepted",
   };
 }
 
@@ -797,7 +882,19 @@ export async function runToolFirstChat({
           toolCallTrace,
         };
       }
-      plannerState = normalizePlannerState(plannerCall.args, questionJudgment);
+      const candidatePlannerState = normalizePlannerState(plannerCall.args, questionJudgment);
+      const plannerValidation = validatePlannerState(plannerCall.args, candidatePlannerState, allowedViewNames);
+
+      if (content) {
+        contents.push(content);
+      }
+
+      if (!plannerValidation.accepted) {
+        contents.push(buildPlannerFunctionResponse(candidatePlannerState, false, plannerValidation.note));
+        continue;
+      }
+
+      plannerState = candidatePlannerState;
       state.planner_completed = true;
       state.planner_relevance = plannerState.relevance;
       state.planner_route_intent = plannerState.route_intent;
@@ -807,10 +904,6 @@ export async function runToolFirstChat({
       state.planner_refuse_reason = plannerState.refuse_reason;
       state.planner_bounded_reason = plannerState.bounded_reason;
       state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
-
-      if (content) {
-        contents.push(content);
-      }
 
       const plannedCalls = toolCalls.length > 0 ? toolCalls : plannerState.initial_tools;
       if (plannerState.relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT && plannerState.route_intent === ROUTE_DECISION_CODES.REFUSE) {
@@ -926,6 +1019,104 @@ export async function runToolFirstChat({
         analysisConfidence: trimString(plannerState?.analysis_confidence),
         questionJudgment: plannerQuestionJudgment,
         toolResult: lastToolResult?.result || null,
+        toolRuntimeState: state,
+        toolCallTrace,
+      };
+    }
+
+    if (plannerCall) {
+      const candidatePlannerState = normalizePlannerState(plannerCall.args, plannerState?.questionJudgment || questionJudgment);
+      const plannerValidation = validatePlannerState(plannerCall.args, candidatePlannerState, PLANNER_VIEW_NAMES);
+      if (!plannerValidation.accepted) {
+        if (content) {
+          contents.push(content);
+        }
+        contents.push(buildPlannerFunctionResponse(candidatePlannerState, false, plannerValidation.note));
+        continue;
+      }
+
+      plannerState = {
+        ...plannerState,
+        ...candidatePlannerState,
+      };
+      state.planner_relevance = plannerState.relevance;
+      state.planner_route_intent = plannerState.route_intent;
+      state.question_type = plannerState.question_type;
+      state.evidence_types_requested = plannerState.required_evidence.slice(0, 8);
+      state.planner_requested_views = plannerState.requested_views.slice(0, 6);
+      state.planner_refuse_reason = plannerState.refuse_reason;
+      state.planner_bounded_reason = plannerState.bounded_reason;
+      state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
+
+      if (content) {
+        contents.push(content);
+      }
+
+      const plannedCalls = toolCalls.length > 0 ? toolCalls : plannerState.initial_tools;
+      if (plannedCalls.length === 0) {
+        contents.push(
+          buildPlannerFunctionResponse(
+            plannerState,
+            false,
+            "相关问题至少先调用一个工具，再决定是否 direct_answer 或 bounded_answer。",
+          ),
+        );
+        continue;
+      }
+
+      contents.push(buildPlannerFunctionResponse(plannerState, true, "planner_accepted"));
+      for (const call of plannedCalls) {
+        if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
+          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
+          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+          return {
+            ok: false,
+            fallbackReason: state.fallback_reason,
+            toolRuntimeState: state,
+            toolCallTrace,
+          };
+        }
+        let executionResult;
+        try {
+          executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
+        } catch (_error) {
+          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
+          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+          return {
+            ok: false,
+            fallbackReason: state.fallback_reason,
+            toolRuntimeState: state,
+            toolCallTrace,
+          };
+        }
+        state.tool_call_count += 1;
+        state.used_tools.push(trimString(call.name));
+        state.evidence_types_completed = Array.from(
+          new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
+        );
+        lastToolResult = executionResult;
+        toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
+        contents.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: trimString(call.name),
+                response: executionResult.result,
+              },
+            },
+          ],
+        });
+      }
+      continue;
+    }
+
+    if (toolCalls.length > 0) {
+      state.fallback_reason = TOOL_FALLBACK_REASONS.PLANNER_REJECTED_WITHOUT_RESUBMISSION;
+      logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+      return {
+        ok: false,
+        fallbackReason: state.fallback_reason,
         toolRuntimeState: state,
         toolCallTrace,
       };

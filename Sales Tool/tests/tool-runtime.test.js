@@ -537,3 +537,282 @@ test("runToolFirstChat downgrades report answer to bounded when required evidenc
   assert.deepEqual(result.missingEvidenceTypes, ["timeseries", "breakdown", "diagnostics"]);
   assert.equal(result.analysisConfidence, "low");
 });
+
+test("runToolFirstChat rejects invalid planner missing relevance and requires resubmission", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析产品销售结构",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-invalid-planner-missing-relevance",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["breakdown"],
+                            requested_views: ["get_share_breakdown"],
+                            required_tool_call_min: 1,
+                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: false,
+          code: "should-not-reach-second-pass",
+        };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackReason, "gemini_error");
+  assert.equal(geminiCallCount, 2);
+});
+
+test("runToolFirstChat fails when planner is rejected and model skips replanning by calling tools directly", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析产品销售结构",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-rejected-without-resubmission",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["breakdown"],
+                            requested_views: ["get_share_breakdown"],
+                            required_tool_call_min: 0,
+                            initial_tools: [],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      functionCall: {
+                        name: "get_share_breakdown",
+                        args: {
+                          dimension: "product",
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackReason, "planner_call_missing");
+});
+
+test("runToolFirstChat continues after planner resubmission succeeds", async () => {
+  let geminiCallCount = 0;
+  const toolCalls = [];
+  const result = await runToolFirstChat({
+    message: "分析产品销售结构",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-resubmission-success",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["breakdown"],
+                            requested_views: ["get_share_breakdown"],
+                            required_tool_call_min: 0,
+                            initial_tools: [],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        if (geminiCallCount === 2) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["breakdown"],
+                            requested_views: ["get_share_breakdown"],
+                            required_tool_call_min: 1,
+                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内，产品销售结构集中，头部产品贡献占比较高。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            summary: { sales_amount: "2826.20万元" },
+            rows: [{ row_label: "结构:Botox50", sales_share: "37.68%" }],
+          },
+          meta: {
+            detail_request_mode: "generic",
+            coverage_code: "full",
+            evidence_types: ["breakdown", "ranking"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 3);
+  assert.deepEqual(toolCalls, ["get_share_breakdown"]);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
+  assert.deepEqual(result.evidenceTypesCompleted, ["breakdown", "ranking"]);
+});

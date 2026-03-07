@@ -44,3 +44,33 @@ test("createChatReplyRequester maps runtime failure reasons to readable Chinese 
   );
 });
 
+test("createChatReplyRequester maps planner_rejected_without_resubmission to readable Chinese message", async () => {
+  const requester = createRequester(async () => {
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: "internal_error",
+          message: "AI 工具分析未形成稳定结果，请缩小分析范围后重试。",
+          details: {
+            reason: "planner_rejected_without_resubmission",
+          },
+        },
+      }),
+      {
+        status: 502,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+  });
+
+  await assert.rejects(
+    requester("分析产品销售结构"),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "模型未按要求重新生成分析计划，请换一种问法重试。");
+      return true;
+    },
+  );
+});

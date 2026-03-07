@@ -319,6 +319,7 @@ const CHAT_RUNTIME_REASON_MESSAGES = Object.freeze({
   tool_execution_failed: "分析工具执行失败，请稍后重试。",
   planner_call_missing: "模型未形成有效分析计划，请换一种问法重试。",
   planner_relevant_without_tool: "模型未完成必要的数据分析步骤，请换一种问法重试。",
+  planner_rejected_without_resubmission: "模型未按要求重新生成分析计划，请换一种问法重试。",
   gemini_error: "模型服务暂时不可用，请稍后重试。",
   invalid_analysis_range: "当前报表区间无效，请先检查报表筛选范围。",
 });
