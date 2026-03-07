@@ -75,8 +75,21 @@ test("runToolFirstChat completes after single tool call and returns final reply"
                     parts: [
                       {
                         functionCall: {
-                          name: "get_overall_summary",
-                          args: { focus: "整体" },
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "overall",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            requested_views: ["get_overall_summary"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_overall_summary",
+                                args_json: "{\"focus\":\"整体\"}",
+                              },
+                            ],
+                          },
                         },
                       },
                     ],
@@ -127,11 +140,91 @@ test("runToolFirstChat completes after single tool call and returns final reply"
   assert.equal(result.model, "stub-model");
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
   assert.equal(result.toolRuntimeState.tool_call_count, 1);
+  assert.equal(result.plannerState?.relevance, QUESTION_JUDGMENT_CODES.relevance.RELEVANT);
+  assert.equal(result.questionJudgment?.primary_dimension?.code, QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL);
   assert.deepEqual(toolCalls.map((item) => item.name), ["get_overall_summary"]);
   assert.equal(result.toolCallTrace[0].analysis_view, "");
 });
 
-test("runToolFirstChat falls back when tool loop exceeds max calls", async () => {
+test("runToolFirstChat allows planner to zero-tool refuse for irrelevant questions", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "今天天气怎么样",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+    },
+    questionJudgment: createQuestionJudgment({
+      relevance: {
+        code: QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT,
+        label: "明显无关",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-refuse",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "irrelevant",
+                            primary_dimension: "other",
+                            granularity: "summary",
+                            route_intent: "refuse",
+                            requested_views: [],
+                            refuse_reason: "non_business_question",
+                            required_tool_call_min: 0,
+                            initial_tools: [],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "我当前只支持医药销售数据分析相关问题。你可以继续问整体业绩、产品表现或医院贡献。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.REFUSE);
+  assert.equal(result.toolRuntimeState.tool_call_count, 0);
+  assert.equal(result.plannerState?.zero_tool_refuse, true);
+  assert.equal(result.questionJudgment?.relevance?.code, QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT);
+});
+
+test("runToolFirstChat falls back when planner requests more tools than max calls", async () => {
   const result = await runToolFirstChat({
     message: "分析所有产品表现",
     historyWindow: [],
@@ -149,15 +242,35 @@ test("runToolFirstChat falls back when tool loop exceeds max calls", async () =>
         payload: {
           candidates: [
             {
-              content: {
-                parts: [
-                  { functionCall: { name: "get_product_summary", args: { include_all_products: true } } },
-                  { functionCall: { name: "get_hospital_summary", args: { limit: 5 } } },
-                  { functionCall: { name: "get_trend_summary", args: { dimension: "overall" } } },
-                  { functionCall: { name: "get_overall_summary", args: {} } },
-                ],
+                content: {
+                  parts: [
+                    {
+                      functionCall: {
+                        name: "submit_analysis_plan",
+                        args: {
+                          relevance: "relevant",
+                          primary_dimension: "product",
+                          granularity: "detail",
+                          route_intent: "direct_answer",
+                          requested_views: [
+                            "get_product_summary",
+                            "get_hospital_summary",
+                            "get_trend_summary",
+                            "get_overall_summary",
+                          ],
+                          required_tool_call_min: 1,
+                          initial_tools: [
+                            { name: "get_product_summary", args_json: "{\"include_all_products\":true}" },
+                            { name: "get_hospital_summary", args_json: "{\"limit\":5}" },
+                            { name: "get_trend_summary", args_json: "{\"dimension\":\"overall\"}" },
+                            { name: "get_overall_summary", args_json: "{}" },
+                          ],
+                        },
+                      },
+                    },
+                  ],
+                },
               },
-            },
           ],
         },
       }),

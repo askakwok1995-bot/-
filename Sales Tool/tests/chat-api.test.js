@@ -51,7 +51,7 @@ test("handleChatRequest returns structured JSON error and requestId when pre-gem
   }
 });
 
-test("handleChatRequest refuse path does not call Gemini", async () => {
+test("handleChatRequest uses planner-driven tool-first refuse path instead of local template refuse", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
       method: "POST",
@@ -61,6 +61,9 @@ test("handleChatRequest refuse path does not call Gemini", async () => {
       },
       body: JSON.stringify({
         message: "今天天气怎么样",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
       }),
     }),
     env: {
@@ -73,8 +76,45 @@ test("handleChatRequest refuse path does not call Gemini", async () => {
     verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
     buildQuestionJudgment: () => ({
       primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OTHER, label: "其他/未归类" },
-      granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
-      relevance: { code: QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT, label: "明显无关" },
+        granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+        relevance: { code: QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT, label: "明显无关" },
+      }),
+    runToolFirstChat: async () => ({
+      ok: true,
+      reply: "我当前只支持医药销售数据分析相关问题。你可以继续问整体业绩、产品表现或医院贡献。",
+      model: "tool-model",
+      outputContext: {
+        route_code: ROUTE_DECISION_CODES.REFUSE,
+        boundary_needed: false,
+        refuse_mode: true,
+        local_response_mode: "planner_refuse",
+      },
+      plannerState: {
+        relevance: QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT,
+        route_intent: ROUTE_DECISION_CODES.REFUSE,
+        requested_views: [],
+        refuse_reason: "non_business_question",
+        bounded_reason: "",
+        required_tool_call_min: 0,
+        zero_tool_refuse: true,
+      },
+      questionJudgment: {
+        primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OTHER, label: "其他/未归类" },
+        granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+        relevance: { code: QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT, label: "明显无关" },
+      },
+      toolResult: null,
+      toolRuntimeState: {
+        attempted: true,
+        planner_completed: true,
+        used_tools: [],
+        tool_call_count: 0,
+        rounds: 2,
+        final_route_code: ROUTE_DECISION_CODES.REFUSE,
+        success: true,
+        fallback_reason: "",
+      },
+      toolCallTrace: [],
     }),
     callGemini: async () => {
       geminiCalled = true;
@@ -84,9 +124,9 @@ test("handleChatRequest refuse path does not call Gemini", async () => {
 
   const payload = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(payload.model, "local-template-refuse");
+  assert.equal(payload.model, "tool-model");
   assert.equal(geminiCalled, false);
-  assert.match(payload.reply, /你可以问|整体业绩|产品表现|医院表现/u);
+  assert.match(payload.reply, /医药销售数据分析|整体业绩|产品表现|医院贡献/u);
   assert.equal(payload.answer?.output_shape, "clarify");
   assert.equal("structured" in payload, false);
   assert.equal("responseAction" in payload, false);
@@ -203,6 +243,20 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
       ok: true,
       reply: "当前整体销售保持增长，达成率稳定，近两个月的销售趋势延续向上，建议继续关注核心驱动因素。",
       model: "tool-model",
+      plannerState: {
+        relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+        route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        requested_views: ["get_overall_summary", "get_trend_summary"],
+        refuse_reason: "",
+        bounded_reason: "",
+        required_tool_call_min: 1,
+        zero_tool_refuse: false,
+      },
+      questionJudgment: {
+        primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.TREND, label: "趋势" },
+        granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+        relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+      },
       outputContext: {
         route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
         boundary_needed: false,
@@ -236,6 +290,8 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
     payload.reply,
     "当前整体销售保持增长，达成率稳定，近两个月的销售趋势延续向上，建议继续关注核心驱动因素。",
   );
+  assert.equal(payload.answer?.output_shape, "text");
+  assert.equal(payload.answer?.primary_dimension_code, QUESTION_JUDGMENT_CODES.primary_dimension.TREND);
   assert.equal(legacyAvailabilityCalled, false);
   assert.equal(legacyGeminiCalled, false);
 });

@@ -212,6 +212,24 @@ function createEmptySessionStateTraceValue() {
 }
 
 function buildToolPathDataAvailability(outputContext = {}) {
+  if (Boolean(outputContext?.refuse_mode)) {
+    return {
+      has_business_data: { code: "", label: "" },
+      dimension_availability: { code: "", label: "" },
+      answer_depth: { code: "", label: "" },
+      gap_hint_needed: { code: "", label: "" },
+      detail_request_mode: "",
+      hospital_monthly_support: "",
+      product_hospital_support: "",
+      hospital_named_support: "",
+      product_full_support: "",
+      product_named_support: "",
+      product_named_match_mode: "",
+      requested_product_count_value: 0,
+      product_hospital_hospital_count_value: 0,
+      product_hospital_zero_result: "",
+    };
+  }
   const detailRequestMode = Boolean(outputContext?.overall_period_compare_mode)
     ? "overall_period_compare"
     : Boolean(outputContext?.product_hospital_detail_mode)
@@ -421,6 +439,7 @@ function buildSuccessChatResponse({
   toolRouteFallbackReason = "",
   forcedBounded = false,
   toolResult = null,
+  plannerState = null,
   requestedProducts = [],
   requestedHospitals = [],
   requestedTimeWindow = null,
@@ -475,6 +494,7 @@ function buildSuccessChatResponse({
     toolRouteType,
     toolRouteName,
     toolRouteFallbackReason,
+    plannerState,
   });
   logPhase2TraceImpl(phase2Trace, env);
   return jsonResponse(
@@ -626,36 +646,6 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
             available_end_month: trimString(normalizedBusinessSnapshot?.analysis_range?.end_month),
             available_period: trimString(normalizedBusinessSnapshot?.analysis_range?.period),
           };
-
-    if (trimString(questionJudgment?.relevance?.code) === "irrelevant") {
-      const routeDecision = {
-        route: { code: ROUTE_DECISION_CODES.REFUSE, label: "拒绝/收住" },
-        reason_codes: ["irrelevant"],
-      };
-      const dataAvailability = {};
-      const outputContext = buildOutputContextImpl(routeDecision, questionJudgment, dataAvailability);
-      return buildSuccessChatResponse({
-        mode,
-        businessSnapshot: normalizedBusinessSnapshot,
-        questionJudgment,
-        dataAvailability,
-        sessionState,
-        routeDecision,
-        retrievalState: createInitialRetrievalStateImpl(),
-        outputContext,
-        replyText: buildRefuseReplyTemplateImpl(outputContext),
-        model: "local-template-refuse",
-        requestId,
-        env: context.env,
-        requestedTimeWindow,
-        comparisonTimeWindow,
-        timeCompareMode,
-        normalizeOutputReplyImpl,
-        applyQualityControlImpl,
-        buildPhase2TraceImpl,
-        logPhase2TraceImpl,
-      });
-    }
 
     const hospitalMonthlyDetailRequested = isHospitalMonthlyDetailRequest(message, questionJudgment);
     const productFullRequested = isFullProductRequest(message, questionJudgment);
@@ -956,6 +946,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       toolCallTrace = Array.isArray(toolFirstResult.toolCallTrace) ? toolFirstResult.toolCallTrace : [];
       toolFallbackReason = trimString(toolFirstResult.fallbackReason) || "tool_first_failed";
       if (toolFirstResult.ok) {
+        const toolFirstQuestionJudgment = toolFirstResult.questionJudgment || planningQuestionJudgment;
         const routeDecision = buildToolPathRouteDecision(toolFirstResult.outputContext);
         const outputContext = {
           ...toolFirstResult.outputContext,
@@ -969,7 +960,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
         return buildSuccessChatResponse({
           mode,
           businessSnapshot: scopedBusinessSnapshot,
-          questionJudgment: planningQuestionJudgment,
+          questionJudgment: toolFirstQuestionJudgment,
           dataAvailability: buildToolPathDataAvailability(outputContext),
           sessionState,
           routeDecision,
@@ -984,6 +975,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
           toolRouteName,
           toolRouteFallbackReason: "",
           toolResult: toolFirstResult.toolResult,
+          plannerState: toolFirstResult.plannerState,
           requestedProducts,
           requestedHospitals,
           requestedTimeWindow,

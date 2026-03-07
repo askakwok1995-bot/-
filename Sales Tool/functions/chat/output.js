@@ -226,6 +226,7 @@ export function buildPhase2Trace({
   toolRouteType = "",
   toolRouteName = "",
   toolRouteFallbackReason = "",
+  plannerState = null,
 }) {
   return {
     requestId: trimString(requestId),
@@ -239,6 +240,12 @@ export function buildPhase2Trace({
     toolRouteType: trimString(toolRouteType),
     toolRouteName: trimString(toolRouteName),
     toolRouteFallbackReason: trimString(toolRouteFallbackReason),
+    planner_relevance: trimString(plannerState?.relevance),
+    planner_route_intent: trimString(plannerState?.route_intent),
+    planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [],
+    planner_refuse_reason: trimString(plannerState?.refuse_reason),
+    planner_bounded_reason: trimString(plannerState?.bounded_reason),
+    planner_zero_tool_refuse: Boolean(plannerState?.zero_tool_refuse),
     forced_bounded: Boolean(forcedBounded),
     qc: toQcStateTrace(qcState),
   };

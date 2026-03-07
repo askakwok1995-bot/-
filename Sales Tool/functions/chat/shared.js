@@ -13,7 +13,7 @@ export const MAX_MESSAGE_LENGTH = 4000;
 export const AUTH_UPSTREAM_TIMEOUT_MS = 12000;
 export const GEMINI_UPSTREAM_TIMEOUT_MS = 30000;
 export const TOOL_RUNTIME_MAX_CALLS = 3;
-export const TOOL_RUNTIME_MAX_ROUNDS = 2;
+export const TOOL_RUNTIME_MAX_ROUNDS = 4;
 
 export const CHAT_ERROR_CODES = Object.freeze({
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -48,12 +48,34 @@ export const DEFAULT_ASSISTANT_ROLE = Object.freeze({
   ]),
 });
 
+export const DEFAULT_PLANNER_ROLE = Object.freeze({
+  identity: "你是医药销售分析规划器",
+  goal: "先判断问题是否属于医药销售分析范围，再规划需要的数据视角与工具调用顺序，避免过早拒答或过早给出带边界结论",
+  style: "先做事实约束下的规划判断，再决定是否拒答、是否需要边界回答、以及先调用哪些工具",
+  rules: Object.freeze([
+    "相关问题默认至少调用一个工具后再决定是否带边界回答",
+    "只有明显无关的问题才允许零工具直接拒答",
+    "不要覆写已给定的时间范围和coverage事实约束",
+    "对为什么、结构、贡献来源、风险机会类问题优先规划多视角分析",
+    "不要输出最终给用户的自然语言答案，只输出规划决策",
+  ]),
+});
+
 export const ASSISTANT_ROLE_DEFINITION = Object.freeze({
   assistant_role: Object.freeze({
     identity: DEFAULT_ASSISTANT_ROLE.identity,
     goal: DEFAULT_ASSISTANT_ROLE.goal,
     style: DEFAULT_ASSISTANT_ROLE.style,
     rules: DEFAULT_ASSISTANT_ROLE.rules,
+  }),
+});
+
+export const PLANNER_ROLE_DEFINITION = Object.freeze({
+  assistant_role: Object.freeze({
+    identity: DEFAULT_PLANNER_ROLE.identity,
+    goal: DEFAULT_PLANNER_ROLE.goal,
+    style: DEFAULT_PLANNER_ROLE.style,
+    rules: DEFAULT_PLANNER_ROLE.rules,
   }),
 });
 
@@ -424,16 +446,16 @@ function normalizeRoleRules(value, fallbackRules) {
   return rules.length > 0 ? rules : fallback;
 }
 
-export function buildAssistantRoleSystemInstruction(roleDefinition) {
+function buildRoleSystemInstruction(roleDefinition, fallbackRole) {
   const roleCandidate =
     roleDefinition && typeof roleDefinition === "object" && roleDefinition.assistant_role
       ? roleDefinition.assistant_role
       : null;
 
-  const identity = normalizeRoleText(roleCandidate?.identity, DEFAULT_ASSISTANT_ROLE.identity);
-  const goal = normalizeRoleText(roleCandidate?.goal, DEFAULT_ASSISTANT_ROLE.goal);
-  const style = normalizeRoleText(roleCandidate?.style, DEFAULT_ASSISTANT_ROLE.style);
-  const rules = normalizeRoleRules(roleCandidate?.rules, DEFAULT_ASSISTANT_ROLE.rules);
+  const identity = normalizeRoleText(roleCandidate?.identity, fallbackRole.identity);
+  const goal = normalizeRoleText(roleCandidate?.goal, fallbackRole.goal);
+  const style = normalizeRoleText(roleCandidate?.style, fallbackRole.style);
+  const rules = normalizeRoleRules(roleCandidate?.rules, fallbackRole.rules);
 
   return [
     `角色定位：${identity}`,
@@ -443,6 +465,14 @@ export function buildAssistantRoleSystemInstruction(roleDefinition) {
     ...rules.map((rule, index) => `${index + 1}. ${rule}`),
     "业务输入约束：优先依据 business_snapshot 回答；若快照数据不足，请明确说明，不要编造。",
   ].join("\n");
+}
+
+export function buildAssistantRoleSystemInstruction(roleDefinition) {
+  return buildRoleSystemInstruction(roleDefinition, DEFAULT_ASSISTANT_ROLE);
+}
+
+export function buildPlannerRoleSystemInstruction(roleDefinition) {
+  return buildRoleSystemInstruction(roleDefinition, DEFAULT_PLANNER_ROLE);
 }
 
 export function getEnvString(env, key) {

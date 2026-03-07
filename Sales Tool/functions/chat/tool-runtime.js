@@ -2,10 +2,14 @@ import {
   ASSISTANT_ROLE_DEFINITION,
   OUTPUT_POLICY_BOUNDED_ANSWER,
   OUTPUT_POLICY_DIRECT_ANSWER,
+  PLANNER_ROLE_DEFINITION,
+  QUESTION_JUDGMENT_CODES,
+  QUESTION_JUDGMENT_LABELS,
   ROUTE_DECISION_CODES,
   TOOL_RUNTIME_MAX_CALLS,
   TOOL_RUNTIME_MAX_ROUNDS,
   buildAssistantRoleSystemInstruction,
+  buildPlannerRoleSystemInstruction,
   normalizeBusinessSnapshot,
   normalizeNumericValue,
   trimString,
@@ -20,17 +24,43 @@ const TOOL_FALLBACK_REASONS = Object.freeze({
   TOOL_EXECUTION_FAILED: "tool_execution_failed",
   GEMINI_ERROR: "gemini_error",
   EMPTY_FINAL_REPLY: "empty_final_reply",
+  PLANNER_CALL_MISSING: "planner_call_missing",
+  PLANNER_RELEVANT_WITHOUT_TOOL: "planner_relevant_without_tool",
 });
+
+const PLANNER_FUNCTION_NAME = "submit_analysis_plan";
+const PLANNER_VIEW_NAMES = Object.freeze([
+  "get_overall_summary",
+  "get_product_summary",
+  "get_hospital_summary",
+  "get_product_hospital_contribution",
+  "get_trend_summary",
+  "get_period_comparison_summary",
+  "get_product_trend",
+  "get_hospital_trend",
+  "get_entity_ranking",
+  "get_share_breakdown",
+  "get_anomaly_insights",
+  "get_risk_opportunity_summary",
+]);
 
 const TOOL_FIRST_SYSTEM_INSTRUCTION = [
   "当前链路已为你提供一组受控业务工具。",
-  "当问题需要具体业务数据时，优先调用最合适的工具，不要假装已经掌握未提供的数据。",
-  "先判断回答是否需要多个分析视角。对“分析/为什么/结构/贡献来源/风险机会”类问题，通常先拿整体结论，再补趋势、结构、排行或风险中的至少一个支撑视角。",
+  `第一轮必须先调用 ${PLANNER_FUNCTION_NAME}，输出你对问题的规划判断。`,
+  "planner 必须显式判断：是否相关、是否拒答、是否需要带边界回答、需要哪些分析视角、首批工具调用计划。",
+  "相关问题默认至少调用一个工具后再决定是否带边界回答；只有明显无关的问题才允许零工具直接拒答。",
+  "对“分析/为什么/结构/贡献来源/风险机会”类问题，通常先拿整体结论，再补趋势、结构、排行或风险中的至少一个支撑视角。",
   "如果目前只拿到单一摘要视角，且用户问题明显需要解释原因、结构或异常，不要急于结束，继续调用更合适的工具。",
-  "工具结果是本轮回答的主要事实依据；若工具结果 coverage=partial 或存在未匹配实体，请按 bounded_answer 风格回答。",
+  "工具结果是本轮回答的主要事实依据；若工具结果 coverage=partial/none、存在未匹配实体，或结论仍有明显边界，请按 bounded_answer 风格回答。",
   "若工具结果 coverage=full，按 direct_answer 风格回答；若 coverage=full 且 rows 为空但结果明确为0贡献，请直接说明“当前范围内贡献为0/未产生贡献”，不要写成“数据不足”。",
   "最终总结时必须综合本轮全部已调用工具的结果，不要只基于最后一个工具回复。",
   "禁止输出任何内部过程词、工具名、函数名、调取过程。",
+  "",
+  "planner 规则：",
+  "1）无关问题：relevance=irrelevant，route_intent=refuse，可不调工具；",
+  "2）相关问题：relevance=relevant，required_tool_call_min 至少为 1；",
+  "3）若问题相关但你暂时判断可能信息不足，先规划最合适的工具验证，不要直接 bounded；",
+  "4）不要覆写已给定的时间范围和 seed context 中的事实约束。",
   "",
   "direct_answer 结构要求：",
   OUTPUT_POLICY_DIRECT_ANSWER,
@@ -42,6 +72,7 @@ const TOOL_FIRST_SYSTEM_INSTRUCTION = [
 export function createInitialToolRuntimeState() {
   return {
     attempted: false,
+    planner_completed: false,
     used_tools: [],
     tool_call_count: 0,
     rounds: 0,
@@ -101,14 +132,14 @@ function buildToolPayload(contents) {
     systemInstruction: {
       parts: [
         {
-          text: `${buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION)}\n\n${TOOL_FIRST_SYSTEM_INSTRUCTION}`,
+          text: `${buildPlannerRoleSystemInstruction(PLANNER_ROLE_DEFINITION)}\n\n${buildAssistantRoleSystemInstruction(ASSISTANT_ROLE_DEFINITION)}\n\n${TOOL_FIRST_SYSTEM_INSTRUCTION}`,
         },
       ],
     },
     contents,
     tools: [
       {
-        functionDeclarations: buildToolDeclarations(),
+        functionDeclarations: [buildPlannerDeclaration(), ...buildToolDeclarations()],
       },
     ],
     toolConfig: {
@@ -123,12 +154,83 @@ function buildToolPayload(contents) {
   };
 }
 
-function extractFunctionCalls(payload) {
+function buildPlannerDeclaration() {
+  return {
+    name: PLANNER_FUNCTION_NAME,
+    description: "提交本轮问题的分析规划，包括相关性、目标路由、分析视角和首批工具调用计划。",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        relevance: {
+          type: "STRING",
+          enum: [
+            QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+            QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT,
+          ],
+        },
+        primary_dimension: {
+          type: "STRING",
+          enum: [
+            QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+            QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+            QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+            QUESTION_JUDGMENT_CODES.primary_dimension.TREND,
+            QUESTION_JUDGMENT_CODES.primary_dimension.RISK_OPPORTUNITY,
+            QUESTION_JUDGMENT_CODES.primary_dimension.OTHER,
+          ],
+        },
+        granularity: {
+          type: "STRING",
+          enum: [
+            QUESTION_JUDGMENT_CODES.granularity.SUMMARY,
+            QUESTION_JUDGMENT_CODES.granularity.DETAIL,
+          ],
+        },
+        route_intent: {
+          type: "STRING",
+          enum: [
+            ROUTE_DECISION_CODES.DIRECT_ANSWER,
+            ROUTE_DECISION_CODES.BOUNDED_ANSWER,
+            ROUTE_DECISION_CODES.REFUSE,
+          ],
+        },
+        requested_views: {
+          type: "ARRAY",
+          items: {
+            type: "STRING",
+            enum: PLANNER_VIEW_NAMES,
+          },
+        },
+        refuse_reason: { type: "STRING" },
+        bounded_reason: { type: "STRING" },
+        required_tool_call_min: { type: "NUMBER" },
+        initial_tools: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              name: {
+                type: "STRING",
+                enum: PLANNER_VIEW_NAMES,
+              },
+              args_json: { type: "STRING" },
+            },
+            required: ["name"],
+          },
+        },
+      },
+      required: ["relevance", "primary_dimension", "granularity", "route_intent", "requested_views", "required_tool_call_min"],
+    },
+  };
+}
+
+function extractRuntimeCalls(payload) {
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
   const candidate = candidates[0];
   const content = candidate?.content && typeof candidate.content === "object" ? candidate.content : null;
   const parts = Array.isArray(content?.parts) ? content.parts : [];
-  const calls = [];
+  let plannerCall = null;
+  const toolCalls = [];
   parts.forEach((part) => {
     const functionCall = part?.functionCall;
     const name = trimString(functionCall?.name);
@@ -146,27 +248,171 @@ function extractFunctionCalls(payload) {
     if (!args || typeof args !== "object" || Array.isArray(args)) {
       args = {};
     }
-    calls.push({
+    const normalizedCall = {
       name,
       args,
-    });
+    };
+    if (name === PLANNER_FUNCTION_NAME && !plannerCall) {
+      plannerCall = normalizedCall;
+      return;
+    }
+    toolCalls.push(normalizedCall);
   });
   return {
     content,
-    calls,
+    plannerCall,
+    toolCalls,
   };
 }
 
-function deriveFinalRouteCode(lastToolResult) {
+function parsePlannerInitialTools(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const name = trimString(item.name);
+      if (!PLANNER_VIEW_NAMES.includes(name)) {
+        return null;
+      }
+      let args = item.args_json;
+      if (typeof args === "string" && trimString(args)) {
+        try {
+          args = JSON.parse(args);
+        } catch (_error) {
+          args = {};
+        }
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        args = {};
+      }
+      return { name, args };
+    })
+    .filter((item) => item !== null);
+}
+
+function buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment) {
+  const fallback = fallbackQuestionJudgment && typeof fallbackQuestionJudgment === "object" ? fallbackQuestionJudgment : {};
+  const primaryDimensionCandidate = trimString(plannerArgs?.primary_dimension);
+  const primaryDimensionCode = Object.values(QUESTION_JUDGMENT_CODES.primary_dimension).includes(primaryDimensionCandidate)
+    ? primaryDimensionCandidate
+    : trimString(fallback?.primary_dimension?.code) || QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+  const granularityCandidate = trimString(plannerArgs?.granularity);
+  const granularityCode = Object.values(QUESTION_JUDGMENT_CODES.granularity).includes(granularityCandidate)
+    ? granularityCandidate
+    : trimString(fallback?.granularity?.code) || QUESTION_JUDGMENT_CODES.granularity.SUMMARY;
+  const relevanceCandidate = trimString(plannerArgs?.relevance);
+  const relevanceCode = Object.values(QUESTION_JUDGMENT_CODES.relevance).includes(relevanceCandidate)
+    ? relevanceCandidate
+    : trimString(fallback?.relevance?.code) || QUESTION_JUDGMENT_CODES.relevance.RELEVANT;
+  return {
+    ...fallback,
+    primary_dimension: {
+      code: primaryDimensionCode,
+      label: QUESTION_JUDGMENT_LABELS.primary_dimension[primaryDimensionCode] || trimString(fallback?.primary_dimension?.label),
+    },
+    granularity: {
+      code: granularityCode,
+      label: QUESTION_JUDGMENT_LABELS.granularity[granularityCode] || trimString(fallback?.granularity?.label),
+    },
+    relevance: {
+      code: relevanceCode,
+      label: QUESTION_JUDGMENT_LABELS.relevance[relevanceCode] || trimString(fallback?.relevance?.label),
+    },
+  };
+}
+
+function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
+  const relevance = trimString(plannerArgs?.relevance) === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+    ? QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+    : QUESTION_JUDGMENT_CODES.relevance.RELEVANT;
+  const routeIntentCandidate = trimString(plannerArgs?.route_intent);
+  const routeIntent = [
+    ROUTE_DECISION_CODES.DIRECT_ANSWER,
+    ROUTE_DECISION_CODES.BOUNDED_ANSWER,
+    ROUTE_DECISION_CODES.REFUSE,
+  ].includes(routeIntentCandidate)
+    ? routeIntentCandidate
+    : relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+      ? ROUTE_DECISION_CODES.REFUSE
+      : ROUTE_DECISION_CODES.DIRECT_ANSWER;
+  const requestedViews = Array.isArray(plannerArgs?.requested_views)
+    ? plannerArgs.requested_views.map((item) => trimString(item)).filter((item) => PLANNER_VIEW_NAMES.includes(item))
+    : [];
+  const requiredToolCallMinRaw = Number(plannerArgs?.required_tool_call_min);
+  const requiredToolCallMin = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
+    ? 0
+    : Math.max(1, Number.isFinite(requiredToolCallMinRaw) ? Math.floor(requiredToolCallMinRaw) : 1);
+  return {
+    relevance,
+    route_intent: routeIntent,
+    requested_views: requestedViews,
+    refuse_reason: trimString(plannerArgs?.refuse_reason),
+    bounded_reason: trimString(plannerArgs?.bounded_reason),
+    required_tool_call_min: requiredToolCallMin,
+    zero_tool_refuse: relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT && routeIntent === ROUTE_DECISION_CODES.REFUSE,
+    initial_tools: parsePlannerInitialTools(plannerArgs?.initial_tools),
+    questionJudgment: buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment),
+  };
+}
+
+function buildPlannerFunctionResponse(plannerState, accepted, note = "") {
+  return {
+    role: "user",
+    parts: [
+      {
+        functionResponse: {
+          name: PLANNER_FUNCTION_NAME,
+          response: {
+            accepted: Boolean(accepted),
+            relevance: trimString(plannerState?.relevance),
+            route_intent: trimString(plannerState?.route_intent),
+            requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [],
+            required_tool_call_min: plannerState?.required_tool_call_min ?? 0,
+            note: trimString(note),
+          },
+        },
+      },
+    ],
+  };
+}
+
+function deriveFinalRouteCode(lastToolResult, plannerState) {
+  if (trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.REFUSE) {
+    return ROUTE_DECISION_CODES.REFUSE;
+  }
   const coverageCode = trimString(lastToolResult?.result?.coverage?.code);
-  if (coverageCode === "partial" || coverageCode === "none") {
+  const hasUnmatchedEntities =
+    (Array.isArray(lastToolResult?.result?.unmatched_entities?.products) && lastToolResult.result.unmatched_entities.products.length > 0) ||
+    (Array.isArray(lastToolResult?.result?.unmatched_entities?.hospitals) && lastToolResult.result.unmatched_entities.hospitals.length > 0);
+  if (
+    trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.BOUNDED_ANSWER ||
+    coverageCode === "partial" ||
+    coverageCode === "none" ||
+    hasUnmatchedEntities
+  ) {
     return ROUTE_DECISION_CODES.BOUNDED_ANSWER;
   }
   return ROUTE_DECISION_CODES.DIRECT_ANSWER;
 }
 
-export function buildToolOutputContext(questionJudgment, lastToolResult) {
-  const routeCode = deriveFinalRouteCode(lastToolResult);
+export function buildToolOutputContext(questionJudgment, lastToolResult, plannerState = null) {
+  const routeCode = deriveFinalRouteCode(lastToolResult, plannerState);
+  if (routeCode === ROUTE_DECISION_CODES.REFUSE) {
+    return {
+      route_code: ROUTE_DECISION_CODES.REFUSE,
+      primary_dimension_code: trimString(questionJudgment?.primary_dimension?.code),
+      granularity_code: trimString(questionJudgment?.granularity?.code),
+      boundary_needed: false,
+      refuse_mode: true,
+      planner_route_intent: trimString(plannerState?.route_intent),
+      planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views.slice(0, 6) : [],
+      local_response_mode: "planner_refuse",
+    };
+  }
   const detailRequestMode = trimString(lastToolResult?.meta?.detail_request_mode);
   const matchedHospitals = Array.isArray(lastToolResult?.meta?.matched_hospitals) ? lastToolResult.meta.matched_hospitals : [];
   const matchedProducts = Array.isArray(lastToolResult?.meta?.matched_products) ? lastToolResult.meta.matched_products : [];
@@ -240,6 +486,8 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
     tool_result_delta_achievement_change_ratio: lastToolResult?.result?.summary?.delta?.achievement_change_ratio,
     tool_result_delta_sales_amount_change: trimString(deltaSummary?.sales_amount_change),
     tool_result_delta_sales_volume_change: trimString(deltaSummary?.sales_volume_change),
+    planner_route_intent: trimString(plannerState?.route_intent),
+    planner_requested_views: Array.isArray(plannerState?.requested_views) ? plannerState.requested_views.slice(0, 6) : [],
   };
 }
 
@@ -291,6 +539,12 @@ function buildToolTracePayload({ requestId, state, toolCallTrace }) {
       views.length > 1 ? "model_multi_view_planning" : views.length === 1 ? "model_single_view_planning" : "none",
     final_synthesis_mode:
       state.tool_call_count > 1 ? "multi_tool_synthesis" : state.tool_call_count === 1 ? "single_tool_synthesis" : "none",
+    planner_relevance: trimString(state.planner_relevance),
+    planner_route_intent: trimString(state.planner_route_intent),
+    planner_requested_views: Array.isArray(state.planner_requested_views) ? state.planner_requested_views : [],
+    planner_refuse_reason: trimString(state.planner_refuse_reason),
+    planner_bounded_reason: trimString(state.planner_bounded_reason),
+    planner_zero_tool_refuse: Boolean(state.planner_zero_tool_refuse),
     tool_calls: safeTrace,
   };
 }
@@ -323,6 +577,7 @@ export async function runToolFirstChat({
 
   const contents = buildInitialContents(historyWindow, message, businessSnapshot, requestedTimeWindow);
   let lastToolResult = null;
+  let plannerState = null;
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
@@ -339,9 +594,107 @@ export async function runToolFirstChat({
     }
 
     const replyText = extractGeminiReply(geminiResponse.payload);
-    const { content, calls } = extractFunctionCalls(geminiResponse.payload);
+    const { content, plannerCall, toolCalls } = extractRuntimeCalls(geminiResponse.payload);
 
-    if (calls.length === 0) {
+    if (!state.planner_completed) {
+      if (!plannerCall) {
+        state.fallback_reason = TOOL_FALLBACK_REASONS.PLANNER_CALL_MISSING;
+        logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+        return {
+          ok: false,
+          fallbackReason: state.fallback_reason,
+          toolRuntimeState: state,
+          toolCallTrace,
+        };
+      }
+      plannerState = normalizePlannerState(plannerCall.args, questionJudgment);
+      state.planner_completed = true;
+      state.planner_relevance = plannerState.relevance;
+      state.planner_route_intent = plannerState.route_intent;
+      state.planner_requested_views = plannerState.requested_views.slice(0, 6);
+      state.planner_refuse_reason = plannerState.refuse_reason;
+      state.planner_bounded_reason = plannerState.bounded_reason;
+      state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
+
+      if (content) {
+        contents.push(content);
+      }
+
+      const plannedCalls = toolCalls.length > 0 ? toolCalls : plannerState.initial_tools;
+      if (plannerState.relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT && plannerState.route_intent === ROUTE_DECISION_CODES.REFUSE) {
+        contents.push(buildPlannerFunctionResponse(plannerState, true, "irrelevant_zero_tool_refuse"));
+        continue;
+      }
+
+      if (plannedCalls.length === 0) {
+        contents.push(
+          buildPlannerFunctionResponse(
+            plannerState,
+            false,
+            "相关问题至少先调用一个工具，再决定是否 direct_answer 或 bounded_answer。",
+          ),
+        );
+        continue;
+      }
+
+      contents.push(buildPlannerFunctionResponse(plannerState, true, "planner_accepted"));
+      for (const call of plannedCalls) {
+        if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
+          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
+          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+          return {
+            ok: false,
+            fallbackReason: state.fallback_reason,
+            toolRuntimeState: state,
+            toolCallTrace,
+          };
+        }
+        let executionResult;
+        try {
+          executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
+        } catch (_error) {
+          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
+          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+          return {
+            ok: false,
+            fallbackReason: state.fallback_reason,
+            toolRuntimeState: state,
+            toolCallTrace,
+          };
+        }
+        state.tool_call_count += 1;
+        state.used_tools.push(trimString(call.name));
+        lastToolResult = executionResult;
+        toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
+        contents.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: trimString(call.name),
+                response: executionResult.result,
+              },
+            },
+          ],
+        });
+      }
+      continue;
+    }
+
+    if (toolCalls.length === 0) {
+      if (
+        plannerState?.relevance === QUESTION_JUDGMENT_CODES.relevance.RELEVANT &&
+        state.tool_call_count < (plannerState?.required_tool_call_min ?? 1)
+      ) {
+        state.fallback_reason = TOOL_FALLBACK_REASONS.PLANNER_RELEVANT_WITHOUT_TOOL;
+        logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+        return {
+          ok: false,
+          fallbackReason: state.fallback_reason,
+          toolRuntimeState: state,
+          toolCallTrace,
+        };
+      }
       if (!replyText) {
         state.fallback_reason = TOOL_FALLBACK_REASONS.EMPTY_FINAL_REPLY;
         logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
@@ -352,7 +705,8 @@ export async function runToolFirstChat({
           toolCallTrace,
         };
       }
-      const outputContext = buildToolOutputContext(questionJudgment, lastToolResult);
+      const plannerQuestionJudgment = plannerState?.questionJudgment || questionJudgment;
+      const outputContext = buildToolOutputContext(plannerQuestionJudgment, lastToolResult, plannerState);
       state.success = true;
       state.final_route_code = trimString(outputContext.route_code);
       logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
@@ -361,6 +715,8 @@ export async function runToolFirstChat({
         reply: replyText,
         model: geminiResponse.model,
         outputContext,
+        plannerState,
+        questionJudgment: plannerQuestionJudgment,
         toolResult: lastToolResult?.result || null,
         toolRuntimeState: state,
         toolCallTrace,
@@ -371,7 +727,7 @@ export async function runToolFirstChat({
       contents.push(content);
     }
 
-    for (const call of calls) {
+    for (const call of toolCalls) {
       if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
         state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
         logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
