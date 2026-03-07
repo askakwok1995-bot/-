@@ -25,10 +25,10 @@ function createQuestionJudgment(overrides = {}) {
   };
 }
 
-test("tool registry exposes 6 controlled declarations", () => {
+test("tool registry exposes expanded controlled declarations", () => {
   const declarations = buildToolDeclarations();
 
-  assert.equal(declarations.length, 6);
+  assert.equal(declarations.length, 12);
   assert.deepEqual(
     declarations.map((item) => item.name),
     [
@@ -38,6 +38,12 @@ test("tool registry exposes 6 controlled declarations", () => {
       "get_product_hospital_contribution",
       "get_trend_summary",
       "get_period_comparison_summary",
+      "get_product_trend",
+      "get_hospital_trend",
+      "get_entity_ranking",
+      "get_share_breakdown",
+      "get_anomaly_insights",
+      "get_risk_opportunity_summary",
     ],
   );
 });
@@ -122,6 +128,7 @@ test("runToolFirstChat completes after single tool call and returns final reply"
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
   assert.equal(result.toolRuntimeState.tool_call_count, 1);
   assert.deepEqual(toolCalls.map((item) => item.name), ["get_overall_summary"]);
+  assert.equal(result.toolCallTrace[0].analysis_view, "");
 });
 
 test("runToolFirstChat falls back when tool loop exceeds max calls", async () => {

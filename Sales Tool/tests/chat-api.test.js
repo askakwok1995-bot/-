@@ -187,7 +187,9 @@ test("handleChatRequest returns tool-first answer without entering legacy fallba
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let legacyAvailabilityCalled = false;
@@ -250,7 +252,9 @@ test("handleChatRequest returns bounded local reply when tool-first fails and le
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let legacyAvailabilityCalled = false;
@@ -545,7 +549,9 @@ test("handleChatRequest passes requested subwindow snapshot into deterministic t
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let observedSnapshotPeriod = "";
@@ -690,7 +696,9 @@ test("handleChatRequest routes quarter compare deterministically before AUTO too
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let autoToolCalled = false;
@@ -776,7 +784,9 @@ test("handleChatRequest uses deterministic direct-tool route before AUTO tool-fi
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let autoToolCalled = false;
@@ -843,6 +853,69 @@ test("handleChatRequest uses deterministic direct-tool route before AUTO tool-fi
   assert.equal(payload.model, "deterministic-model");
 });
 
+test("handleChatRequest defaults to AUTO tool-first even when a deterministic route could match", async () => {
+  const context = {
+    request: new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        message: "Botox50在哪些医院贡献最多",
+        business_snapshot: {
+          analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+        },
+      }),
+    }),
+    env: {},
+  };
+
+  let directToolCalled = false;
+  let autoToolCalled = false;
+  const response = await handleChatRequest(context, "req-tool-first-default", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    buildDeterministicToolRoute: () => ({
+      matched: true,
+      route_type: "product_hospital",
+      tool_name: "get_product_hospital_contribution",
+      tool_args: { product_names: ["Botox50"], limit: 10 },
+    }),
+    runDirectToolChat: async () => {
+      directToolCalled = true;
+      return { ok: false, fallbackReason: "should-not-run" };
+    },
+    runToolFirstChat: async () => {
+      autoToolCalled = true;
+      return {
+        ok: true,
+        reply: "当前范围内，Botox50 的主要贡献医院集中在广东韩妃整形外科医院有限公司和广州华美医疗美容医院有限公司。",
+        model: "tool-first-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          boundary_needed: false,
+          refuse_mode: false,
+        },
+        toolRuntimeState: { attempted: true, success: true, final_route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER },
+        toolCallTrace: [],
+        toolResult: {
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          boundaries: [],
+          diagnostic_flags: ["view_product_hospital"],
+          summary: { sales_amount: "120.00万元", sales_volume: "200盒" },
+          rows: [{ hospital_name: "广东韩妃整形外科医院有限公司", sales_amount: "60.00万元" }],
+        },
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(directToolCalled, false);
+  assert.equal(autoToolCalled, true);
+  assert.equal(payload.model, "tool-first-model");
+});
+
 test("handleChatRequest routes full-covered Q4 overall question to deterministic overall_time_window before AUTO", async () => {
   const context = {
     request: new Request("https://example.com/api/chat", {
@@ -858,7 +931,9 @@ test("handleChatRequest routes full-covered Q4 overall question to deterministic
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let directToolCalled = false;
@@ -931,7 +1006,9 @@ test("handleChatRequest uses local deterministic fallback reply when Gemini dire
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   const response = await handleChatRequest(context, "req-direct-local-fallback", {
@@ -1019,7 +1096,9 @@ test("handleChatRequest returns bounded local reply when deterministic direct-to
         },
       }),
     }),
-    env: {},
+    env: {
+      CHAT_ENABLE_DETERMINISTIC_ROUTE: "1",
+    },
   };
 
   let autoToolCalled = false;

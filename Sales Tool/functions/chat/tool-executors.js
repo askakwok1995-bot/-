@@ -87,6 +87,10 @@ function buildEnvelope(windowInfo, payload = {}) {
       code: trimString(payload?.coverage?.code) || "none",
       message: trimString(payload?.coverage?.message),
     },
+    boundaries: Array.isArray(payload?.boundaries) ? payload.boundaries.map((item) => trimString(item)).filter((item) => item) : [],
+    diagnostic_flags: Array.isArray(payload?.diagnostic_flags)
+      ? payload.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
+      : [],
     summary: payload?.summary && typeof payload.summary === "object" && !Array.isArray(payload.summary) ? payload.summary : {},
     rows: Array.isArray(payload?.rows) ? payload.rows : [],
   };
@@ -144,6 +148,44 @@ function filterRecordsByResolvedHospitalNames(records, hospitalNames) {
   return (Array.isArray(records) ? records : []).filter((record) => targets.has(normalizeHospitalNameForMatch(record?.hospital_name)));
 }
 
+async function resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames = [] } = {}) {
+  const safeDimension = trimString(dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+  const safeTargetNames = normalizeStringArray(targetNames);
+  let filteredRecords = Array.isArray(records) ? records : [];
+  let matchedNames = [];
+  let unmatchedNames = [];
+  let coverageCode = safeTargetNames.length > 0 ? "none" : "full";
+
+  if (safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT && safeTargetNames.length > 0) {
+    const productCatalog = await ctx.getProductCatalog();
+    const matched = matchNamedProductsFromCatalog(
+      safeTargetNames.join("，"),
+      productCatalog,
+      ON_DEMAND_PRODUCT_NAMED_SAFE_CAP,
+    );
+    const requestedProducts = Array.isArray(matched?.requestedProducts) ? matched.requestedProducts : [];
+    matchedNames = requestedProducts.map((item) => trimString(item?.product_name)).filter((item) => item);
+    const matchedKeySet = new Set(matchedNames.map((item) => normalizeProductNameForMatch(item)));
+    unmatchedNames = safeTargetNames.filter((item) => !matchedKeySet.has(normalizeProductNameForMatch(item)));
+    filteredRecords = filterRecordsByResolvedProductNames(records, matchedNames);
+    coverageCode = matchedNames.length >= safeTargetNames.length ? "full" : matchedNames.length > 0 ? "partial" : "none";
+  } else if (safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL && safeTargetNames.length > 0) {
+    const metricsForResolution = buildAggregatedMetrics(records, windowInfo.month_keys);
+    const resolution = buildNamedHospitalResolution(safeTargetNames, metricsForResolution.hospital_rows);
+    matchedNames = resolution.matchedNames;
+    unmatchedNames = resolution.unmatchedNames;
+    filteredRecords = filterRecordsByResolvedHospitalNames(records, matchedNames);
+    coverageCode = resolution.coverageCode;
+  }
+
+  return {
+    filteredRecords,
+    matchedNames,
+    unmatchedNames,
+    coverageCode,
+  };
+}
+
 function buildToolSummaryFromMetrics(metrics, targetDimension, extra = {}) {
   const performanceOverview = buildPerformanceOverviewFromMetrics(metrics);
   const keyBusinessSignals = buildKeyBusinessSignals(metrics, { targetDimension });
@@ -152,6 +194,92 @@ function buildToolSummaryFromMetrics(metrics, targetDimension, extra = {}) {
     key_business_signals: keyBusinessSignals,
     ...extra,
   };
+}
+
+function buildDiagnosticFlags({
+  coverageCode = "none",
+  unmatchedProducts = [],
+  unmatchedHospitals = [],
+  zeroResult = false,
+  rowCount = 0,
+  detailRequestMode = "generic",
+} = {}) {
+  const flags = [];
+  if (coverageCode === "partial") {
+    flags.push("partial_coverage");
+  } else if (coverageCode === "none") {
+    flags.push("no_coverage");
+  }
+  if (Array.isArray(unmatchedProducts) && unmatchedProducts.length > 0) {
+    flags.push("unmatched_products");
+  }
+  if (Array.isArray(unmatchedHospitals) && unmatchedHospitals.length > 0) {
+    flags.push("unmatched_hospitals");
+  }
+  if (zeroResult) {
+    flags.push("zero_result");
+  }
+  if (rowCount === 0) {
+    flags.push("empty_rows");
+  }
+  flags.push(`view_${trimString(detailRequestMode) || "generic"}`);
+  return Array.from(new Set(flags));
+}
+
+function buildToolBoundaries({
+  coverageCode = "none",
+  unmatchedProducts = [],
+  unmatchedHospitals = [],
+  zeroResultText = "",
+} = {}) {
+  const boundaries = [];
+  if (coverageCode === "partial") {
+    boundaries.push("当前请求范围仅部分覆盖，结论以已命中的范围为准。");
+  } else if (coverageCode === "none") {
+    boundaries.push("当前请求范围暂无完整覆盖。");
+  }
+  if (Array.isArray(unmatchedProducts) && unmatchedProducts.length > 0) {
+    boundaries.push(`未完全匹配的产品：${unmatchedProducts.slice(0, 3).join("、")}。`);
+  }
+  if (Array.isArray(unmatchedHospitals) && unmatchedHospitals.length > 0) {
+    boundaries.push(`未完全匹配的医院：${unmatchedHospitals.slice(0, 3).join("、")}。`);
+  }
+  if (trimString(zeroResultText)) {
+    boundaries.push(trimString(zeroResultText));
+  }
+  return Array.from(new Set(boundaries.map((item) => trimString(item)).filter((item) => item))).slice(0, 4);
+}
+
+function getRowMetricValue(row, metric) {
+  const safeMetric = trimString(metric) || "sales_amount";
+  if (safeMetric === "sales_volume") {
+    return normalizeNumericValue(row?.sales_volume_value) ?? 0;
+  }
+  if (safeMetric === "sales_share") {
+    return normalizeNumericValue(row?.sales_share_ratio) ?? 0;
+  }
+  if (safeMetric === "change_value") {
+    return Math.abs(normalizeNumericValue(row?.change_value_ratio) ?? 0);
+  }
+  return normalizeNumericValue(row?.sales_amount_value) ?? 0;
+}
+
+function sortRowsByMetric(rows, metric = "sales_amount", ranking = "top") {
+  const safeRows = Array.isArray(rows) ? rows.slice() : [];
+  safeRows.sort((left, right) => {
+    const delta = getRowMetricValue(right, metric) - getRowMetricValue(left, metric);
+    if (delta !== 0) {
+      return delta;
+    }
+    return trimString(left?.product_name || left?.hospital_name || left?.period).localeCompare(
+      trimString(right?.product_name || right?.hospital_name || right?.period),
+      "zh-Hans-CN",
+    );
+  });
+  if (trimString(ranking) === "bottom") {
+    safeRows.reverse();
+  }
+  return safeRows;
 }
 
 function listMonthKeysInRange(startMonth, endMonth) {
@@ -268,6 +396,11 @@ async function executeOverallSummary(args, ctx) {
         code: hasRows ? "full" : "none",
         message: hasRows ? "当前分析区间已获取整体摘要。" : "当前分析区间暂无整体业务记录。",
       },
+      boundaries: buildToolBoundaries({ coverageCode: hasRows ? "full" : "none" }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode: hasRows ? "full" : "none",
+        rowCount: trends.length,
+      }),
       summary: buildToolSummaryFromMetrics(metrics, QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, {
         focus: trimString(args?.focus),
       }),
@@ -277,6 +410,7 @@ async function executeOverallSummary(args, ctx) {
       tool_name: TOOL_NAMES.GET_OVERALL_SUMMARY,
       detail_request_mode: "generic",
       coverage_code: hasRows ? "full" : "none",
+      analysis_view: "overall_summary",
     },
   };
 }
@@ -351,6 +485,16 @@ async function executeProductSummary(args, ctx) {
         code: coverageCode,
         message: buildCoverageMessage(coverageCode, matchedNames.length, requestedProductNames.length || matchedNames.length),
       },
+      boundaries: buildToolBoundaries({
+        coverageCode,
+        unmatchedProducts: unmatchedNames,
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode,
+        unmatchedProducts: unmatchedNames,
+        rowCount: rows.length,
+        detailRequestMode: includeAllProducts ? "product_full" : requestedProductNames.length > 0 ? "product_named" : "generic",
+      }),
       summary: buildToolSummaryFromMetrics(metrics, QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT, {
         match_mode: matchMode,
         include_all_products: includeAllProducts,
@@ -365,6 +509,7 @@ async function executeProductSummary(args, ctx) {
       unmatched_products: unmatchedNames,
       product_named_match_mode: matchMode,
       requested_product_count_value: requestedProductNames.length,
+      analysis_view: includeAllProducts ? "product_full" : "product_summary",
     },
   };
 }
@@ -426,6 +571,16 @@ async function executeHospitalSummary(args, ctx) {
         code: coverageCode,
         message: buildCoverageMessage(coverageCode, matchedNames.length, requestedHospitalNames.length || matchedNames.length),
       },
+      boundaries: buildToolBoundaries({
+        coverageCode,
+        unmatchedHospitals: unmatchedNames,
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode,
+        unmatchedHospitals: unmatchedNames,
+        rowCount: rows.length,
+        detailRequestMode: includeMonthly ? "hospital_monthly" : requestedHospitalNames.length > 0 ? "hospital_named" : "generic",
+      }),
       summary: buildToolSummaryFromMetrics(metrics, QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, {
         include_monthly: includeMonthly,
       }),
@@ -437,6 +592,7 @@ async function executeHospitalSummary(args, ctx) {
       coverage_code: coverageCode,
       matched_hospitals: matchedNames,
       unmatched_hospitals: unmatchedNames,
+      analysis_view: includeMonthly ? "hospital_monthly" : "hospital_summary",
     },
   };
 }
@@ -499,6 +655,20 @@ async function executeProductHospitalContribution(args, ctx) {
         code: coverageCode,
         message: buildCoverageMessage(coverageCode, matchedProductNames.length, requestedProductNames.length, zeroResultText),
       },
+      boundaries: buildToolBoundaries({
+        coverageCode,
+        unmatchedProducts: unmatchedProductNames,
+        unmatchedHospitals: unmatchedHospitalNames,
+        zeroResultText,
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode,
+        unmatchedProducts: unmatchedProductNames,
+        unmatchedHospitals: unmatchedHospitalNames,
+        zeroResult,
+        rowCount: hospitalRows.length,
+        detailRequestMode: "product_hospital",
+      }),
       summary: buildToolSummaryFromMetrics(metrics, QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, {
         product_hospital_zero_result: zeroResult,
         product_named_match_mode: trimString(matched?.matchMode) || "none",
@@ -518,6 +688,7 @@ async function executeProductHospitalContribution(args, ctx) {
       requested_product_count_value: requestedProductNames.length,
       product_hospital_hospital_count_value: hospitalRows.length,
       product_hospital_zero_result: zeroResult ? "yes" : "no",
+      analysis_view: "product_hospital_contribution",
     },
   };
 }
@@ -569,6 +740,18 @@ async function executeTrendSummary(args, ctx) {
         code: trends.length > 0 ? coverageCode : coverageCode === "full" ? "none" : coverageCode,
         message: buildCoverageMessage(trends.length > 0 ? coverageCode : "none", matchedNames.length, targetNames.length || matchedNames.length),
       },
+      boundaries: buildToolBoundaries({
+        coverageCode: trends.length > 0 ? coverageCode : "none",
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? unmatchedNames : [],
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode: trends.length > 0 ? coverageCode : "none",
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? unmatchedNames : [],
+        rowCount: trends.length,
+        detailRequestMode: granularity === "monthly" ? `${dimension}_trend_monthly` : `${dimension}_trend`,
+      }),
       summary: buildToolSummaryFromMetrics(metrics, dimension, {
         trend_dimension: dimension,
         trend_granularity: granularity,
@@ -583,6 +766,7 @@ async function executeTrendSummary(args, ctx) {
       matched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? matchedNames : [],
       unmatched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? unmatchedNames : [],
       unmatched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? unmatchedNames : [],
+      analysis_view: `${dimension}_trend`,
     },
   };
 }
@@ -610,6 +794,12 @@ async function executePeriodComparisonSummary(args, ctx) {
           code: "full",
           message: "当前请求的两个季度窗口已完整覆盖。",
         },
+        boundaries: [],
+        diagnostic_flags: buildDiagnosticFlags({
+          coverageCode: "full",
+          rowCount: 0,
+          detailRequestMode: "overall_period_compare",
+        }),
         summary,
         rows: [],
       }),
@@ -630,6 +820,236 @@ async function executePeriodComparisonSummary(args, ctx) {
       coverage_code: "full",
       primary_period: `${primaryStartMonth}~${primaryEndMonth}`,
       comparison_period: `${comparisonStartMonth}~${comparisonEndMonth}`,
+      analysis_view: "period_comparison",
+    },
+  };
+}
+
+async function executeProductTrend(args, ctx) {
+  return executeTrendSummary(
+    {
+      dimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+      target_names: normalizeStringArray(args?.product_names),
+      granularity: trimString(args?.granularity) || "monthly",
+    },
+    ctx,
+  );
+}
+
+async function executeHospitalTrend(args, ctx) {
+  return executeTrendSummary(
+    {
+      dimension: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+      target_names: normalizeStringArray(args?.hospital_names),
+      granularity: trimString(args?.granularity) || "monthly",
+    },
+    ctx,
+  );
+}
+
+async function executeEntityRanking(args, ctx) {
+  const windowInfo = await ctx.getWindowInfo();
+  const records = await ctx.getRecords();
+  const dimension = trimString(args?.dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+  const targetNames = normalizeStringArray(args?.target_names);
+  const ranking = trimString(args?.ranking) || "top";
+  const metric = trimString(args?.metric) || "sales_amount";
+  const safeLimit = toPositiveInt(
+    args?.limit,
+    5,
+    dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT
+      ? ON_DEMAND_PRODUCT_FULL_SAFE_CAP
+      : ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP,
+  );
+  const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
+  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  let baseRows = [];
+
+  if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
+    const productCatalog = await ctx.getProductCatalog();
+    baseRows = buildProductPerformanceRows(metrics, ON_DEMAND_PRODUCT_FULL_SAFE_CAP, {
+      productCatalog,
+      productNameMap: buildProductsNameMap(productCatalog),
+    });
+  } else {
+    baseRows = buildHospitalPerformanceRows(metrics, ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP, {});
+  }
+
+  const rows = sortRowsByMetric(baseRows, metric, ranking).slice(0, safeLimit);
+  const effectiveCoverage = rows.length > 0 ? selection.coverageCode : "none";
+  return {
+    result: buildEnvelope(windowInfo, {
+      matched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      },
+      unmatched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      },
+      coverage: {
+        code: effectiveCoverage,
+        message: buildCoverageMessage(effectiveCoverage, selection.matchedNames.length, targetNames.length || selection.matchedNames.length),
+      },
+      boundaries: buildToolBoundaries({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+        rowCount: rows.length,
+        detailRequestMode: "entity_ranking",
+      }),
+      summary: buildToolSummaryFromMetrics(metrics, dimension, {
+        ranking,
+        ranking_metric: metric,
+      }),
+      rows,
+    }),
+    meta: {
+      tool_name: TOOL_NAMES.GET_ENTITY_RANKING,
+      detail_request_mode: "entity_ranking",
+      coverage_code: effectiveCoverage,
+      matched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+      matched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      unmatched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+      unmatched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      analysis_view: "entity_ranking",
+    },
+  };
+}
+
+async function executeShareBreakdown(args, ctx) {
+  return executeEntityRanking(
+    {
+      ...args,
+      ranking: "top",
+      metric: "sales_share",
+    },
+    ctx,
+  );
+}
+
+async function executeAnomalyInsights(args, ctx) {
+  const windowInfo = await ctx.getWindowInfo();
+  const records = await ctx.getRecords();
+  const dimension = trimString(args?.dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+  const targetNames = normalizeStringArray(args?.target_names);
+  const safeLimit = toPositiveInt(args?.limit, 3, TOOL_TREND_LIMIT);
+  const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
+  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const trendRows = buildRecentTrendsFromMetrics(metrics, TOOL_TREND_LIMIT);
+  const rows = sortRowsByMetric(trendRows, "change_value", "top")
+    .map((row) => ({
+      ...row,
+      anomaly_reason:
+        normalizeNumericValue(row?.amount_mom_ratio) === null
+          ? "当前月份缺少可比基线。"
+          : `该月金额环比波动 ${trimString(row?.amount_mom) || "--"}。`,
+    }))
+    .slice(0, safeLimit);
+  const effectiveCoverage = rows.length > 0 ? selection.coverageCode : "none";
+  return {
+    result: buildEnvelope(windowInfo, {
+      matched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      },
+      unmatched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      },
+      coverage: {
+        code: effectiveCoverage,
+        message: rows.length > 0 ? "当前范围内已识别出主要异动月份。" : "当前范围内暂未识别出可比异动月份。",
+      },
+      boundaries: buildToolBoundaries({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+        rowCount: rows.length,
+        detailRequestMode: "anomaly_insights",
+      }),
+      summary: buildToolSummaryFromMetrics(metrics, dimension, {
+        anomaly_count: rows.length,
+      }),
+      rows,
+    }),
+    meta: {
+      tool_name: TOOL_NAMES.GET_ANOMALY_INSIGHTS,
+      detail_request_mode: "anomaly_insights",
+      coverage_code: effectiveCoverage,
+      matched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+      matched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      unmatched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+      unmatched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      analysis_view: "anomaly_insights",
+    },
+  };
+}
+
+async function executeRiskOpportunitySummary(args, ctx) {
+  const windowInfo = await ctx.getWindowInfo();
+  const records = await ctx.getRecords();
+  const dimension = trimString(args?.dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+  const targetNames = normalizeStringArray(args?.target_names);
+  const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
+  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const riskHints = buildRiskOpportunityHints(metrics);
+  const rows = [
+    ...riskHints.risk_alerts.map((text) => ({ signal_type: "risk", text })),
+    ...riskHints.opportunity_hints.map((text) => ({ signal_type: "opportunity", text })),
+  ];
+  const effectiveCoverage = rows.length > 0 ? selection.coverageCode : "none";
+  return {
+    result: buildEnvelope(windowInfo, {
+      matched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      },
+      unmatched_entities: {
+        products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      },
+      coverage: {
+        code: effectiveCoverage,
+        message: rows.length > 0 ? "当前范围内已生成风险与机会提示。" : "当前范围内暂未生成明确风险与机会提示。",
+      },
+      boundaries: buildToolBoundaries({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      }),
+      diagnostic_flags: buildDiagnosticFlags({
+        coverageCode: effectiveCoverage,
+        unmatchedProducts: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+        unmatchedHospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+        rowCount: rows.length,
+        detailRequestMode: "risk_opportunity",
+      }),
+      summary: buildToolSummaryFromMetrics(metrics, dimension, {
+        risk_alerts: riskHints.risk_alerts,
+        opportunity_hints: riskHints.opportunity_hints,
+      }),
+      rows,
+    }),
+    meta: {
+      tool_name: TOOL_NAMES.GET_RISK_OPPORTUNITY_SUMMARY,
+      detail_request_mode: "risk_opportunity",
+      coverage_code: effectiveCoverage,
+      matched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.matchedNames : [],
+      matched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.matchedNames : [],
+      unmatched_products: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? selection.unmatchedNames : [],
+      unmatched_hospitals: dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL ? selection.unmatchedNames : [],
+      analysis_view: "risk_opportunity",
     },
   };
 }
@@ -642,6 +1062,12 @@ export function createToolExecutors(deps = {}) {
     [TOOL_NAMES.GET_PRODUCT_HOSPITAL_CONTRIBUTION]: (args, ctx) => executeProductHospitalContribution(args, ctx, deps),
     [TOOL_NAMES.GET_TREND_SUMMARY]: (args, ctx) => executeTrendSummary(args, ctx, deps),
     [TOOL_NAMES.GET_PERIOD_COMPARISON_SUMMARY]: (args, ctx) => executePeriodComparisonSummary(args, ctx, deps),
+    [TOOL_NAMES.GET_PRODUCT_TREND]: (args, ctx) => executeProductTrend(args, ctx, deps),
+    [TOOL_NAMES.GET_HOSPITAL_TREND]: (args, ctx) => executeHospitalTrend(args, ctx, deps),
+    [TOOL_NAMES.GET_ENTITY_RANKING]: (args, ctx) => executeEntityRanking(args, ctx, deps),
+    [TOOL_NAMES.GET_SHARE_BREAKDOWN]: (args, ctx) => executeShareBreakdown(args, ctx, deps),
+    [TOOL_NAMES.GET_ANOMALY_INSIGHTS]: (args, ctx) => executeAnomalyInsights(args, ctx, deps),
+    [TOOL_NAMES.GET_RISK_OPPORTUNITY_SUMMARY]: (args, ctx) => executeRiskOpportunitySummary(args, ctx, deps),
   };
 }
 

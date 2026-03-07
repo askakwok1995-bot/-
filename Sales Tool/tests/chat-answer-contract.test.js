@@ -55,8 +55,8 @@ test("buildChatSuccessPayload keeps auto mode answer contract stable", () => {
 
   assert.equal(autoPayload.responseAction, "structured_answer");
   assert.equal(repeatedAutoPayload.responseAction, "structured_answer");
-  assert.equal(autoPayload.answer.output_shape, "structured");
-  assert.equal(repeatedAutoPayload.answer.output_shape, "structured");
+  assert.equal(autoPayload.answer.output_shape, "report_flow");
+  assert.equal(repeatedAutoPayload.answer.output_shape, "report_flow");
   assert.equal(autoPayload.mode, "auto");
   assert.equal(repeatedAutoPayload.mode, "auto");
   assert.equal(autoPayload.businessIntent, "chat");
@@ -65,6 +65,12 @@ test("buildChatSuccessPayload keeps auto mode answer contract stable", () => {
   assert.equal(repeatedAutoPayload.answer.style, "natural");
   assert.equal(autoPayload.answer.source_period, repeatedAutoPayload.answer.source_period);
   assert.deepEqual(autoPayload.answer.evidence, repeatedAutoPayload.answer.evidence);
+  assert.equal(autoPayload.structured?.headline, "2025-01~2025-12 销售分析");
+  assert.ok(Array.isArray(autoPayload.structured?.sections));
+  assert.ok(Array.isArray(autoPayload.structured?.followups));
+  assert.equal("highlights" in autoPayload.structured, false);
+  assert.equal("risks" in autoPayload.structured, false);
+  assert.equal("nextQuestions" in autoPayload.structured, false);
 });
 
 test("handleChatRequest rejects removed chat modes", async () => {
@@ -137,23 +143,25 @@ test("handleChatRequest accepts explicit auto mode", async () => {
   assert.equal(payload.mode, "auto");
   assert.equal(payload.answer?.style, "natural");
   assert.equal(payload.responseAction, "structured_answer");
-  assert.equal(payload.answer?.output_shape, "structured");
+  assert.equal(payload.answer?.output_shape, "report_flow");
+  assert.equal(payload.structured?.headline, "2025-01~2025-12 销售分析");
+  assert.ok(Array.isArray(payload.structured?.sections));
+  assert.ok(payload.structured.sections.every((item) => ["analysis", "boundary", "suggestion"].includes(item.type)));
 });
 
-test("buildChatSuccessPayload renders report questions as natural report text instead of structured card", () => {
+test("buildChatSuccessPayload uses report-flow schema for ordinary analysis questions", () => {
   const evidenceBundle = {
-    source_period: "2025-01~2025-12",
+    source_period: "2025-01~2025-02",
     evidence: [
-      { label: "销售额", value: "12.00万元", insight: "当前分析区间" },
-      { label: "销量", value: "300盒", insight: "当前分析区间" },
+      { label: "销售额", value: "468.81万元", insight: "2月较1月有所回落" },
+      { label: "销量", value: "3719盒", insight: "当前分析区间" },
     ],
     actions: [{ title: "继续跟踪重点产品表现", timeline: "下次复盘前", metric: "销售额/贡献占比" }],
-    boundaries: ["当前回答基于现有口径给出方向性结论，暂不支持更细颗粒度拆解。"],
+    boundaries: ["当前分析区间已完整覆盖。"],
     next_questions: ["按产品拆开看这个时间段的贡献结构。"],
   };
   const questionJudgment = {
     primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL, label: "整体" },
-    report_intent: { code: "report", label: "报告请求" },
   };
   const routeDecision = {
     route: { code: ROUTE_DECISION_CODES.DIRECT_ANSWER, label: "直接回答" },
@@ -161,24 +169,34 @@ test("buildChatSuccessPayload renders report questions as natural report text in
 
   const payload = buildChatSuccessPayload({
     mode: "auto",
-    replyText: "当前整体表现稳中向上。",
+    replyText: "2025年1月至2月，销售额呈现下滑趋势，2月份销售表现较1月有所回落。",
     evidenceBundle,
     questionJudgment,
     routeDecision,
     model: "stub-model",
-    requestId: "req-report",
+    requestId: "req-month-flow",
   });
 
-  assert.equal(payload.responseAction, "natural_answer");
-  assert.equal(payload.structured, null);
-  assert.equal(payload.answer.output_shape, "report");
-  assert.match(payload.reply, /销售分析报告/u);
-  assert.match(payload.reply, /关键依据方面/u);
-  assert.match(payload.reply, /建议下一步重点围绕/u);
-  assert.doesNotMatch(payload.reply, /继续追问|边界说明|下一步\n/u);
+  assert.equal(payload.responseAction, "structured_answer");
+  assert.equal(payload.answer.output_shape, "report_flow");
+  assert.equal(payload.structured?.headline, "2025-01~2025-02 销售分析");
+  assert.equal(payload.structured?.summary, "2025年1月至2月，销售额呈现下滑趋势，2月份销售表现较1月有所回落。");
+  assert.ok(Array.isArray(payload.structured?.sections));
+  assert.deepEqual(
+    payload.structured.sections.map((item) => item.type),
+    ["analysis", "boundary", "suggestion"],
+  );
+  assert.match(payload.structured.sections[0].text, /从关键数据看/u);
+  assert.match(payload.structured.sections[1].text, /需要注意的是/u);
+  assert.match(payload.structured.sections[2].text, /建议下一步优先围绕/u);
+  assert.deepEqual(payload.structured.followups, ["按产品拆开看这个时间段的贡献结构。"]);
+  assert.equal("highlights" in payload.structured, false);
+  assert.equal("risks" in payload.structured, false);
+  assert.equal("actions" in payload.structured, false);
+  assert.equal("nextQuestions" in payload.structured, false);
 });
 
-test("handleChatRequest returns natural report text for explicit report questions", async () => {
+test("handleChatRequest keeps explicit report questions on the same report-flow structure", async () => {
   const context = buildContext({
     message: "请给我一份2025年度销售分析报告",
     mode: "auto",
@@ -224,11 +242,11 @@ test("handleChatRequest returns natural report text for explicit report question
 
   const payload = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(payload.responseAction, "natural_answer");
-  assert.equal(payload.structured, null);
-  assert.equal(payload.answer?.output_shape, "report");
-  assert.match(payload.reply, /销售分析报告/u);
-  assert.match(payload.reply, /建议下一步重点围绕/u);
+  assert.equal(payload.responseAction, "structured_answer");
+  assert.equal(payload.answer?.output_shape, "report_flow");
+  assert.equal(payload.structured?.headline, "2025-01~2025-12 销售分析报告");
+  assert.ok(Array.isArray(payload.structured?.sections));
+  assert.ok(Array.isArray(payload.structured?.followups));
 });
 
 test("handleChatRequest inherits previous time window from conversation_state on follow-up", async () => {
@@ -262,6 +280,7 @@ test("handleChatRequest inherits previous time window from conversation_state on
       analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
     },
   });
+  context.env.CHAT_ENABLE_DETERMINISTIC_ROUTE = "1";
 
   let observedRequestedWindow = null;
   const response = await handleChatRequest(context, "req-followup-window", {

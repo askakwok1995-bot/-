@@ -336,6 +336,10 @@ function isLegacyFallbackEnabled(env) {
   return isTruthyEnvFlag(getEnvString(env, "CHAT_ENABLE_LEGACY_FALLBACK"));
 }
 
+function isDeterministicRouteEnabled(env) {
+  return isTruthyEnvFlag(getEnvString(env, "CHAT_ENABLE_DETERMINISTIC_ROUTE"));
+}
+
 function buildEmergencyFollowupPrompts(questionJudgment, sourcePeriod) {
   const periodText = trimString(sourcePeriod) || "当前时间范围";
   const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
@@ -847,20 +851,28 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     let toolRouteMode = "tool_only";
     let toolRouteType = "none";
     let toolRouteName = "";
-    const deterministicToolRoute = buildDeterministicToolRouteImpl({
-      message,
-      questionJudgment: planningQuestionJudgment,
-      requestedTimeWindow,
-      comparisonTimeWindow,
-      timeCompareMode,
-      primaryWindowCoverageCode: trimString(timeWindowCoverage?.code),
-      comparisonWindowCoverageCode: trimString(comparisonTimeWindowCoverage?.code),
-      productFullRequested,
-      hospitalMonthlyDetailRequested,
-      productNamedContext: effectiveProductNamedContext,
-      hospitalNamedContext: effectiveHospitalNamedContext,
-      productHospitalContext,
-    });
+    const deterministicRouteEnabled = isDeterministicRouteEnabled(context.env);
+    const deterministicToolRoute = deterministicRouteEnabled
+      ? buildDeterministicToolRouteImpl({
+          message,
+          questionJudgment: planningQuestionJudgment,
+          requestedTimeWindow,
+          comparisonTimeWindow,
+          timeCompareMode,
+          primaryWindowCoverageCode: trimString(timeWindowCoverage?.code),
+          comparisonWindowCoverageCode: trimString(comparisonTimeWindowCoverage?.code),
+          productFullRequested,
+          hospitalMonthlyDetailRequested,
+          productNamedContext: effectiveProductNamedContext,
+          hospitalNamedContext: effectiveHospitalNamedContext,
+          productHospitalContext,
+        })
+      : {
+          matched: false,
+          route_type: "none",
+          tool_name: "",
+          tool_args: {},
+        };
     if (deterministicToolRoute.matched) {
       toolRouteType = trimString(deterministicToolRoute.route_type);
       toolRouteName = trimString(deterministicToolRoute.tool_name);

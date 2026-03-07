@@ -25,8 +25,11 @@ const TOOL_FALLBACK_REASONS = Object.freeze({
 const TOOL_FIRST_SYSTEM_INSTRUCTION = [
   "当前链路已为你提供一组受控业务工具。",
   "当问题需要具体业务数据时，优先调用最合适的工具，不要假装已经掌握未提供的数据。",
+  "先判断回答是否需要多个分析视角。对“分析/为什么/结构/贡献来源/风险机会”类问题，通常先拿整体结论，再补趋势、结构、排行或风险中的至少一个支撑视角。",
+  "如果目前只拿到单一摘要视角，且用户问题明显需要解释原因、结构或异常，不要急于结束，继续调用更合适的工具。",
   "工具结果是本轮回答的主要事实依据；若工具结果 coverage=partial 或存在未匹配实体，请按 bounded_answer 风格回答。",
   "若工具结果 coverage=full，按 direct_answer 风格回答；若 coverage=full 且 rows 为空但结果明确为0贡献，请直接说明“当前范围内贡献为0/未产生贡献”，不要写成“数据不足”。",
+  "最终总结时必须综合本轮全部已调用工具的结果，不要只基于最后一个工具回复。",
   "禁止输出任何内部过程词、工具名、函数名、调取过程。",
   "",
   "direct_answer 结构要求：",
@@ -216,6 +219,9 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
     tool_matched_product_count_value: matchedProducts.length,
     product_hospital_zero_result_mode: trimString(lastToolResult?.meta?.product_hospital_zero_result) === "yes",
     tool_result_coverage_code: trimString(lastToolResult?.result?.coverage?.code),
+    tool_result_diagnostic_flags: Array.isArray(lastToolResult?.result?.diagnostic_flags)
+      ? lastToolResult.result.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
+      : [],
     tool_result_row_count_value: rows.length,
     tool_result_row_names: rowNames,
     tool_result_matched_products: matchedProducts.slice(0, 5),
@@ -240,10 +246,15 @@ export function buildToolOutputContext(questionJudgment, lastToolResult) {
 export function buildToolCallTraceEntry(call, executionResult) {
   return {
     tool_name: trimString(call?.name),
+    analysis_view: trimString(executionResult?.meta?.analysis_view),
+    detail_request_mode: trimString(executionResult?.meta?.detail_request_mode),
     coverage_code: trimString(executionResult?.result?.coverage?.code),
     row_count: Array.isArray(executionResult?.result?.rows) ? executionResult.result.rows.length : 0,
     matched_products: Array.isArray(executionResult?.meta?.matched_products) ? executionResult.meta.matched_products.length : 0,
     matched_hospitals: Array.isArray(executionResult?.meta?.matched_hospitals) ? executionResult.meta.matched_hospitals.length : 0,
+    diagnostic_flags: Array.isArray(executionResult?.result?.diagnostic_flags)
+      ? executionResult.result.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
+      : [],
   };
 }
 
@@ -259,13 +270,28 @@ function logToolTrace(tracePayload, env) {
 }
 
 function buildToolTracePayload({ requestId, state, toolCallTrace }) {
+  const safeTrace = Array.isArray(toolCallTrace) ? toolCallTrace : [];
+  const views = Array.from(
+    new Set(
+      safeTrace
+        .map((item) => trimString(item?.analysis_view) || trimString(item?.tool_name))
+        .filter((item) => item),
+    ),
+  );
   return {
     requestId,
     tool_call_count: state.tool_call_count,
     rounds: state.rounds,
     final_route_code: trimString(state.final_route_code),
     fallback_reason: trimString(state.fallback_reason),
-    tool_calls: Array.isArray(toolCallTrace) ? toolCallTrace : [],
+    planning_depth: views.length > 1 ? "multi_view" : views.length === 1 ? "single_view" : "none",
+    views_requested: views,
+    views_completed: views,
+    tool_selection_reason:
+      views.length > 1 ? "model_multi_view_planning" : views.length === 1 ? "model_single_view_planning" : "none",
+    final_synthesis_mode:
+      state.tool_call_count > 1 ? "multi_tool_synthesis" : state.tool_call_count === 1 ? "single_tool_synthesis" : "none",
+    tool_calls: safeTrace,
   };
 }
 

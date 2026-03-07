@@ -189,6 +189,13 @@ function buildBoundaries({
   if (coverageMessage) {
     boundaries.push(coverageMessage);
   }
+  const toolBoundaries = Array.isArray(toolResult?.boundaries) ? toolResult.boundaries : [];
+  toolBoundaries.forEach((item) => {
+    const text = trimString(item);
+    if (text) {
+      boundaries.push(text);
+    }
+  });
 
   const unmatchedProducts = Array.isArray(toolResult?.unmatched_entities?.products)
     ? toolResult.unmatched_entities.products
@@ -283,36 +290,6 @@ function buildNextQuestions(questionJudgment) {
   ];
 }
 
-function buildHighlights(replySummary, evidence, boundaries) {
-  const highlights = [];
-  if (replySummary) {
-    highlights.push(replySummary);
-  }
-  evidence.forEach((item) => {
-    const text = trimString(item?.insight) || `${trimString(item?.label)}：${trimString(item?.value)}`;
-    if (text && !highlights.includes(text)) {
-      highlights.push(text);
-    }
-  });
-  boundaries.forEach((item) => {
-    if (item && !highlights.includes(item)) {
-      highlights.push(item);
-    }
-  });
-  return highlights.slice(0, 3);
-}
-
-function buildStructuredAnswer(answer) {
-  return {
-    summary: trimString(answer?.summary),
-    highlights: Array.isArray(answer?.highlights) ? answer.highlights.slice(0, 6) : [],
-    evidence: Array.isArray(answer?.evidence) ? answer.evidence.slice(0, 8) : [],
-    risks: Array.isArray(answer?.boundaries) ? answer.boundaries.slice(0, 6) : [],
-    actions: Array.isArray(answer?.actions) ? answer.actions.slice(0, 6) : [],
-    nextQuestions: Array.isArray(answer?.next_questions) ? answer.next_questions.slice(0, 6) : [],
-  };
-}
-
 function buildSourcePeriod(outputContext, businessSnapshot, toolResult) {
   return (
     trimString(outputContext?.requested_time_window_period) ||
@@ -334,15 +311,7 @@ function ensureSentence(text) {
   return endsWithSentencePunctuation(normalized) ? normalized : `${normalized}。`;
 }
 
-function joinSentenceParts(parts, delimiter = "；") {
-  const safeParts = parts.map((item) => trimString(item)).filter((item) => item);
-  if (safeParts.length === 0) {
-    return "";
-  }
-  return ensureSentence(safeParts.join(delimiter));
-}
-
-function formatEvidenceSentence(evidence = []) {
+function formatEvidenceParagraph(evidence = []) {
   const parts = evidence.slice(0, 4).map((item) => {
     const label = trimString(item?.label);
     const value = trimString(item?.value);
@@ -355,10 +324,10 @@ function formatEvidenceSentence(evidence = []) {
   if (parts.length === 0) {
     return "";
   }
-  return ensureSentence(`关键依据方面，${parts.join("；")}`);
+  return ensureSentence(`从关键数据看，${parts.join("；")}`);
 }
 
-function formatBoundariesSentence(boundaries = []) {
+function formatBoundariesParagraph(boundaries = []) {
   const parts = boundaries.slice(0, 3).map((item) => trimString(item)).filter((item) => item);
   if (parts.length === 0) {
     return "";
@@ -366,7 +335,7 @@ function formatBoundariesSentence(boundaries = []) {
   return ensureSentence(`需要注意的是，${parts.join("；")}`);
 }
 
-function formatActionsSentence(actions = []) {
+function formatActionsParagraph(actions = []) {
   const parts = actions.slice(0, 2).map((item) => {
     const title = trimString(item?.title);
     const timeline = trimString(item?.timeline);
@@ -380,28 +349,53 @@ function formatActionsSentence(actions = []) {
   if (parts.length === 0) {
     return "";
   }
-  return ensureSentence(`建议下一步重点围绕${parts.join("；")}`);
+  return ensureSentence(`建议下一步优先围绕${parts.join("；")}`);
 }
 
 function hasReportIntent(questionJudgment) {
   return trimString(questionJudgment?.report_intent?.code) === "report";
 }
 
-function buildReportReply(answer) {
+function buildStructuredHeadline(answer, questionJudgment) {
   const sourcePeriod = trimString(answer?.source_period);
-  const title = sourcePeriod ? `${sourcePeriod} 销售分析报告` : "销售分析报告";
-  const summarySentence = ensureSentence(trimString(answer?.summary) || "当前区间已形成销售分析结论");
-  const evidenceSentence = formatEvidenceSentence(Array.isArray(answer?.evidence) ? answer.evidence : []);
-  const boundariesSentence = formatBoundariesSentence(Array.isArray(answer?.boundaries) ? answer.boundaries : []);
-  const actionsSentence = formatActionsSentence(Array.isArray(answer?.actions) ? answer.actions : []);
-  const body = [
-    `${title}`,
-    sourcePeriod ? ensureSentence(`本报告基于 ${sourcePeriod} 的当前可见业务数据生成，${trimString(summarySentence).replace(/。$/u, "")}`) : summarySentence,
-    evidenceSentence,
-    boundariesSentence,
-    actionsSentence,
-  ].filter((item) => item);
-  return body.join("\n\n");
+  if (sourcePeriod && hasReportIntent(questionJudgment)) {
+    return `${sourcePeriod} 销售分析报告`;
+  }
+  if (sourcePeriod) {
+    return `${sourcePeriod} 销售分析`;
+  }
+  return hasReportIntent(questionJudgment) ? "销售分析报告" : "销售分析";
+}
+
+function buildStructuredSections(answer) {
+  const sections = [];
+  const analysisParagraph = formatEvidenceParagraph(Array.isArray(answer?.evidence) ? answer.evidence : []);
+  const boundaryParagraph = formatBoundariesParagraph(Array.isArray(answer?.boundaries) ? answer.boundaries : []);
+  const suggestionParagraph = formatActionsParagraph(Array.isArray(answer?.actions) ? answer.actions : []);
+
+  if (analysisParagraph) {
+    sections.push({ type: "analysis", text: analysisParagraph });
+  }
+  if (boundaryParagraph) {
+    sections.push({ type: "boundary", text: boundaryParagraph });
+  }
+  if (suggestionParagraph) {
+    sections.push({ type: "suggestion", text: suggestionParagraph });
+  }
+  if (sections.length === 0) {
+    const summary = ensureSentence(trimString(answer?.summary) || "当前区间已形成销售分析结论");
+    sections.push({ type: "analysis", text: summary });
+  }
+  return sections;
+}
+
+function buildStructuredAnswer(answer, questionJudgment) {
+  return {
+    headline: buildStructuredHeadline(answer, questionJudgment),
+    summary: trimString(answer?.summary),
+    sections: buildStructuredSections(answer),
+    followups: Array.isArray(answer?.followups) ? answer.followups.slice(0, 2) : [],
+  };
 }
 
 function shouldDeriveStructuredAnswer(answer, routeDecision) {
@@ -435,6 +429,9 @@ export function buildEvidenceBundleFromToolResult({
     source: "tool",
     source_period: buildSourcePeriod(outputContext, {}, safeToolResult),
     coverage_code: trimString(safeToolResult?.coverage?.code) || trimString(outputContext?.tool_result_coverage_code),
+    diagnostic_flags: Array.isArray(safeToolResult?.diagnostic_flags)
+      ? safeToolResult.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
+      : [],
     evidence,
     boundaries: buildBoundaries({
       routeDecision,
@@ -475,6 +472,7 @@ export function buildEvidenceBundleFromSnapshot({
     source: "snapshot",
     source_period: buildSourcePeriod(outputContext, safeSnapshot, null),
     coverage_code: trimString(outputContext?.time_window_coverage_code) || "unknown",
+    diagnostic_flags: [],
     evidence,
     boundaries: buildBoundaries({
       routeDecision,
@@ -502,8 +500,7 @@ export function buildRenderedAnswer({
   const evidence = Array.isArray(safeBundle.evidence) ? safeBundle.evidence.slice(0, 8) : [];
   const boundaries = Array.isArray(safeBundle.boundaries) ? safeBundle.boundaries.slice(0, 6) : [];
   const actions = Array.isArray(safeBundle.actions) ? safeBundle.actions.slice(0, 6) : [];
-  const nextQuestions = Array.isArray(safeBundle.next_questions) ? safeBundle.next_questions.slice(0, 6) : [];
-  const reportIntent = hasReportIntent(questionJudgment);
+  const nextQuestions = Array.isArray(safeBundle.next_questions) ? safeBundle.next_questions.slice(0, 2) : [];
   const answer = {
     style: resolveAnswerStyle(safeMode),
     summary,
@@ -512,21 +509,30 @@ export function buildRenderedAnswer({
     boundaries,
     source_period: trimString(safeBundle.source_period),
     coverage_code: trimString(safeBundle.coverage_code),
+    diagnostic_flags: Array.isArray(safeBundle.diagnostic_flags)
+      ? safeBundle.diagnostic_flags.map((item) => trimString(item)).filter((item) => item)
+      : [],
     route_code: trimString(routeDecision?.route?.code),
     primary_dimension_code: trimString(questionJudgment?.primary_dimension?.code),
     next_questions: nextQuestions,
+    followups: nextQuestions,
     conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
-    highlights: buildHighlights(summary, evidence, boundaries),
     output_shape: "text",
   };
-  const structured = reportIntent || !shouldDeriveStructuredAnswer(answer, routeDecision) ? null : buildStructuredAnswer(answer);
-  const outputShape = reportIntent ? "report" : structured ? "structured" : "text";
+  const structured = shouldDeriveStructuredAnswer(answer, routeDecision) ? buildStructuredAnswer(answer, questionJudgment) : null;
+  const outputShape =
+    trimString(routeDecision?.route?.code) === ROUTE_DECISION_CODES.REFUSE
+      ? "clarify"
+      : structured
+        ? "report_flow"
+        : "text";
   answer.output_shape = outputShape;
-  const surfaceReply = reportIntent ? buildReportReply(answer) : trimString(replyText);
+  answer.headline = structured?.headline || buildStructuredHeadline(answer, questionJudgment);
+  answer.sections = Array.isArray(structured?.sections) ? structured.sections.slice(0, 4) : [];
   return {
     answer,
     structured,
-    surfaceReply,
+    surfaceReply: trimString(replyText),
     responseAction: structured ? CHAT_RESPONSE_ACTIONS.STRUCTURED : CHAT_RESPONSE_ACTIONS.NATURAL,
     format: structured ? "structured" : "text_fallback",
     businessIntent: buildBusinessIntent(safeMode),

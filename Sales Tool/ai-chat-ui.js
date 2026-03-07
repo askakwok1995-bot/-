@@ -85,36 +85,15 @@ function normalizeStringList(value, maxItems = 6) {
     .slice(0, maxItems);
 }
 
-function normalizeEvidenceList(value, maxItems = 8) {
+function normalizeSectionList(value, maxItems = 4) {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => {
       if (!item || typeof item !== "object") return null;
-      const label = toText(item.label);
-      const rawValue = item.value;
-      const valueText =
-        typeof rawValue === "number" || typeof rawValue === "string" ? toText(rawValue) : toText(item.valueText);
-      const insight = toText(item.insight);
-      if (!label || !valueText) return null;
-      return { label, value: valueText, insight };
-    })
-    .filter((item) => item !== null)
-    .slice(0, maxItems);
-}
-
-function normalizeActionList(value, maxItems = 6) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const title = toText(item.title);
-      if (!title) return null;
-      return {
-        title,
-        owner: toText(item.owner),
-        timeline: toText(item.timeline),
-        metric: toText(item.metric),
-      };
+      const type = toText(item.type);
+      const text = toText(item.text);
+      if (!["analysis", "boundary", "suggestion"].includes(type) || !text) return null;
+      return { type, text };
     })
     .filter((item) => item !== null)
     .slice(0, maxItems);
@@ -126,21 +105,11 @@ function normalizeStructuredPayload(value) {
   if (!summary) return null;
 
   return {
+    headline: toText(value.headline) || "销售分析",
     summary,
-    highlights: normalizeStringList(value.highlights, 6),
-    evidence: normalizeEvidenceList(value.evidence, 8),
-    risks: normalizeStringList(value.risks, 6),
-    actions: normalizeActionList(value.actions, 6),
-    nextQuestions: normalizeStringList(value.nextQuestions, 6),
+    sections: normalizeSectionList(value.sections, 4),
+    followups: normalizeStringList(value.followups, 2),
   };
-}
-
-function buildActionMeta(action) {
-  const parts = [];
-  if (action.owner) parts.push(`负责人：${action.owner}`);
-  if (action.timeline) parts.push(`时间：${action.timeline}`);
-  if (action.metric) parts.push(`指标：${action.metric}`);
-  return parts.join(" | ");
 }
 
 function appendInlineMarkdown(container, content) {
@@ -706,88 +675,33 @@ export function initAiChatUi(options = {}) {
     const article = document.createElement("article");
     article.className = "ai-chat-message ai-chat-message--assistant ai-chat-structured";
 
+    const headline = document.createElement("div");
+    headline.className = "ai-chat-structured-headline";
+    headline.textContent = normalized.headline;
+    article.appendChild(headline);
+
     const summary = document.createElement("p");
     summary.className = "ai-chat-structured-summary";
     summary.textContent = normalized.summary;
     article.appendChild(summary);
 
-    const sections = [
-      { title: "结论要点", key: "highlights" },
-      { title: "边界说明", key: "risks" },
-      { title: "继续追问", key: "nextQuestions" },
-    ];
-
-    sections.forEach((item) => {
-      const values = normalized[item.key];
-      if (!Array.isArray(values) || values.length === 0) return;
-      const section = document.createElement("section");
-      section.className = "ai-chat-structured-section";
-      const title = document.createElement("h4");
-      title.className = "ai-chat-structured-title";
-      title.textContent = item.title;
-      section.appendChild(title);
-      const list = document.createElement("ul");
-      list.className = "ai-chat-structured-list";
-      values.forEach((text) => {
-        const li = document.createElement("li");
-        li.textContent = text;
-        list.appendChild(li);
-      });
-      section.appendChild(list);
-      article.appendChild(section);
+    normalized.sections.forEach((item) => {
+      const paragraph = document.createElement("p");
+      paragraph.className = `ai-chat-structured-paragraph ai-chat-structured-paragraph--${item.type}`;
+      paragraph.textContent = item.text;
+      article.appendChild(paragraph);
     });
 
-    if (normalized.evidence.length > 0) {
-      const section = document.createElement("section");
-      section.className = "ai-chat-structured-section";
-      const title = document.createElement("h4");
-      title.className = "ai-chat-structured-title";
-      title.textContent = "依据";
-      section.appendChild(title);
-      const list = document.createElement("ul");
-      list.className = "ai-chat-structured-list";
-      normalized.evidence.forEach((item) => {
-        const li = document.createElement("li");
-        const label = document.createElement("span");
-        label.className = "ai-chat-structured-evidence-label";
-        label.textContent = `${item.label}：`;
-        li.appendChild(label);
-        li.appendChild(document.createTextNode(`${item.value}`));
-        if (item.insight) {
-          li.appendChild(document.createTextNode(`（${item.insight}）`));
-        }
-        list.appendChild(li);
+    if (normalized.followups.length > 0) {
+      const followups = document.createElement("div");
+      followups.className = "ai-chat-structured-followups";
+      normalized.followups.forEach((text) => {
+        const chip = document.createElement("span");
+        chip.className = "ai-chat-structured-followup-chip";
+        chip.textContent = text;
+        followups.appendChild(chip);
       });
-      section.appendChild(list);
-      article.appendChild(section);
-    }
-
-    if (normalized.actions.length > 0) {
-      const section = document.createElement("section");
-      section.className = "ai-chat-structured-section";
-      const title = document.createElement("h4");
-      title.className = "ai-chat-structured-title";
-      title.textContent = "下一步";
-      section.appendChild(title);
-      const list = document.createElement("ul");
-      list.className = "ai-chat-structured-list";
-      normalized.actions.forEach((item) => {
-        const li = document.createElement("li");
-        const actionTitle = document.createElement("div");
-        actionTitle.className = "ai-chat-structured-action-title";
-        actionTitle.textContent = item.title;
-        li.appendChild(actionTitle);
-        const metaText = buildActionMeta(item);
-        if (metaText) {
-          const meta = document.createElement("div");
-          meta.className = "ai-chat-structured-action-meta";
-          meta.textContent = metaText;
-          li.appendChild(meta);
-        }
-        list.appendChild(li);
-      });
-      section.appendChild(list);
-      article.appendChild(section);
+      article.appendChild(followups);
     }
     dom.messages.appendChild(article);
     scrollMessagesToBottom();
@@ -918,10 +832,7 @@ export function initAiChatUi(options = {}) {
       const normalized = normalizeReplyPayload(result);
       let hasRendered = false;
 
-      const shouldRenderStructuredCard =
-        normalized.structured &&
-        normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY &&
-        toText(normalized.answer?.output_shape) !== "report";
+      const shouldRenderStructuredCard = normalized.structured && normalized.responseAction !== CHAT_RESPONSE_ACTIONS.CLARIFY;
       if (shouldRenderStructuredCard) {
         removeLiveMessage(liveMessage);
         hasRendered = appendStructuredAssistantMessage(normalized.structured);
