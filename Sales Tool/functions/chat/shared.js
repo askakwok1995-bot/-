@@ -158,6 +158,7 @@ export const TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT = [
   "[阶段 1：首轮规划阶段]",
   "触发条件：当前对话仅有用户问题，尚未调用任何工具。",
   "执行动作：强制且只能调用 submit_analysis_plan，不要输出任何给用户的分析文本。",
+  "首批工具计划中的 initial_tools 必须使用 { name, args } 结构，其中 args 必须是结构化对象，不要输出 JSON 字符串。",
   "规划规则：",
   "- 无关问题：relevance=irrelevant，route_intent=refuse，允许零工具结束。",
   "- 宏观泛问题（如整体表现、销售趋势、产品或医院表现、销售分析报告）：首轮规划优先选择高层宏工具 get_sales_overview_brief、get_sales_trend_brief、get_dimension_overview_brief。",

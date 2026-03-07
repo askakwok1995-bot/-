@@ -97,6 +97,9 @@ const GENERIC_HOSPITAL_MENTIONS = Object.freeze([
   "这家医院",
   "某医院",
 ]);
+const TOOL_DECLARATION_BY_NAME = new Map(
+  buildToolDeclarations().map((declaration) => [trimString(declaration?.name), declaration]),
+);
 
 export function createInitialToolRuntimeState() {
   return {
@@ -268,9 +271,9 @@ function buildPlannerDeclaration(allowedViewNames = PLANNER_VIEW_NAMES) {
                 type: "STRING",
                 enum: enumViewNames,
               },
-              args_json: { type: "STRING" },
+              args: { type: "OBJECT" },
             },
-            required: ["name"],
+            required: ["name", "args"],
           },
         },
       },
@@ -430,20 +433,82 @@ function parsePlannerInitialTools(value) {
       if (!PLANNER_VIEW_NAMES.includes(name)) {
         return null;
       }
-      let args = item.args_json;
-      if (typeof args === "string" && trimString(args)) {
-        try {
-          args = JSON.parse(args);
-        } catch (_error) {
-          args = {};
-        }
-      }
+      let args = item.args;
       if (!args || typeof args !== "object" || Array.isArray(args)) {
         args = {};
       }
       return { name, args };
     })
     .filter((item) => item !== null);
+}
+
+function getRequiredToolParameterNames(toolName) {
+  const declaration = TOOL_DECLARATION_BY_NAME.get(trimString(toolName));
+  const required = Array.isArray(declaration?.parameters?.required) ? declaration.parameters.required : [];
+  return required.map((item) => trimString(item)).filter((item) => item);
+}
+
+function validateRawPlannerInitialTools(rawInitialTools, allowedSet) {
+  if (!Array.isArray(rawInitialTools)) {
+    return { accepted: true, note: "" };
+  }
+
+  for (const rawItem of rawInitialTools) {
+    if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) {
+      return {
+        accepted: false,
+        note: "initial_tools 中存在非法条目；每项都必须是包含 name 和 args 的对象。",
+      };
+    }
+
+    const toolName = trimString(rawItem.name);
+    if (!toolName) {
+      return {
+        accepted: false,
+        note: "initial_tools 中存在缺少 name 的条目。",
+      };
+    }
+
+    if (!allowedSet.has(toolName)) {
+      return {
+        accepted: false,
+        note: `initial_tools.${toolName} 不属于当前阶段允许调用的工具。`,
+      };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(rawItem, "args_json")) {
+      return {
+        accepted: false,
+        note: `initial_tools.${toolName} 仍在使用旧字段 args_json；请改为结构化 args 对象。`,
+      };
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(rawItem, "args")) {
+      return {
+        accepted: false,
+        note: `initial_tools.${toolName} 缺少 args；请提供结构化参数对象。`,
+      };
+    }
+
+    if (!rawItem.args || typeof rawItem.args !== "object" || Array.isArray(rawItem.args)) {
+      return {
+        accepted: false,
+        note: `initial_tools.${toolName}.args 必须是对象，不能是字符串、数组或空值。`,
+      };
+    }
+
+    const requiredParams = getRequiredToolParameterNames(toolName);
+    for (const requiredParam of requiredParams) {
+      if (!Object.prototype.hasOwnProperty.call(rawItem.args, requiredParam)) {
+        return {
+          accepted: false,
+          note: `initial_tools.${toolName} 缺少必填参数 ${requiredParam}。`,
+        };
+      }
+    }
+  }
+
+  return { accepted: true, note: "" };
 }
 
 function hasOwnStringField(value, key) {
@@ -558,6 +623,7 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
   }
 
   const initialTools = Array.isArray(plannerState?.initial_tools) ? plannerState.initial_tools : [];
+  const rawInitialTools = Array.isArray(safeArgs?.initial_tools) ? safeArgs.initial_tools : [];
   const requestedViews = Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [];
   const hasRequestedViews = requestedViews.length > 0;
   const hasInitialTools = initialTools.length > 0;
@@ -577,6 +643,11 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
       accepted: false,
       note: "requested_views 已给出，但 initial_tools 为空。请给出首批工具调用计划后再继续。",
     };
+  }
+
+  const rawInitialToolValidation = validateRawPlannerInitialTools(rawInitialTools, allowedSet);
+  if (!rawInitialToolValidation.accepted) {
+    return rawInitialToolValidation;
   }
 
   if (trimString(plannerState?.relevance) === QUESTION_JUDGMENT_CODES.relevance.RELEVANT) {
@@ -600,6 +671,17 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
       accepted: false,
       note: "requested_views 中包含当前阶段不可用的工具，请改用当前允许暴露的工具。",
     };
+  }
+
+  if (!isZeroToolRefuse && hasRequestedViews) {
+    const initialToolNames = new Set(initialTools.map((item) => trimString(item?.name)).filter((item) => item));
+    const missingPlannedTools = requestedViews.filter((item) => !initialToolNames.has(trimString(item)));
+    if (missingPlannedTools.length > 0) {
+      return {
+        accepted: false,
+        note: `requested_views 中的 ${missingPlannedTools.join("、")} 缺少对应的 initial_tools 参数计划。`,
+      };
+    }
   }
 
   return {

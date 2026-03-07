@@ -104,7 +104,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
                             initial_tools: [
                               {
                                 name: "get_sales_trend_brief",
-                                args_json: "{\"limit\":4}",
+                                args: { limit: 4 },
                               },
                             ],
                           },
@@ -218,7 +218,7 @@ test("runToolFirstChat completes after single tool call and returns final reply"
                             initial_tools: [
                               {
                                 name: "get_overall_summary",
-                                args_json: "{\"focus\":\"整体\"}",
+                                args: { focus: "整体" },
                               },
                             ],
                           },
@@ -405,13 +405,13 @@ test("runToolFirstChat falls back when planner requests more tools than max call
                           synthesis_expectation: "产品报告需要聚合、趋势、结构和诊断证据。",
                           required_tool_call_min: 1,
                           initial_tools: [
-                            { name: "get_product_summary", args_json: "{\"include_all_products\":true}" },
-                            { name: "get_hospital_summary", args_json: "{\"limit\":5}" },
-                            { name: "get_trend_summary", args_json: "{\"dimension\":\"overall\"}" },
-                            { name: "get_overall_summary", args_json: "{}" },
-                            { name: "scope_diagnostics", args_json: "{\"dimension\":\"overall\"}" },
-                            { name: "scope_breakdown", args_json: "{\"scope_dimension\":\"overall\",\"breakdown_dimension\":\"product\"}" },
-                            { name: "scope_timeseries", args_json: "{\"dimension\":\"overall\",\"granularity\":\"monthly\"}" },
+                            { name: "get_product_summary", args: { include_all_products: true } },
+                            { name: "get_hospital_summary", args: { limit: 5 } },
+                            { name: "get_trend_summary", args: { dimension: "overall" } },
+                            { name: "get_overall_summary", args: {} },
+                            { name: "scope_diagnostics", args: { dimension: "overall" } },
+                            { name: "scope_breakdown", args: { scope_dimension: "overall", breakdown_dimension: "product" } },
+                            { name: "scope_timeseries", args: { dimension: "overall", granularity: "monthly" } },
                           ],
                         },
                       },
@@ -487,7 +487,7 @@ test("runToolFirstChat downgrades report answer to bounded when required evidenc
                             requested_views: ["scope_aggregate"],
                             synthesis_expectation: "需要完整产品报告。",
                             required_tool_call_min: 1,
-                            initial_tools: [{ name: "scope_aggregate", args_json: "{\"dimension\":\"product\"}" }],
+                            initial_tools: [{ name: "scope_aggregate", args: { dimension: "product" } }],
                           },
                         },
                       },
@@ -578,7 +578,7 @@ test("runToolFirstChat rejects invalid planner missing relevance and requires re
                             required_evidence: ["breakdown"],
                             requested_views: ["get_share_breakdown"],
                             required_tool_call_min: 1,
-                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                            initial_tools: [{ name: "get_share_breakdown", args: { dimension: "product" } }],
                           },
                         },
                       },
@@ -764,7 +764,7 @@ test("runToolFirstChat continues after planner resubmission succeeds", async () 
                             required_evidence: ["breakdown"],
                             requested_views: ["get_share_breakdown"],
                             required_tool_call_min: 1,
-                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                            initial_tools: [{ name: "get_share_breakdown", args: { dimension: "product" } }],
                           },
                         },
                       },
@@ -860,7 +860,7 @@ test("runToolFirstChat keeps planner required_evidence for report when explicitl
                             required_evidence: ["breakdown"],
                             requested_views: ["get_share_breakdown"],
                             required_tool_call_min: 1,
-                            initial_tools: [{ name: "get_share_breakdown", args_json: "{\"dimension\":\"product\"}" }],
+                            initial_tools: [{ name: "get_share_breakdown", args: { dimension: "product" } }],
                           },
                         },
                       },
@@ -952,7 +952,7 @@ test("runToolFirstChat falls back to question_type default evidence only when pl
                             requested_views: ["scope_aggregate"],
                             synthesis_expectation: "需要完整产品报告。",
                             required_tool_call_min: 1,
-                            initial_tools: [{ name: "scope_aggregate", args_json: "{\"dimension\":\"product\"}" }],
+                            initial_tools: [{ name: "scope_aggregate", args: { dimension: "product" } }],
                           },
                         },
                       },
@@ -1000,4 +1000,244 @@ test("runToolFirstChat falls back to question_type default evidence only when pl
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.BOUNDED_ANSWER);
   assert.deepEqual(result.plannerState?.required_evidence, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
   assert.deepEqual(result.missingEvidenceTypes, ["timeseries", "breakdown", "diagnostics"]);
+});
+
+test("submit_analysis_plan schema uses structured args object instead of args_json", async () => {
+  let plannerDeclaration = null;
+  await runToolFirstChat({
+    message: "分析销售趋势",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-schema-structured-args",
+    deps: {
+      requestGeminiGenerateContent: async (payload) => {
+        plannerDeclaration = payload?.tools?.[0]?.functionDeclarations?.find((item) => item?.name === "submit_analysis_plan") || null;
+        return { ok: false, code: "schema-captured" };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  const initialToolSchema = plannerDeclaration?.parameters?.properties?.initial_tools?.items;
+  assert.ok(initialToolSchema);
+  assert.equal(initialToolSchema.properties?.args?.type, "OBJECT");
+  assert.deepEqual(initialToolSchema.required, ["name", "args"]);
+  assert.equal(Object.prototype.hasOwnProperty.call(initialToolSchema.properties || {}, "args_json"), false);
+});
+
+test("runToolFirstChat rejects legacy args_json planner payload", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "生成产品分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-legacy-args-json",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["aggregate", "ranking"],
+                            requested_views: ["get_dimension_overview_brief"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_overview_brief",
+                                args_json: "{\"dimension\":\"product\"}",
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return { ok: false, code: "rejected-as-expected" };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackReason, "gemini_error");
+  assert.equal(geminiCallCount, 2);
+});
+
+test("runToolFirstChat rejects planner initial_tools when args is not an object", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "生成产品分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-invalid-args-type",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["aggregate", "ranking"],
+                            requested_views: ["get_dimension_overview_brief"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_overview_brief",
+                                args: "{\"dimension\":\"product\"}",
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return { ok: false, code: "rejected-as-expected" };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackReason, "gemini_error");
+  assert.equal(geminiCallCount, 2);
+});
+
+test("runToolFirstChat rejects planner initial_tools missing required tool args", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "生成产品分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-missing-required-tool-args",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["aggregate", "ranking"],
+                            requested_views: ["get_dimension_overview_brief"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_overview_brief",
+                                args: {},
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return { ok: false, code: "rejected-as-expected" };
+      },
+      executeToolByName: async () => {
+        throw new Error("should-not-call-tools");
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackReason, "gemini_error");
+  assert.equal(geminiCallCount, 2);
 });
