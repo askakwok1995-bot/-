@@ -2655,10 +2655,12 @@ h1,
 
 .auth-modal-title {
   color: #122230;
-  max-width: 320px;
+  max-width: none;
+  margin-left: auto;
   font-size: clamp(22px, 1.7vw, 27px);
   line-height: 1.12;
   letter-spacing: -0.03em;
+  text-align: right;
 }
 
 .auth-modal-desc {
@@ -2671,16 +2673,22 @@ h1,
 
 .auth-form {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 .hero-panel-auth .hero-panel-head {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.hero-panel-auth .hero-panel-kicker {
+  margin: 0;
 }
 
 .hero-panel-auth,
@@ -2798,12 +2806,16 @@ h1,
 }
 
 .auth-form-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 0;
   min-height: 44px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
   border-radius: 16px;
+  text-align: center;
 }
 
 #auth-login-btn {
@@ -3669,6 +3681,13 @@ body.ai-chat-open .ai-chat-fab {
 
   .auth-modal {
     padding: 16px;
+  }
+
+  .hero-panel-auth .hero-panel-head {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
   }
 
   .auth-form-panel-head {
