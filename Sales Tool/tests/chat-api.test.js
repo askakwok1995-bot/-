@@ -215,3 +215,37 @@ test("handleChatRequest returns success payload for bounded answer and error JSO
   assert.equal(refusePayload.error?.code, CHAT_ERROR_CODES.BAD_REQUEST);
   assert.match(refusePayload.error?.message || "", /仅支持医药销售分析/u);
 });
+
+test("handleChatRequest explains explicit term follow-up from recent assistant history without tool-first", async () => {
+  const context = buildContext({
+    message: "月度覆盖率是什么意思？",
+    history: [
+      {
+        role: "assistant",
+        content: "在2025-01~2025-12的医院分析中，部分医院月度覆盖率不足。术语：月度覆盖率。",
+      },
+    ],
+    conversation_state: {
+      primary_dimension_code: "hospital",
+      entity_scope: { products: [], hospitals: [] },
+      source_period: "2025-01~2025-12",
+    },
+    business_snapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+  });
+
+  const response = await handleChatRequest(context, "req-term-explain", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async () => {
+      throw new Error("term explain path should not call tool-first");
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.match(payload.reply, /月度覆盖率/u);
+  assert.match(payload.reply, /2025-01~2025-12/u);
+  assert.match(payload.reply, /医院/u);
+  assert.equal(payload.model, "term_explainer");
+});

@@ -198,6 +198,80 @@ function isValidHistoryRole(value) {
   return value === "user" || value === "assistant";
 }
 
+const ASSISTANT_HISTORY_TERM_RE = /([A-Za-z0-9\u4e00-\u9fa5]{1,12}(?:覆盖率|占比|集中度|贡献|趋势))/gu;
+
+function normalizeAssistantAnchorTerm(term) {
+  let next = toText(term);
+  if (!next) {
+    return "";
+  }
+  const prefixPatterns = [/^但/u, /^存在/u, /^部分医院/u, /^部分产品/u, /^部分/u, /^整体/u, /^当前/u, /^最近/u, /^主要/u, /^核心/u];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of prefixPatterns) {
+      const trimmed = next.replace(pattern, "");
+      if (trimmed !== next && toText(trimmed)) {
+        next = toText(trimmed);
+        changed = true;
+      }
+    }
+  }
+  return next;
+}
+
+export function extractAssistantAnchorTerms(text) {
+  const content = toText(text);
+  if (!content) {
+    return [];
+  }
+  const terms = [];
+  const seen = new Set();
+  let matched = ASSISTANT_HISTORY_TERM_RE.exec(content);
+  while (matched) {
+    const term = normalizeAssistantAnchorTerm(matched[1]);
+    if (term && !seen.has(term)) {
+      seen.add(term);
+      terms.push(term);
+      if (terms.length >= 4) {
+        break;
+      }
+    }
+    matched = ASSISTANT_HISTORY_TERM_RE.exec(content);
+  }
+  return terms;
+}
+
+export function buildAssistantHistoryText(answer, replyText = "") {
+  const summary = toText(answer?.summary || replyText);
+  const fullReply = toText(replyText);
+  if (!summary && !fullReply) {
+    return "";
+  }
+  const anchorTerms = extractAssistantAnchorTerms(fullReply);
+  if (anchorTerms.length === 0) {
+    return summary || fullReply;
+  }
+  const missingTerms = anchorTerms.filter((term) => !summary.includes(term));
+  if (missingTerms.length === 0) {
+    return summary || fullReply;
+  }
+  return `${summary || fullReply} 术语：${missingTerms.join("、")}。`;
+}
+
+export function rollbackFailedUserHistory(historyItems, failedText) {
+  const safeHistory = Array.isArray(historyItems) ? historyItems.map((item) => ({ ...item })) : [];
+  const expectedText = toText(failedText);
+  if (!expectedText || safeHistory.length === 0) {
+    return safeHistory;
+  }
+  const lastItem = safeHistory[safeHistory.length - 1];
+  if (lastItem?.role === "user" && toText(lastItem?.content) === expectedText) {
+    safeHistory.pop();
+  }
+  return safeHistory;
+}
+
 export function initAiChatUi(options = {}) {
   if (initialized && window[CHAT_API_KEY]) {
     return window[CHAT_API_KEY];
@@ -447,6 +521,10 @@ export function initAiChatUi(options = {}) {
     return sessionHistory.map((item) => ({ ...item }));
   }
 
+  function rollbackPendingUserHistory(failedText) {
+    sessionHistory = rollbackFailedUserHistory(sessionHistory, failedText);
+  }
+
   function getConversationState() {
     return sessionConversationState && typeof sessionConversationState === "object"
       ? { ...sessionConversationState }
@@ -665,13 +743,14 @@ export function initAiChatUi(options = {}) {
         sessionConversationState = { ...normalized.conversationState };
       }
 
-      const assistantHistoryText = toText(normalized.answer?.summary || normalized.reply);
+      const assistantHistoryText = buildAssistantHistoryText(normalized.answer, normalized.reply);
       if (assistantHistoryText) {
         pushHistory("assistant", assistantHistoryText);
       }
       resetFailureState();
       clearStatus();
     } catch (error) {
+      rollbackPendingUserHistory(text);
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       const userErrorMessage =
         message && message !== "请稍后重试"
