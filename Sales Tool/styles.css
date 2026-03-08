@@ -306,19 +306,6 @@ body.ai-chat-open .container {
   box-shadow: 0 1px 2px rgb(12 67 96 / 12%);
 }
 
-.ai-chat-head-btn--resize {
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.ai-chat-head-btn--resize[data-mode="shrink"] .ai-chat-head-icon--expand {
-  display: none;
-}
-
-.ai-chat-head-btn--resize[data-mode="expand"] .ai-chat-head-icon--shrink {
-  display: none;
-}
-
 .ai-chat-head-btn--close {
   right: 0;
 }
@@ -2966,6 +2953,10 @@ body.auth-gated .hero-panel-brief {
   margin-top: 0;
 }
 
+.sub-card-report + .sub-card-report {
+  margin-top: 16px;
+}
+
 .sub-card summary {
   margin: -10px -10px 0;
   padding: 14px 16px;
@@ -2975,6 +2966,10 @@ body.auth-gated .hero-panel-brief {
   align-items: start;
   border-radius: 24px;
   background: linear-gradient(180deg, rgb(251 252 253 / 90%) 0%, rgb(238 244 247 / 94%) 100%);
+}
+
+.sub-card-report summary {
+  grid-template-columns: 1fr;
 }
 
 .summary-copy {
@@ -3312,7 +3307,7 @@ th {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  padding: 2px 84px 0 0;
+  padding: 2px 44px 0 0;
   margin-bottom: 12px;
 }
 
@@ -3372,47 +3367,8 @@ th {
   border-radius: 12px;
 }
 
-.ai-chat-head-btn--resize {
-  left: auto;
-  right: 44px;
-  transform: none;
-}
-
 .ai-chat-head-btn--close {
   right: 0;
-}
-
-.ai-chat-welcome {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 14px 16px;
-  border: 1px solid rgb(175 203 219 / 76%);
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgb(238 246 251 / 92%) 0%, rgb(248 252 254 / 96%) 100%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
-}
-
-.ai-chat-welcome-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ai-chat-welcome-title {
-  margin: 0;
-  color: #113041;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.ai-chat-welcome-desc {
-  margin: 0;
-  color: #5f7688;
-  font-size: 13px;
-  line-height: 1.72;
 }
 
 .ai-chat-message--system-intro {
@@ -3768,10 +3724,6 @@ body.ai-chat-open .ai-chat-fab {
 
   .ai-chat-head-btn {
     top: 0;
-  }
-
-  .ai-chat-head-btn--resize {
-    right: 40px;
   }
 
   .ai-chat-title {

@@ -281,7 +281,6 @@ export function initAiChatUi(options = {}) {
     fab: document.getElementById("ai-chat-fab"),
     backdrop: document.getElementById("ai-chat-backdrop"),
     sheet: document.getElementById("ai-chat-sheet"),
-    resizeBtn: document.getElementById("ai-chat-resize-btn"),
     closeBtn: document.getElementById("ai-chat-close-btn"),
     messages: document.getElementById("ai-chat-messages"),
     promptPanel: document.getElementById("ai-chat-quick-prompt-panel"),
@@ -297,7 +296,6 @@ export function initAiChatUi(options = {}) {
     fab: dom.fab,
     backdrop: dom.backdrop,
     sheet: dom.sheet,
-    resizeBtn: dom.resizeBtn,
     closeBtn: dom.closeBtn,
     messages: dom.messages,
     promptPanel: dom.promptPanel,
@@ -340,6 +338,10 @@ export function initAiChatUi(options = {}) {
   }
 
   function updateResizeControl() {
+    if (!(dom.resizeBtn instanceof HTMLElement)) {
+      return;
+    }
+
     if (state === CHAT_STATES.EXPANDED) {
       dom.resizeBtn.setAttribute("data-mode", "shrink");
       dom.resizeBtn.setAttribute("aria-label", "缩小对话窗口");
@@ -806,10 +808,12 @@ export function initAiChatUi(options = {}) {
     close();
   });
 
-  dom.resizeBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSize();
-  });
+  if (dom.resizeBtn instanceof HTMLElement) {
+    dom.resizeBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleSize();
+    });
+  }
 
   dom.closeBtn.addEventListener("click", (event) => {
     event.stopPropagation();
