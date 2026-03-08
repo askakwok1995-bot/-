@@ -284,11 +284,14 @@ export function initAiChatUi(options = {}) {
     resizeBtn: document.getElementById("ai-chat-resize-btn"),
     closeBtn: document.getElementById("ai-chat-close-btn"),
     messages: document.getElementById("ai-chat-messages"),
+    promptPanel: document.getElementById("ai-chat-quick-prompt-panel"),
+    promptToggleBtn: document.getElementById("ai-chat-prompt-toggle-btn"),
     form: document.getElementById("ai-chat-form"),
     input: document.getElementById("ai-chat-input"),
     sendBtn: document.getElementById("ai-chat-send"),
     statusEl: document.getElementById("ai-chat-status"),
   };
+  dom.promptButtons = Array.from(document.querySelectorAll("[data-ai-chat-prompt]"));
 
   const required = Object.entries({
     fab: dom.fab,
@@ -297,6 +300,8 @@ export function initAiChatUi(options = {}) {
     resizeBtn: dom.resizeBtn,
     closeBtn: dom.closeBtn,
     messages: dom.messages,
+    promptPanel: dom.promptPanel,
+    promptToggleBtn: dom.promptToggleBtn,
     form: dom.form,
     input: dom.input,
     sendBtn: dom.sendBtn,
@@ -345,6 +350,13 @@ export function initAiChatUi(options = {}) {
     dom.resizeBtn.setAttribute("aria-label", "放大对话窗口");
   }
 
+  function setPromptPanelOpen(isOpen) {
+    const nextOpen = Boolean(isOpen);
+    dom.promptPanel.hidden = !nextOpen;
+    dom.promptToggleBtn.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    dom.promptToggleBtn.classList.toggle("ai-chat-prompt-toggle-btn--active", nextOpen);
+  }
+
   function applyState(nextState) {
     if (!isValidState(nextState)) {
       return;
@@ -353,6 +365,7 @@ export function initAiChatUi(options = {}) {
     const prevState = state;
     if (prevState === CHAT_STATES.CLOSED && nextState !== CHAT_STATES.CLOSED) {
       refreshSystemIntro();
+      setPromptPanelOpen(true);
     }
 
     state = nextState;
@@ -692,19 +705,24 @@ export function initAiChatUi(options = {}) {
   async function handleSubmit(event) {
     event.preventDefault();
 
+    await submitText(dom.input.value);
+  }
+
+  async function submitText(rawText) {
+    const text = toText(rawText);
+
     if (isInCooldown()) {
       renderCooldownStatus();
-      return;
-    }
-
-    const text = toText(dom.input.value);
-    if (!text) {
-      return;
+      return false;
     }
 
     if (typeof sendHandler !== "function") {
       showErrorStatus(serviceUnavailableStatus);
-      return;
+      return false;
+    }
+
+    if (!text) {
+      return false;
     }
 
     pushHistory("user", text);
@@ -776,6 +794,8 @@ export function initAiChatUi(options = {}) {
       }
       dom.input.focus();
     }
+
+    return true;
   }
 
   dom.fab.addEventListener("click", () => {
@@ -796,12 +816,32 @@ export function initAiChatUi(options = {}) {
     close();
   });
 
+  dom.promptToggleBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setPromptPanelOpen(dom.promptPanel.hidden);
+  });
+
   dom.sheet.addEventListener("click", (event) => {
     event.stopPropagation();
   });
 
   dom.form.addEventListener("submit", (event) => {
     void handleSubmit(event);
+  });
+
+  dom.promptButtons.forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.addEventListener("click", () => {
+      const prompt = toText(button.dataset.aiChatPrompt);
+      if (!prompt) {
+        return;
+      }
+      dom.input.value = prompt;
+      setPromptPanelOpen(false);
+      void submitText(prompt);
+    });
   });
 
   const reportStartInput = document.getElementById(REPORT_START_MONTH_INPUT_ID);
@@ -841,6 +881,7 @@ export function initAiChatUi(options = {}) {
   initialized = true;
   updateComposerState();
   refreshSystemIntro();
+  setPromptPanelOpen(true);
 
   if (isValidState(options.initialState) && options.initialState !== CHAT_STATES.CLOSED) {
     applyState(options.initialState);

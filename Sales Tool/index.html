@@ -787,28 +787,41 @@
       </header>
       <section class="ai-chat-welcome" aria-label="AI 助手使用提示">
         <div class="ai-chat-welcome-copy">
-          <p class="ai-chat-welcome-title">你可以这样提问</p>
-          <p class="ai-chat-welcome-desc">先用一句话说明你想看什么，AI 会结合当前区间帮你概括重点、找异常并给出下一步建议。</p>
-        </div>
-        <div class="ai-chat-prompt-grid" aria-hidden="true">
-          <span class="ai-chat-prompt-chip">本期销售趋势怎么样？</span>
-          <span class="ai-chat-prompt-chip">哪个产品拉动最大？</span>
-          <span class="ai-chat-prompt-chip">哪些医院波动明显？</span>
-          <span class="ai-chat-prompt-chip">目标达成还差多少？</span>
+          <p class="ai-chat-welcome-title">先说你想看什么，AI 会帮你提炼重点</p>
+          <p class="ai-chat-welcome-desc">适合用来快速总结趋势、找波动、看产品贡献，或者把当前结果整理成一段更好汇报的话。</p>
         </div>
       </section>
       <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"></div>
-      <form id="ai-chat-form" class="ai-chat-composer" novalidate>
-        <input
-          id="ai-chat-input"
-          class="ai-chat-input"
-          type="text"
-          aria-label="输入消息"
-          placeholder="请输入你的问题，例如：本月销售趋势如何？"
-          autocomplete="off"
-        />
-        <button id="ai-chat-send" class="ai-chat-send-btn" type="submit" disabled>发送</button>
-      </form>
+      <div class="ai-chat-composer-stack">
+        <section id="ai-chat-quick-prompt-panel" class="ai-chat-quick-prompt-panel" aria-label="示例问题">
+          <div class="ai-chat-quick-prompt-list">
+            <button class="ai-chat-quick-prompt-btn" type="button" data-ai-chat-prompt="本期销售趋势怎么样？">本期销售趋势怎么样？</button>
+            <button class="ai-chat-quick-prompt-btn" type="button" data-ai-chat-prompt="哪个产品拉动最大？">哪个产品拉动最大？</button>
+            <button class="ai-chat-quick-prompt-btn" type="button" data-ai-chat-prompt="哪些医院波动明显？">哪些医院波动明显？</button>
+            <button class="ai-chat-quick-prompt-btn" type="button" data-ai-chat-prompt="目标达成还差多少？">目标达成还差多少？</button>
+          </div>
+        </section>
+        <form id="ai-chat-form" class="ai-chat-composer" novalidate>
+          <button
+            id="ai-chat-prompt-toggle-btn"
+            class="ai-chat-prompt-toggle-btn secondary-btn"
+            type="button"
+            aria-expanded="true"
+            aria-controls="ai-chat-quick-prompt-panel"
+          >
+            示例问题
+          </button>
+          <input
+            id="ai-chat-input"
+            class="ai-chat-input"
+            type="text"
+            aria-label="输入消息"
+            placeholder="请输入你的问题，例如：本月销售趋势如何？"
+            autocomplete="off"
+          />
+          <button id="ai-chat-send" class="ai-chat-send-btn" type="submit" disabled>发送</button>
+        </form>
+      </div>
       <p class="ai-chat-footnote">不知道怎么开口时，可以直接问“请帮我总结当前销售表现”。</p>
       <p id="ai-chat-status" class="ai-chat-status"></p>
     </section>
