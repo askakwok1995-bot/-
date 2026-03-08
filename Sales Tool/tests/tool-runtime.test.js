@@ -28,13 +28,14 @@ function createQuestionJudgment(overrides = {}) {
 test("tool registry exposes expanded controlled declarations", () => {
   const declarations = buildToolDeclarations();
 
-  assert.equal(declarations.length, 19);
+  assert.equal(declarations.length, 20);
   assert.deepEqual(
     declarations.map((item) => item.name),
     [
       "get_sales_overview_brief",
       "get_sales_trend_brief",
       "get_dimension_overview_brief",
+      "get_dimension_report_brief",
       "scope_aggregate",
       "scope_timeseries",
       "scope_breakdown",
@@ -174,6 +175,124 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
+  assert.deepEqual(result.missingEvidenceTypes, []);
+});
+
+test("runToolFirstChat prefers dimension report macro for product report questions", async () => {
+  const toolCalls = [];
+  let firstRoundDeclarationNames = [];
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "生成产品分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-dimension-report",
+    deps: {
+      requestGeminiGenerateContent: async (payload) => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          firstRoundDeclarationNames = Array.isArray(payload?.tools?.[0]?.functionDeclarations)
+            ? payload.tools[0].functionDeclarations.map((item) => item?.name)
+            : [];
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"],
+                            requested_views: ["get_dimension_report_brief"],
+                            synthesis_expectation: "先总结产品整体表现，再补趋势、结构和风险提示。",
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_report_brief",
+                                args: { dimension: "product", limit: 4 },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内产品销售集中在头部品种，Botox50 贡献领先，整体趋势延续增长。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_product_report_brief"],
+            summary: {
+              overview_dimension: "product",
+              top_entities: ["Botox50", "Botox100"],
+              bottom_entities: ["Juvederm"],
+              trend_signals: ["最近月产品销售额较上月上升。"],
+              risk_alerts: ["产品集中度较高。"],
+              opportunity_hints: ["头部产品仍有增长空间。"],
+              concentration_hint: "37.68%",
+            },
+            rows: [{ row_label: "趋势:2025-03", sales_amount: "12.00万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_dimension_report",
+            coverage_code: "full",
+            analysis_view: "product_report_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.deepEqual(firstRoundDeclarationNames, ["submit_analysis_plan", "get_dimension_report_brief"]);
+  assert.deepEqual(toolCalls, ["get_dimension_report_brief"]);
+  assert.deepEqual(result.plannerState?.requested_views, ["get_dimension_report_brief"]);
+  assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"]);
   assert.deepEqual(result.missingEvidenceTypes, []);
 });
 
@@ -448,7 +567,7 @@ test("runToolFirstChat falls back when planner requests more tools than max call
 test("runToolFirstChat downgrades report answer to bounded when required evidence is incomplete", async () => {
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
-    message: "给我产品分析报告",
+    message: "给我 Botox50 的产品分析报告",
     historyWindow: [],
     businessSnapshot: {
       analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
@@ -913,7 +1032,7 @@ test("runToolFirstChat keeps planner required_evidence for report when explicitl
 test("runToolFirstChat falls back to question_type default evidence only when planner required_evidence is empty", async () => {
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
-    message: "给我产品分析报告",
+    message: "给我 Botox50 的产品分析报告",
     historyWindow: [],
     businessSnapshot: {
       analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },

@@ -2,6 +2,7 @@ export const TOOL_NAMES = Object.freeze({
   GET_SALES_OVERVIEW_BRIEF: "get_sales_overview_brief",
   GET_SALES_TREND_BRIEF: "get_sales_trend_brief",
   GET_DIMENSION_OVERVIEW_BRIEF: "get_dimension_overview_brief",
+  GET_DIMENSION_REPORT_BRIEF: "get_dimension_report_brief",
   SCOPE_AGGREGATE: "scope_aggregate",
   SCOPE_TIMESERIES: "scope_timeseries",
   SCOPE_BREAKDOWN: "scope_breakdown",
@@ -69,6 +70,21 @@ export function buildToolDeclarations() {
     {
       name: TOOL_NAMES.GET_DIMENSION_OVERVIEW_BRIEF,
       description: "面向产品或医院的泛表现问题，返回该维度的整体表现、Top/Bottom与结构概览。",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dimension: stringEnumSchema("分析维度，只能是 product 或 hospital。", ["product", "hospital"]),
+          limit: {
+            type: "NUMBER",
+            description: "可选。希望返回的关键条目条数上限，后端会按安全上限裁剪。",
+          },
+        },
+        required: ["dimension"],
+      },
+    },
+    {
+      name: TOOL_NAMES.GET_DIMENSION_REPORT_BRIEF,
+      description: "面向产品或医院报告类问题，返回该维度的整体概览、Top/Bottom、结构集中度、趋势和风险机会摘要。",
       parameters: {
         type: "OBJECT",
         properties: {

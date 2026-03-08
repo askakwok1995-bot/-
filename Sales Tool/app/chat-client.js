@@ -378,16 +378,13 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
       throw new Error(normalizeChatApiError(response, payload));
     }
 
-    const reply = trimString(payload?.reply || payload?.surfaceReply);
+    const reply = trimString(payload?.reply);
     if (!reply) {
       throw new Error("聊天服务未返回有效回复，请稍后重试。");
     }
 
     return {
       reply,
-      surfaceReply: reply,
-      businessIntent: trimString(payload?.businessIntent) || "chat",
-      mode: trimString(payload?.mode) || "auto",
       answer: payload?.answer && typeof payload.answer === "object" ? payload.answer : null,
       model: trimString(payload?.model),
       requestId: trimString(payload?.requestId || response.headers.get("x-request-id")),

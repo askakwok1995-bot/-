@@ -48,27 +48,10 @@ test("handleChatRequest returns structured JSON error and requestId when normali
   }
 });
 
-test("handleChatRequest rejects removed chat modes", async () => {
-  for (const mode of ["briefing", "diagnosis", "action-plan"]) {
-    const response = await handleChatRequest(
-      buildContext({
-        message: "这个情况如何",
-        mode,
-      }),
-      `req-invalid-mode-${mode}`,
-      {
-        verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
-      },
-    );
-    const payload = await response.json();
-    assert.equal(response.status, 400);
-    assert.equal(payload.error?.code, CHAT_ERROR_CODES.BAD_REQUEST);
-  }
-});
-
 test("handleChatRequest returns tool-first success with minimal payload", async () => {
   const context = buildContext({
     message: "这个月整体怎么样",
+    mode: "briefing",
     history: [{ role: "user", content: "上个月表现如何" }],
     conversation_state: {
       primary_dimension_code: "overall",
@@ -133,8 +116,6 @@ test("handleChatRequest returns tool-first success with minimal payload", async 
   assert.equal(payload.answer.conversation_state?.source_period, "2025-01~2025-12");
   assert.equal("requested_time_window" in (payload.answer.conversation_state || {}), false);
   assert.equal("mode" in payload, false);
-  assert.equal("businessIntent" in payload, false);
-  assert.equal("surfaceReply" in payload, false);
   assert.equal("output_shape" in payload.answer, false);
 });
 

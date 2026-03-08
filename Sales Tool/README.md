@@ -284,7 +284,7 @@ window.__APP_CONFIG__ = {
 
 `POST /api/chat` 请求体新增可选字段 `business_snapshot`（向后兼容）：
 
-- `message/history` 兼容保留；`mode` 仅支持 `auto` 或省略；
+- `message/history` 兼容保留；当前输入仅使用 `message / history / business_snapshot / conversation_state`；
 - `business_snapshot` 为业务输入层，首版采用“8类骨架完整、5类必填、3类可空”的最小摘要策略。
 
 骨架字段（snake_case）：
@@ -335,438 +335,210 @@ window.__APP_CONFIG__ = {
 - 不新增复杂风险识别与机会识别逻辑；
 - 仅提供最小业务摘要供模型自然回答引用。
 
-### 11.4 问题判定层（Phase 2.1）
-
-后端已新增轻量前置分类 `questionJudgment`（仅请求作用域内可访问），用于后续数据可用性层和路由层复用。
-
-首版固定输出 3 项（code + label）：
-
-- `primary_dimension`：`overall|product|hospital|trend|risk_opportunity|other`
-- `granularity`：`summary|detail`
-- `relevance`：`relevant|irrelevant`
-
-判定规则：
-
-- 主维度优先级：`product > hospital > trend > risk_opportunity > overall > other`
-- 细度：命中“具体/分别/明细/各月/每月/top/排名/列出来/详细拆解”等信号判为 `detail`，否则默认 `summary`
-- 相关性：仅拦“明显无关”，判不稳默认 `relevant`
-- 产品维度固定关键词已扩充：`产品/品种/单品/规格/药品/药物/用药/品规/剂型` 等；其中“药”单字有护栏，需与分析动作词共现（如“哪个/哪些/表现/贡献/销量/销售/分析/对比/推进/重点”）才作为产品高置信信号。
-- 医院维度固定关键词已扩充：`医院/终端/门诊/机构/诊所` 等，支持非“医院”字面问法的稳定命中。
-- 命名产品问法支持“精确+归一化匹配”产品目录：当消息直接命中已录入产品名时，可在请求内将有效主维度提升到 `product`（不回写外部响应）。
-- 命名医院问法支持“全称/简称提及”识别：当消息中提及具体医院（含简称）时，可在请求内将有效主维度提升到 `hospital`（不回写外部响应）；简称仅在唯一匹配单医院时生效。
-
-边界（本阶段）：
-
-- 不写响应体
-- 不写入 prompt
-- 不持久化
-- 不做路由/补调/多轮纠偏
+### 11.4 当前聊天主链
 
-验收样例：
+当前聊天后端只保留一条主链：
 
-- “这个月整体怎么样” -> `overall / summary / relevant`
-- “重点做哪个产品” -> `product / summary / relevant`
-- “哪家医院最重要” -> `hospital / summary / relevant`
-- “近三个月趋势怎么样” -> `trend / summary / relevant`
-- “当前最大的风险是什么” -> `risk_opportunity / summary / relevant`
-- “把近三个月每个月数据分别列出来” -> `trend / detail / relevant`
-- “今天天气如何” -> `other / summary / irrelevant`
-- “帮我看看这个情况” -> `overall / summary / relevant`
-- “接下来怎么推进” -> `risk_opportunity / summary / relevant`
+`鉴权与请求校验 -> planner-enhanced tool-first -> Gemini 基于工具结果生成文本 -> 返回 reply + answer`
 
-### 11.5 数据可用性层（Phase 2.2）
+这里的 `planner-enhanced tool-first` 指：
 
-后端已新增 `dataAvailability`（仅请求作用域内可访问），基于 `business_snapshot + questionJudgment` 做 4 项内部判断：
+- 模型先提交一份分析计划
+- 运行时校验这份计划是否合法
+- 合法后再按计划调用受控工具
+- 工具返回结构化事实后，再由模型综合生成自然语言回答
 
-- `has_business_data`：`available|unavailable`
-- `dimension_availability`：`available|partial|unavailable`
-- `answer_depth`：`overall|focused|detailed`
-- `gap_hint_needed`：`yes|no`
+所有分析都只基于当前 `business_snapshot.analysis_range`，也就是当前页面选中的报表区间。
 
-本阶段边界：
+### 11.5 请求输入
 
-- 仅做规则判断，不引入模型参与。
-- 不参与最终回答生成，不对外返回。
-- 不注入模型输入（prompt），不持久化。
-
-关键语义锁定：
+`POST /api/chat` 当前只使用这四类输入：
 
-- `analysis_range` 不参与“是否有业务数据”判断。
-- `hospital_performance=[]` 在本阶段默认视为医院维度无支撑。
-- 有效值语义：`"0"`、`"0.00%"`、`"0盒"`按有效值处理；缺失值仅使用明确占位符（如 `-- / unknown / 空字符串`），不使用 `"0"` 表示缺失。
-- `overall` 维度判定以 `performance_overview` 为主支撑：
-  - `performance_overview` 有效，且 `key_business_signals` 或 `recent_trends` 任一有效 -> `available`
-  - `performance_overview` 仅自身有效 -> `partial`
-  - `performance_overview` 无效但其他整体支撑存在 -> `partial`
-- `risk_opportunity` 若仅由 `key_business_signals` 支撑而判为 `partial`，语义是“可做泛判断，不可视为专门风险/机会依据”。
-- 医院维度在 `detail` 且命中“逐月明细请求”时，`answer_depth=detailed` 需依赖 `hospital_performance[*].monthly_points` 的有效覆盖；仅有医院汇总行不再直接判为 `detailed`。
-- 产品维度在命中“全产品问法”时，`dimension_availability` 按覆盖度判定：
-  - `product_coverage_code=full` -> `available`
-  - `product_coverage_code=partial` -> `partial`
-  - `product_coverage_code=none` -> `unavailable`
-- 产品维度命中“命名产品问法”（精确+归一化匹配产品目录）时，`dimension_availability` 按命名覆盖度判定：
-  - `product_named_support=full` -> `available`
-  - `product_named_support=partial` -> `partial`
-  - `product_named_support=none` -> `unavailable`
-- 医院维度命中“命名医院问法”时，`dimension_availability` 按命名覆盖度判定：
-  - `hospital_named_support=full` -> `available`
-  - `hospital_named_support=partial` -> `partial`
-  - `hospital_named_support=none` -> `unavailable`
-- `detail_request_mode` 扩展为：`hospital_monthly|product_full|product_hospital|product_named|hospital_named|generic`；命中交叉/命名场景时会输出 `product_hospital_support / product_named_support / hospital_named_support`（`full|partial|none`）用于内部观测。
-
-与会话状态层关系（本阶段锁定）：
-
-- `dataAvailability` 仍仅基于当前轮 `questionJudgment + business_snapshot` 计算。
-- 本阶段 `dataAvailability` 不消费 `sessionState`；会话承接对数据可用性层的影响留待后续阶段接入。
-
-### 11.6 会话状态层（Phase 2.3）
-
-后端新增 `sessionState`（仅请求作用域内可访问），用于会话承接/切题状态判断。固定 4 个布尔字段：
-
-- `is_followup`
-- `inherit_primary_dimension`
-- `inherit_scope`
-- `topic_shift_detected`
-
-输入与窗口：
-
-- 输入仅使用当前 `message` + `history`（最近窗口）。
-- 历史窗口只保留历史内容，不包含当前 `message`。
-
-关键约束：
-
-- `topic_shift_detected=true` 时，仅强制：
-  - `inherit_primary_dimension=false`
-  - `inherit_scope=false`
-- 允许“承接式切题”：`is_followup=true` 与 `topic_shift_detected=true` 可并存。
-- `is_followup=false` 时，继承字段均为 `false`。
-
-判定边界（首版）：
+- `message`
+- `history`
+- `business_snapshot`
+- `conversation_state`
 
-- 仅规则/启发式，不引入模型参与判定。
-- 短追问信号采用“短句精确承接”判定（如“为什么/具体呢/那医院呢/那产品呢/那趋势呢”），避免“重点做哪个产品”这类长句被关键词误判为 followup。
-- 会话层显式维度信号与主判定词表保持一致（含“药品/药物/用药/品规/剂型”）；“药”单字同样走共现护栏，不单独触发产品维度切换。
-- 会话层医院显式维度信号已补充 `门诊/机构/诊所`，与主判定保持一致，避免多轮会话中维度漂移。
-- `risk_opportunity` 显式维度信号仅接受高置信表达（如“最大风险/最大机会/关键问题/突破口/最值得关注”）；单独“风险/机会”不触发显式维度切换。
-- 范围改口径优先视为 `scope override`，不默认等价于 `topic_shift_detected=true`。
-
-与问题判定层关系（本阶段锁定）：
-
-- 本阶段 `sessionState` 只产出承接状态，不直接回写或修正 `questionJudgment`。
-- `sessionState` 与 `questionJudgment` 的联合消费留待后续阶段接入。
-
-### 11.7 路由层（Phase 2.4）
-
-后端新增 `routeDecision`（仅请求作用域内可访问），在调用 Gemini 前基于：
-
-- `questionJudgment`（Phase 2.1）
-- `dataAvailability`（Phase 2.2）
-- `sessionState`（Phase 2.3）
-
-输出 4 类业务路由结果之一：
-
-- `direct_answer`（直接回答）
-- `bounded_answer`（带边界回答）
-- `refuse`（拒绝/收住）
-- `need_more_data`（进入后续补强）
-
-优先级顺序（固定）：
-
-- `refuse -> need_more_data -> bounded_answer -> direct_answer`
-
-判定要点（首版锁定）：
-
-- `need_more_data` 若命中多个条件，会先完整收集全部 `reason_codes`，再一次性返回（不只保留首个原因）。
-- `need_more_data` 是内部路由状态，用于进入后续按需调取/补强链路，不是最终用户可见回复类型。
-- 命中“全产品问法”且当前仅 `partial` 覆盖时，会进入 `need_more_data`，并记录 `reason_code=product_full_scope_insufficient`。
-- 命中“命名产品问法”且 `product_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=product_named_scope_insufficient`。
-- 命中“产品×医院交叉问法”且 `product_hospital_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=product_hospital_scope_insufficient`。
-- 当 `detail_request_mode=product_hospital` 时，路由判定主看 `product_hospital_support`，不再以 `product_named_support` 触发 `need_more_data`（两者判据互斥）。
-- 命中“命名医院问法”且 `hospital_named_support!=full` 时，会进入 `need_more_data`，并记录 `reason_code=hospital_named_scope_insufficient`。
-- 全产品问法关键词已补充：`所有药品/全部药品/所有药/全部药/全药品清单`，与“所有产品/全部产品”同级处理。
-- 产品模式优先级固定为：`product_full > product_named > generic`。
-- 命名/交叉维度覆盖优先级固定为：`product_full > product_hospital > product_named > hospital_named > generic`。
-- 命名产品匹配模式为“精确优先 + 产品族回退”：`exact|family|none`。例如问 `botox` 时可回退命中 `Botox50/Botox100` 同族产品集合。
-- `direct_answer` 仅在 `relevance=relevant`、`dimension_availability=available`、`gap_hint_needed=no` 且未命中更高优先级时触发。
-- `sessionState` 当前仅在请求作用域内保留并用于观测，路由规则首版不消费其分支影响（后续阶段再接入）。
-
-边界（本阶段）：
-
-- 路由层只负责业务路由决策。
-- 不执行按需调取动作（仅产出内部路由状态）。
-- 不做最终输出分支动作。
-- 不处理 Gemini 上游失败、超时、空回复、格式异常等技术兜底。
-- 技术失败继续由后续链路的容错/质量控制逻辑处理。
-- `routeDecision` 不注入 prompt、不写响应体、不持久化。
+当前不再使用任何模式切换字段。
 
-### 11.8 按需调取层（Phase 2.5）
+`conversation_state` 当前主要保留：
 
-后端新增 `need_more_data` 的内部补强闭环（仅请求作用域内）：
+- `primary_dimension_code`：主分析维度代码
+- `entity_scope`：实体范围
+- `source_period`：来源时间段
 
-1. 第一段先按既有顺序完成内部判断：  
-`questionJudgment -> normalizedBusinessSnapshot -> historyWindow -> sessionState -> dataAvailability -> routeDecision`
-2. 仅当 `routeDecision=need_more_data` 时，触发一次后端自动补强（同一请求最多一次）。  
-3. 补强目标仅限当前问题主维度（`other` 按 `overall` 兜底），不是补全整份 `business_snapshot`。  
-4. 补强窗口绑定 `analysis_range`，并应用最大 24 个月上限。  
-5. `analysis_range` 无效时，本次补强跳过；随后按未补强结果继续重判。  
-6. 补强后必须重跑 `dataAvailability + routeDecision`。  
-7. 若重判后仍不足（仍为 `need_more_data`），最终内部收敛为 `bounded_answer`，不做第二次补强。
-8. 医院维度在逐月明细场景会按报表区间生成“逐月 TopN”增强片段：在现有 `hospital_performance` 项内扩展 `monthly_points / monthly_coverage_ratio / monthly_coverage_code`，不新增顶层 schema。
-9. 医院维度命中“命名医院问法”时，会优先按命名医院集合补强；简称采用“保守唯一匹配”，多候选不强行绑定。
-10. 命中“产品×医院交叉问法”（例如“某产品在哪些医院贡献销量”）时，会优先走医院向补强，并在当前分析窗口内先按命名产品过滤记录，再聚合医院贡献。
-11. 产品维度命中“全产品问法”时，会优先基于产品主数据补齐无记录产品（按 `0` 值呈现），并更新 `performance_overview.product_catalog_count_value/product_snapshot_count_value/product_coverage_code`。
-12. 产品维度命中“命名产品问法”时，会优先按命名产品集合补强（最多 10 个）；无记录命名产品按 `0` 值呈现并使用中性变化码，不再泛化为“数据不足”中断。
-13. 产品全量补强受安全上限控制（首版 `50` 条）；超过上限时覆盖标记为 `partial`，后续由 `bounded_answer` 收敛表达边界。
+### 11.6 状态机与规划阶段
 
-本阶段边界：
+运行时通过一份单一状态机 `systemInstruction` 约束模型行为。
 
-- 不改对外 API 契约，不改前端请求协议。
-- 不改 prompt 主链结构，但允许将输入快照替换为补强后的 `business_snapshot`。
-- 不新增用户可见字段，不输出内部补强诊断信息。
-- 不做多轮代理或无限递归。
-
-### 11.9 输出层（Phase 2.6）
+模型分三阶段工作：
 
-输出层仅处理 3 类最终用户可见回复：
+1. 首轮规划阶段  
+   必须先调用 `submit_analysis_plan`，不能直接输出用户可见文本。
+2. 深挖取数阶段  
+   当证据不足且未达到调用上限时，继续调用工具补齐事实。
+3. 最终总结阶段  
+   停止调用工具，综合全部结果输出最终自然语言回答。
 
-- `direct_answer`
-- `bounded_answer`
-- `refuse`
+`submit_analysis_plan` 当前至少要给出：
 
-说明：
+- `relevance`
+- `primary_dimension`
+- `granularity`
+- `route_intent`
+- `question_type`
+- `required_evidence`
+- `requested_views`
+- `required_tool_call_min`
 
-- `need_more_data` 已在 Phase 2.5 内部消化，不属于用户可见输出类型。
-- 输出层输入必须使用 Phase 2.5 完成后的最终内部结果（最终 `routeDecision + dataAvailability`）。
-- 输出层不重新参与数据判断与补强决策。
-- 职责边界：`normalizeOutputReply` 仅做文本归一化；结构性修复（边界句、refuse 示例、内部词清理、重复裁剪）统一由 Phase 2.8 QC 负责。
+如果 planner 不合法，运行时会返回 `accepted=false`，并要求模型重新提交；不允许跳过重规划直接调工具。
 
-三类输出约束：
+### 11.7 首轮宏工具门控
 
-1. `direct_answer`  
-先给业务结论，再给依据/分析，必要时补建议；不暴露内部流程与状态名。  
-2. `bounded_answer`  
-固定顺序为“当前结论 -> 边界说明 -> 可继续深入方向”；必须先结论后边界，不要求用户手动补数据。边界句需命中至少一个提示词：`在当前范围内 / 基于现有信息 / 目前只能 / 暂时无法 / 信息有限 / 口径有限`。  
-3. `refuse`  
-优先走固定模板回复（不强依赖 Gemini），简洁收住并给 2~3 个可问示例；示例必须是医药销售分析可答问题，且不包含真实客户姓名（可使用代号/产品名/医院代称）。
-4. 医院逐月明细（hospital + detail + 逐月请求）  
-`direct_answer` 优先按月份组织医院表现要点；`bounded_answer` 先给逐月可得结论，再说明当前逐月覆盖边界。
-5. 命名医院问法（hospital + named scope）  
-`direct_answer` 优先逐条覆盖被点名医院的结论与依据；`bounded_answer` 先给结论，再说明当前命名医院覆盖边界（不暴露内部过程词）。
-6. 全产品问法（product + full scope）  
-`direct_answer` 优先覆盖当前可见产品范围并给出关键贡献；`bounded_answer` 需说明当前产品覆盖范围（如受上限或口径影响）。
-7. 命名产品问法（product + named scope）  
-`direct_answer` 优先逐条覆盖被点名产品结论与依据；若某命名产品无销售记录，使用“本期无销售记录/贡献为0”的业务表达。`bounded_answer` 先结论后边界，说明当前命名产品覆盖范围。
-8. 产品×医院交叉问法（product + hospital scope）  
-`direct_answer` 优先回答“该产品由哪些医院贡献、贡献结构如何”；当可见医院不少于3家时，至少列出Top3医院贡献点。`bounded_answer` 先给可得医院贡献结论，再说明当前医院覆盖范围边界。
-
-系统与模型分工：
-
-- 系统负责最终输出类型与结构约束。
-- 模型负责 `direct_answer / bounded_answer` 的自然表达。
-- `refuse` 可由后端模板直接输出。
-
-Prompt 接入方式：
-
-- 输出策略指令通过 `systemInstruction` 追加段落（append）接入，位置在角色定义 `systemInstruction` 之后，优先级高于 user prompt。
-- 输出策略不得放入 user prompt。
-- 不覆盖已有角色定义、业务边界与“不编造数据”约束。
-
-边界（本阶段）：
-
-- 不改对外响应结构。
-- 不新增前端协议字段。
-- 不改 UI。
-- 不负责技术失败兜底（超时、空回复、上游异常仍走现有错误链路）。
-
-### 11.10 端到端回归与最小观测（Phase 2.7）
-
-目标：
-
-- 验证 Phase 2.1~2.6 全链路顺序：判定 -> 可用性 -> 会话状态 -> 路由 -> 自动补强（可触发）-> 输出层。
-- 保证 `need_more_data` 不成为最终用户可见输出类型。
-- 在不改对外契约前提下提供最小内部 trace 便于排查。
-
-Trace 规则（仅 server log）：
-
-- 仅在 `DEBUG_TRACE=1` 或 `NODE_ENV!=production` 时输出。
-- 仅打印 code/boolean 级字段：`requestId/questionJudgment/dataAvailability(含detail_request_mode/hospital_monthly_support/product_hospital_support/hospital_named_support/product_full_support/product_named_support/product_named_match_mode/requested_product_count_value)/sessionState/routeDecision/retrievalState/outputContext/toolRouteMode/toolRouteType/toolRouteName/toolRouteFallbackReason/forced_bounded/qc(applied+action+reason_codes)`。
-- 不打印 token、不打印业务明细、不打印原始 records。
-- 不打印 `message` 原文、不打印 `history` 原文。
-
-Trace 输出时机：
-
-- 仅在 Phase 2.5 重判与收敛完成，且 Phase 2.6 `outputContext` 生成完成后，输出一次最终态 trace。
-
-最终路由不变量：
-
-- 正常收敛位置在 Phase 2.5（重判后仍 `need_more_data` 时收敛到 `bounded_answer`）。
-- 输出层前增加防御性保护：若最终仍为 `need_more_data`，强制收敛到 `bounded_answer`。
-- `forced_bounded=true` 用于标记该兜底；正常情况下此标记应极少出现（Phase 2.5 已应完成收敛）。
-
-`retrievalState` 语义：
-
-- `triggered=true` 表示进入补强入口函数，不等于补强成功。
-- `success=true` 表示补强已产出增强片段。
-
-最小 E2E 用例：
-
-1. 无关问题（天气/星座）  
-预期：`route=refuse`，输出拒绝模板，不触发补强。
-2. 整体摘要（这个月整体怎么样）  
-预期：`route=direct_answer` 或 `bounded_answer`；不出现内部过程词。
-3. 产品明细（把 Top 产品列出来并说原因）  
-预期：可触发补强；最终仅 `direct/bounded`；不出现最终 `need_more_data`。
-4. 医院问题（哪家医院最重要）  
-预期：医院维度不足时触发补强；最终 `direct/bounded`。
-5. 趋势问题（近几个月趋势如何）  
-预期：趋势维度不足时触发补强；最终 `direct/bounded`。
-6. 承接切题（上轮产品，本轮“那医院呢？”）  
-预期：`is_followup=true` 且 `topic_shift_detected=true`，继承项为 `false`，路由按医院维度判定。
-
-窗口绑定专项验收：
-
-- 报表区间 `>24` 个月时，`retrievalState.window_capped=true`。
-- 报表区间 `<=24` 个月时，`retrievalState.window_capped=false`。
-
-### 11.11 本地与线上说明
-
-- `npm run dev` 只启动静态站点，不提供 `/api/chat`。
-- 聊天功能需在 Cloudflare Pages Functions 环境验证。
-
-### 11.12 最小接口验收（curl）
-
-```bash
-curl -sS -X POST "https://<你的-pages-域名>/api/chat" \
-  -H "Authorization: Bearer <SUPABASE_ACCESS_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message":"请基于当前业务快照给出本月重点推进建议。",
-    "business_snapshot":{
-      "analysis_range":{"start_month":"2026-01","end_month":"2026-03","period":"2026-01~2026-03"},
-      "performance_overview":{
-        "sales_amount":"128.50万元",
-        "sales_amount_value":1285000,
-        "amount_achievement":"92.40%",
-        "amount_achievement_ratio":0.924,
-        "latest_key_change":"最近月金额环比 +5.20%",
-        "latest_key_change_ratio":0.052,
-        "latest_key_change_code":"amount_mom",
-        "sales_volume":"1850盒",
-        "sales_volume_value":1850
-      },
-      "key_business_signals":["最近月（2026-03）销售额较上月上升，变动+5.20%。","Top1产品阿莫西林贡献销售额42.30万元，占比32.91%。"],
-      "product_performance":[
-        {
-          "product_name":"阿莫西林",
-          "product_code":"P001",
-          "sales_amount":"42.30万元",
-          "sales_amount_value":423000,
-          "sales_share":"32.91%",
-          "sales_share_ratio":0.3291,
-          "change_metric":"金额同比",
-          "change_metric_code":"amount_yoy",
-          "change_value":"+8.10%",
-          "change_value_ratio":0.081
-        }
-      ],
-      "hospital_performance":[],
-      "recent_trends":[
-        {"period":"2026-01","sales_amount":"38.20万元","sales_amount_value":382000,"amount_mom":"--","amount_mom_ratio":null,"sales_volume":"560盒","sales_volume_value":560},
-        {"period":"2026-02","sales_amount":"40.10万元","sales_amount_value":401000,"amount_mom":"+4.97%","amount_mom_ratio":0.0497,"sales_volume":"600盒","sales_volume_value":600},
-        {"period":"2026-03","sales_amount":"50.20万元","sales_amount_value":502000,"amount_mom":"+25.19%","amount_mom_ratio":0.2519,"sales_volume":"690盒","sales_volume_value":690}
-      ],
-      "risk_alerts":[],
-      "opportunity_hints":[]
-    }
-  }'
-```
-
-预期：
-- 成功返回 `200`，响应包含 `reply`（自然文本）与 `model`。
-- 分析类问题默认返回文本主答与 `answer` 底稿，`answer.output_shape=text`；拒答或澄清场景返回 `answer.output_shape=clarify`。
-- 若未登录或 token 无效，返回 `401 UNAUTHORIZED`。
-- 若未配置 `GEMINI_API_KEY`，返回 `500 CONFIG_MISSING`。
-
-### 11.13 质量控制层（Phase 2.8）
-
-位置与目标：
-
-- QC 位于 Phase 2.6 输出层之后、最终 `reply` 写入之前。
-- 仅做轻量检测 + 最小修复/兜底，保证最终可见回复稳定。
-- 不改 `/api/chat` 请求/响应结构，不新增前端字段，不持久化，不二次调用模型。
-- Phase 2.9 不新增层级：它是 Phase 2.6 输出层内的“输出策略指令常量化 + 模板对齐”；Phase 2.8 QC 作为最终防线（内部词、边界句、refuse 示例兜底），两者协同但不引入二次模型调用。
-
-输入与输出（请求内）：
-
-- 输入：最终态 `routeDecision/outputContext` + `modelReplyText`（或 refuse 模板文案）。
-- 输出：`finalReplyText` + `qcState{ applied, action, reason_codes }`。
-- `qcState` 仅请求内使用；如开启 trace，仅记录 code/boolean。
-
-核心收口规则：
-
-1. `route=refuse` 时不调用 Gemini，直接 `buildRefuseReplyTemplate -> normalizeOutputReply -> QC`。  
-2. 内部过程词检测词表集中维护在 `INTERNAL_PROCESS_WORDS`，覆盖中文+英文+内部字段名。  
-3. `high_duplication` 固定按 `\n` 与 `。！？；` 切句；比对前做“去空白+去标点”归一化；仅在 `sentenceCount >= QC_HIGH_DUP_SENTENCE_MIN` 时启用。  
-4. `irrelevant_refuse_mismatch` 仅强信号触发：  
-   - `route!=refuse`：强拒绝词 + 文本长度 `<80`；  
-   - `route=refuse`：先忽略“你可以问”示例区，仅对主体拒答语句做判定；主体命中业务证据词 + 句子数 `>=3` 才触发。  
-5. findings 分级：  
-   - 严重项：`empty_or_too_short`、`irrelevant_refuse_mismatch`；  
-   - 非严重项：其余四项。  
-### 11.14 AI 对话助手（当前主路径）
-
-当前聊天后端已收敛为单一路径：
-
-`鉴权 / 请求校验 -> planner-enhanced tool-first -> Gemini 基于 tool 结果生成文本 -> answer/reply 返回`
-
-当前原则：
-
-1. 不再保留 deterministic 主路  
-2. 不再保留 legacy fallback  
-3. tool-first 未形成稳定结果时直接返回结构化错误 JSON  
-4. 不再做本地 QC patch、safe_fallback、本地模板答复  
-5. 成功响应只保留 `reply + answer + model + requestId`
-
-当前受控工具面以分析原语为核心：
+对于范围大、对象不明确的泛分析问题，首轮只向模型暴露少量高层宏工具：
+
+- `get_sales_overview_brief`
+- `get_sales_trend_brief`
+- `get_dimension_overview_brief`
+- `submit_analysis_plan`
+
+目标是让泛问题先获得一版稳定的概览分析，避免模型一开始就拆成大量细工具调用。
+
+对更具体、需要深挖的问题，后续轮次才会放开分析原语和兼容工具。
+
+### 11.8 受控工具面
+
+当前工具面分成两层。
+
+高层宏工具：
+
+- `get_sales_overview_brief`
+- `get_sales_trend_brief`
+- `get_dimension_overview_brief`
+
+核心分析原语：
 
 - `scope_aggregate`
 - `scope_timeseries`
 - `scope_breakdown`
 - `scope_diagnostics`
 
-其余工具仅作为兼容包装层存在，后续继续向原语化收敛。
-- `hospital_named`
+兼容工具：
 
-命中后行为：
+- `get_overall_summary`
+- `get_product_summary`
+- `get_hospital_summary`
+- `get_product_hospital_contribution`
+- `get_trend_summary`
+- `get_period_comparison_summary`
+- `get_product_trend`
+- `get_hospital_trend`
+- `get_entity_ranking`
+- `get_share_breakdown`
+- `get_anomaly_insights`
+- `get_risk_opportunity_summary`
 
-- 不再进入 Gemini `AUTO function calling`
-- 后端直接指定并执行唯一工具
-- direct-tool 路径一次只执行 1 个工具，不做二次 tool loop
-- direct-tool 成功时，以工具结果作为唯一主事实源，再调用 Gemini 只负责自然语言表达
-- direct-tool 失败或 `analysis_range` 无效时，默认回本地保守边界答复；仅在显式开启 legacy emergency fallback 时才进入旧链路
+### 11.9 首批工具计划参数
 
-当前纳入确定性工具路由的高置信问法：
+planner 在 `initial_tools` 里提交首批工具计划时，当前使用结构化参数对象：
 
-- `Botox50在哪些医院贡献最多` -> `get_product_hospital_contribution`
-- `botox主要是哪些医院贡献的销量` -> `get_product_hospital_contribution`
-- `哪家医院最重要，按近一年逐月说明` -> `get_hospital_summary(include_monthly=true)`
-- `分析所有产品表现` -> `get_product_summary(include_all_products=true)`
-- `华美这家机构近三个月怎么样` -> `get_hospital_summary`
+- `name`：工具名
+- `args`：结构化参数对象
 
-当前不纳入 T1 的问法：
+不再使用字符串形式的嵌套 JSON 参数。
 
-- 普通整体摘要
-### 11.16 当前最小契约
+运行时会在 planner 阶段直接校验：
 
-- 成功：`{ reply, answer, model, requestId }`
-- 失败：`{ error: { code, message }, requestId }`
-- `answer` 当前最小字段：
-  - `summary`
-  - `evidence[]`
-  - `actions[]`
-  - `source_period`
-  - `question_type`
-  - `evidence_types[]`
-  - `missing_evidence_types[]`
-  - `analysis_confidence`
-  - `conversation_state`
+- `args` 是否为对象
+- 是否满足该工具的必填参数
+- `requested_views` 中的工具是否在 `initial_tools` 中给出了可执行参数
+
+坏参数不会再被吞掉继续执行，而是直接拒绝 planner。
+
+### 11.10 工具返回与证据完成度
+
+工具返回的不是最终文案，而是结构化事实。常见字段包括：
+
+- `range`
+- `matched_entities`
+- `unmatched_entities`
+- `coverage`
+- `summary`
+- `rows`
+- `boundaries`
+- `diagnostic_flags`
+
+运行时会继续记录：
+
+- `evidence_types`
+- `missing_evidence_types`
+- `analysis_confidence`
+
+如果 planner 明确给了 `required_evidence`，运行时以 planner 为准；只有 planner 没给或给空数组时，才回退到问题类型的默认证据集合。
+
+### 11.11 成功与失败收口
+
+成功响应当前最小契约：
+
+- `{ reply, answer, model, requestId }`
+
+失败响应当前最小契约：
+
+- `{ error: { code, message, details? }, requestId }`
+
+当前 `answer` 最小字段：
+
+- `summary`
+- `evidence[]`
+- `actions[]`
+- `source_period`
+- `question_type`
+- `evidence_types[]`
+- `missing_evidence_types[]`
+- `analysis_confidence`
+- `conversation_state`
+
+如果模型已经形成可读分析文本，以下两类结果都会按成功返回：
+
+- `direct_answer`
+- `bounded_answer`
+
+只有真正未形成稳定结果时才返回错误 JSON。
+
+### 11.12 常见失败原因
+
+当前运行时会将失败原因透传到 `error.details.reason`，常见值包括：
+
+- `planner_call_missing`
+- `planner_rejected_without_resubmission`
+- `tool_loop_limit_exceeded`
+- `tool_execution_failed`
+- `empty_final_reply`
+- `planner_relevant_without_tool`
+- `gemini_error`
+- `invalid_analysis_range`
+
+前端会把这些原因映射成可读中文，而不是统一只显示一条笼统错误。
+
+### 11.13 最小观测与验证
+
+调试时建议重点关注：
+
+- `requestId`
+- `planner_relevance`
+- `planner_route_intent`
+- `planner_question_type`
+- `planner_requested_views`
+- `evidence_types_requested`
+- `evidence_types_completed`
+- `missing_evidence_types`
+- `tool_call_count`
+- `fallback_reason`
+
+当前最小接口验证重点是：
+
+- 成功请求能返回 `reply + answer + model + requestId`
+- 泛分析问题优先走宏工具
+- planner 不合法时必须重提
+- 工具参数不合法时在 planner 阶段被拦下
+- 失败时返回结构化错误 JSON，而不是本地兜底文案

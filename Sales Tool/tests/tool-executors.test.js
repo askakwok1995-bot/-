@@ -120,3 +120,25 @@ test("get_dimension_overview_brief returns macro dimension envelope", async () =
   assert.deepEqual(result.meta.evidence_types, ["aggregate", "breakdown", "ranking"]);
   assert.equal(result.meta.analysis_view, "hospital_overview_brief");
 });
+
+test("get_dimension_report_brief returns macro dimension report envelope", async () => {
+  const runtimeContext = createRuntimeContext();
+  const result = await executeToolByName(
+    TOOL_NAMES.GET_DIMENSION_REPORT_BRIEF,
+    { dimension: "product", limit: 4 },
+    runtimeContext,
+  );
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(Array.isArray(result.result.rows));
+  assert.ok(result.result.rows.some((row) => String(row.row_label || "").startsWith("趋势:")));
+  assert.equal(result.result.summary.overview_dimension, "product");
+  assert.ok(Array.isArray(result.result.summary.top_entities));
+  assert.ok(Array.isArray(result.result.summary.bottom_entities));
+  assert.ok(Array.isArray(result.result.summary.trend_signals));
+  assert.ok(Array.isArray(result.result.summary.risk_alerts));
+  assert.ok(Array.isArray(result.result.summary.opportunity_hints));
+  assert.ok("concentration_hint" in (result.result.summary || {}));
+  assert.deepEqual(result.meta.evidence_types, ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"]);
+  assert.equal(result.meta.analysis_view, "product_report_brief");
+});

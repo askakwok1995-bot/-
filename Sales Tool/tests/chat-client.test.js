@@ -74,3 +74,45 @@ test("createChatReplyRequester maps planner_rejected_without_resubmission to rea
     },
   );
 });
+
+test("createChatReplyRequester returns minimal current payload", async () => {
+  const requester = createRequester(async () => {
+    return new Response(
+      JSON.stringify({
+        reply: "当前报表区间内整体销售保持增长。",
+        answer: {
+          summary: "当前报表区间内整体销售保持增长。",
+          conversation_state: {
+            primary_dimension_code: "overall",
+            entity_scope: { products: [], hospitals: [] },
+            source_period: "2025-01~2025-03",
+          },
+        },
+        model: "tool-model",
+        requestId: "req-chat-client-success",
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "req-chat-client-success",
+        },
+      },
+    );
+  });
+
+  const payload = await requester("整体怎么样");
+  assert.deepEqual(payload, {
+    reply: "当前报表区间内整体销售保持增长。",
+    answer: {
+      summary: "当前报表区间内整体销售保持增长。",
+      conversation_state: {
+        primary_dimension_code: "overall",
+        entity_scope: { products: [], hospitals: [] },
+        source_period: "2025-01~2025-03",
+      },
+    },
+    model: "tool-model",
+    requestId: "req-chat-client-success",
+  });
+});

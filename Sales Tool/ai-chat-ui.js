@@ -4,13 +4,6 @@ const CHAT_STATES = {
   COMPACT: "compact",
   EXPANDED: "expanded",
 };
-const CHAT_FORMAT_REASONS = {
-  STRUCTURED_OK: "structured_ok",
-  JSON_PARSE_FAILED: "json_parse_failed",
-  SCHEMA_INVALID: "schema_invalid",
-  OUTPUT_TRUNCATED: "output_truncated",
-  EMPTY_REPLY: "empty_reply",
-};
 const CHAT_HISTORY_MAX_ROUNDS = 6;
 const CHAT_HISTORY_MAX_ITEMS = CHAT_HISTORY_MAX_ROUNDS * 2;
 const CHAT_FAILURE_COOLDOWN_SHORT_SEC = 3;
@@ -27,41 +20,6 @@ function isValidState(value) {
 
 function toText(value) {
   return String(value || "").trim();
-}
-
-function normalizeFormatReason(value) {
-  const candidate = toText(value);
-  const allowed = Object.values(CHAT_FORMAT_REASONS);
-  return allowed.includes(candidate) ? candidate : CHAT_FORMAT_REASONS.JSON_PARSE_FAILED;
-}
-
-function normalizeAttemptDiagnostics(rawDiagnostics) {
-  if (!Array.isArray(rawDiagnostics)) {
-    return [];
-  }
-  return rawDiagnostics
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
-      const stageCandidate = toText(item.stage);
-      const stage = stageCandidate === "retry" || stageCandidate === "repair" ? stageCandidate : "first";
-      const format = item.format === "structured" ? "structured" : "text_fallback";
-      const outputCharsRaw = Number(item.outputChars);
-      const elapsedMsRaw = Number(item.elapsedMs);
-      const maxOutputTokensRaw = Number(item.maxOutputTokens);
-      return {
-        stage,
-        format,
-        formatReason: toText(item.formatReason) || CHAT_FORMAT_REASONS.JSON_PARSE_FAILED,
-        finishReason: toText(item.finishReason),
-        outputChars: Number.isFinite(outputCharsRaw) && outputCharsRaw >= 0 ? Math.floor(outputCharsRaw) : 0,
-        elapsedMs: Number.isFinite(elapsedMsRaw) && elapsedMsRaw >= 0 ? Math.floor(elapsedMsRaw) : 0,
-        maxOutputTokens:
-          Number.isFinite(maxOutputTokensRaw) && maxOutputTokensRaw > 0 ? Math.floor(maxOutputTokensRaw) : 0,
-      };
-    })
-    .filter((item) => item !== null);
 }
 
 function appendInlineMarkdown(container, content) {
@@ -624,63 +582,30 @@ export function initAiChatUi(options = {}) {
     if (typeof payload === "string") {
       return {
         reply: payload.trim(),
-        surfaceReply: payload.trim(),
-        mode: "auto",
-        businessIntent: "chat",
         requestId: "",
-        meta: null,
-        fallbackNotice: "",
+        answer: null,
+        conversationState: null,
       };
     }
     if (!payload || typeof payload !== "object") {
       return {
         reply: "",
-        surfaceReply: "",
-        mode: "auto",
-        businessIntent: "chat",
         requestId: "",
-        meta: null,
-        fallbackNotice: "",
+        answer: null,
+        conversationState: null,
       };
     }
 
     const reply =
-      toText(payload.surfaceReply) ||
       toText(payload.reply) ||
       toText(payload.message) ||
       toText(payload.text);
-    const businessIntent = toText(payload.businessIntent) || "chat";
     const answer = payload.answer && typeof payload.answer === "object" ? payload.answer : null;
-    const mode = toText(payload.mode) || "auto";
     const requestId = toText(payload.requestId);
-    const rawMeta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
-    const meta = rawMeta
-      ? {
-          formatReason: normalizeFormatReason(rawMeta.formatReason),
-          retryCount: Number(rawMeta.retryCount) === 1 ? 1 : 0,
-          repairApplied: Boolean(rawMeta.repairApplied),
-          repairSucceeded: Boolean(rawMeta.repairSucceeded),
-          attemptCount: Number.isFinite(Number(rawMeta.attemptCount)) && Number(rawMeta.attemptCount) > 0
-            ? Math.floor(Number(rawMeta.attemptCount))
-            : 1,
-          totalDurationMs: Number.isFinite(Number(rawMeta.totalDurationMs)) && Number(rawMeta.totalDurationMs) >= 0
-            ? Math.floor(Number(rawMeta.totalDurationMs))
-            : 0,
-          finalStage: ["first", "retry", "repair"].includes(String(rawMeta.finalStage || "").trim())
-            ? String(rawMeta.finalStage).trim()
-            : "first",
-          attemptDiagnostics: normalizeAttemptDiagnostics(rawMeta.attemptDiagnostics),
-        }
-      : null;
     return {
       reply,
-      surfaceReply: reply,
       answer,
-      businessIntent,
-      mode,
       requestId,
-      meta,
-      fallbackNotice: toText(payload.fallbackNotice),
       conversationState:
         answer?.conversation_state && typeof answer.conversation_state === "object" ? answer.conversation_state : null,
     };

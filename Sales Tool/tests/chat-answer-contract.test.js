@@ -38,9 +38,7 @@ test("buildChatSuccessPayload returns minimal text-first contract", () => {
   assert.equal(payload.answer.analysis_confidence, "high");
   assert.equal(payload.answer.conversation_state?.source_period, "2025-01~2025-12");
   assert.equal("requested_time_window" in (payload.answer.conversation_state || {}), false);
-  assert.equal("surfaceReply" in payload, false);
   assert.equal("mode" in payload, false);
-  assert.equal("businessIntent" in payload, false);
   assert.equal("output_shape" in payload.answer, false);
   assert.equal("route_code" in payload.answer, false);
   assert.equal("boundaries" in payload.answer, false);

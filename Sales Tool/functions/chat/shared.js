@@ -161,7 +161,7 @@ export const TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT = [
   "首批工具计划中的 initial_tools 必须使用 { name, args } 结构，其中 args 必须是结构化对象，不要输出 JSON 字符串。",
   "规划规则：",
   "- 无关问题：relevance=irrelevant，route_intent=refuse，允许零工具结束。",
-  "- 宏观泛问题（如整体表现、销售趋势、产品或医院表现、销售分析报告）：首轮规划优先选择高层宏工具 get_sales_overview_brief、get_sales_trend_brief、get_dimension_overview_brief。",
+  "- 宏观泛问题（如整体表现、销售趋势、产品或医院表现、销售分析报告）：首轮规划优先选择高层宏工具 get_sales_overview_brief、get_sales_trend_brief、get_dimension_overview_brief；若是产品/医院报告类问题，优先选择 get_dimension_report_brief。",
   "- 细化问题（如原因、结构、对比、贡献来源、风险机会）：明确 question_type（overview / diagnosis / compare / why / contribution / trend），并规划后续需要的 evidence_types。",
   "",
   "[阶段 2：深挖取数阶段]",

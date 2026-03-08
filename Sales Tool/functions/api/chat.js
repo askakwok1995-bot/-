@@ -12,7 +12,6 @@ import {
 import { normalizeSessionHistoryWindow } from "../chat/session.js";
 import { runToolFirstChat } from "../chat/tool-runtime.js";
 import { normalizeConversationState } from "../chat/conversation-state.js";
-import { isValidChatMode } from "../chat/contracts.js";
 import { buildChatSuccessPayload, buildEvidenceBundleFromToolResult } from "../chat/render.js";
 
 function jsonResponse(payload, status = 200, requestId = "") {
@@ -246,16 +245,6 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       body = await context.request.json();
     } catch (_error) {
       return errorResponse(CHAT_ERROR_CODES.BAD_REQUEST, "请求体必须是合法 JSON。", 400, requestId);
-    }
-
-    const rawMode = trimString(body?.mode);
-    if (!isValidChatMode(rawMode)) {
-      return errorResponse(
-        CHAT_ERROR_CODES.BAD_REQUEST,
-        "mode 仅支持 auto；briefing、diagnosis、action-plan 已移除。",
-        400,
-        requestId,
-      );
     }
 
     const message = trimString(body?.message);

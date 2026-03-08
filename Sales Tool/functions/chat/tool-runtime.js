@@ -32,10 +32,12 @@ const MACRO_TOOL_NAMES = Object.freeze([
   "get_sales_trend_brief",
   "get_dimension_overview_brief",
 ]);
+const DIMENSION_REPORT_MACRO_TOOL_NAMES = Object.freeze(["get_dimension_report_brief"]);
 const PLANNER_VIEW_NAMES = Object.freeze([
   "get_sales_overview_brief",
   "get_sales_trend_brief",
   "get_dimension_overview_brief",
+  "get_dimension_report_brief",
   "scope_aggregate",
   "scope_timeseries",
   "scope_breakdown",
@@ -320,6 +322,28 @@ function shouldUseMacroOnlyFirstRound(message) {
     return false;
   }
   return containsKeyword(safeMessage, BROAD_QUERY_KEYWORDS);
+}
+
+function shouldUseDimensionReportMacroFirstRound(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  if (hasNamedProductLikeQuestion(safeMessage) || hasSpecificHospitalLikeQuestion(safeMessage)) {
+    return false;
+  }
+  const hasDimensionMention = safeMessage.includes("产品") || safeMessage.includes("医院");
+  if (!hasDimensionMention) {
+    return false;
+  }
+  const hasReportIntent = safeMessage.includes("报告") || safeMessage.includes("汇报");
+  const hasPerformanceIntent = safeMessage.includes("表现");
+  const hasAdviceIntent =
+    safeMessage.includes("建议") ||
+    safeMessage.includes("问题") ||
+    safeMessage.includes("风险") ||
+    safeMessage.includes("机会");
+  return hasReportIntent || (hasPerformanceIntent && hasAdviceIntent);
 }
 
 function deriveRequiredEvidenceByQuestionType(questionType) {
@@ -927,11 +951,19 @@ export async function runToolFirstChat({
   const contents = buildInitialContents(historyWindow, message, businessSnapshot);
   let lastToolResult = null;
   let plannerState = null;
+  const firstRoundDimensionReportMacroOnly = shouldUseDimensionReportMacroFirstRound(message);
   const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
-    const allowedViewNames = !state.planner_completed && roundIndex === 0 && firstRoundMacroOnly ? MACRO_TOOL_NAMES : PLANNER_VIEW_NAMES;
+    const allowedViewNames =
+      !state.planner_completed && roundIndex === 0
+        ? firstRoundDimensionReportMacroOnly
+          ? DIMENSION_REPORT_MACRO_TOOL_NAMES
+          : firstRoundMacroOnly
+            ? MACRO_TOOL_NAMES
+            : PLANNER_VIEW_NAMES
+        : PLANNER_VIEW_NAMES;
     const geminiResponse = await requestGeminiGenerateContentImpl(
       buildToolPayload(contents, allowedViewNames),
       env,
