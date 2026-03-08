@@ -2709,6 +2709,10 @@ body.auth-gated .hero-panel-brief {
 .sub-card summary {
   margin: -10px -10px 0;
   padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px 12px;
+  align-items: start;
   border-radius: 24px;
   background: linear-gradient(180deg, rgb(251 252 253 / 90%) 0%, rgb(238 244 247 / 94%) 100%);
 }
@@ -2727,10 +2731,47 @@ body.auth-gated .hero-panel-brief {
 }
 
 .fold-tip {
+  align-self: start;
   background: #f2f6f8;
   border: 1px solid rgb(88 119 141 / 12%);
   color: #56697c;
   padding: 5px 10px;
+}
+
+.summary-preview-text,
+.summary-chip-row {
+  grid-column: 1 / -1;
+}
+
+.summary-preview-text {
+  margin: -2px 0 0;
+  color: #617687;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.summary-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgb(86 118 139 / 12%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 96%) 0%, rgb(240 245 248 / 96%) 100%);
+  color: #476174;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+.sub-card[open] .summary-preview-text,
+.sub-card[open] .summary-chip-row {
+  display: none;
 }
 
 .sub-card[open] summary {
