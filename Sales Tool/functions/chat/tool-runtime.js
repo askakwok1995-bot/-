@@ -380,6 +380,52 @@ function isBroadOverallMacroStartCandidate(message) {
   return true;
 }
 
+function isDimensionOverviewMacroStartCandidate(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  if (shouldUseDimensionReportMacroFirstRound(safeMessage)) {
+    return false;
+  }
+  if (containsKeyword(safeMessage, DEEP_DIVE_QUERY_KEYWORDS)) {
+    return false;
+  }
+  if (hasNamedProductLikeQuestion(safeMessage) || hasSpecificHospitalLikeQuestion(safeMessage)) {
+    return false;
+  }
+  const hasDimensionMention = safeMessage.includes("产品") || safeMessage.includes("医院");
+  const hasPerformanceIntent = safeMessage.includes("表现");
+  return hasDimensionMention && hasPerformanceIntent;
+}
+
+function buildDefaultDirectMacroCalls(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return [];
+  }
+  if (isDimensionOverviewMacroStartCandidate(safeMessage)) {
+    const dimension = safeMessage.includes("医院")
+      ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
+      : QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+    return [
+      {
+        name: "get_dimension_overview_brief",
+        args: {
+          dimension,
+        },
+      },
+    ];
+  }
+  if (!isBroadOverallMacroStartCandidate(safeMessage)) {
+    return [];
+  }
+  if (safeMessage.includes("趋势") || safeMessage.includes("走势")) {
+    return [{ name: "get_sales_trend_brief", args: {} }];
+  }
+  return [{ name: "get_sales_overview_brief", args: {} }];
+}
+
 function inferQuestionTypeForDirectMacroStart(message, toolCalls) {
   const safeMessage = trimString(message);
   const toolNames = Array.isArray(toolCalls) ? toolCalls.map((item) => trimString(item?.name)) : [];
@@ -1133,7 +1179,8 @@ export async function runToolFirstChat({
   let plannerRecoveryAttempted = false;
   const firstRoundDimensionReportMacroOnly = shouldUseDimensionReportMacroFirstRound(message);
   const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
-  const allowDirectMacroStart = isBroadOverallMacroStartCandidate(message);
+  const allowDirectMacroStart =
+    isBroadOverallMacroStartCandidate(message) || isDimensionOverviewMacroStartCandidate(message);
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
@@ -1171,18 +1218,21 @@ export async function runToolFirstChat({
     const { content, plannerCall, toolCalls } = extractRuntimeCalls(geminiResponse.payload);
 
     if (!state.planner_completed) {
+      const autoDirectMacroCalls =
+        roundIndex === 0 && !plannerCall && toolCalls.length === 0 ? buildDefaultDirectMacroCalls(message) : [];
       const canDirectMacroStart =
         allowDirectMacroStart &&
         roundIndex === 0 &&
         !plannerCall &&
         toolCalls.length > 0 &&
         toolCalls.every((call) => DIRECT_MACRO_START_TOOL_NAMES.includes(trimString(call?.name)));
+      const plannedDirectMacroCalls = canDirectMacroStart ? toolCalls : autoDirectMacroCalls;
 
-      if (canDirectMacroStart) {
-        if (content) {
+      if (plannedDirectMacroCalls.length > 0) {
+        if (canDirectMacroStart && content) {
           contents.push(content);
         }
-        plannerState = buildDirectMacroPlannerState(message, toolCalls, questionJudgment);
+        plannerState = buildDirectMacroPlannerState(message, plannedDirectMacroCalls, questionJudgment);
         state.planner_completed = true;
         state.planner_relevance = plannerState.relevance;
         state.planner_route_intent = plannerState.route_intent;
@@ -1194,7 +1244,7 @@ export async function runToolFirstChat({
         state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
 
         const directStartResult = await executePlannedCalls({
-          plannedCalls: toolCalls,
+          plannedCalls: plannedDirectMacroCalls,
           state,
           runtimeContext,
           deps,
