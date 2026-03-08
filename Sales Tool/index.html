@@ -59,21 +59,30 @@
                 <h3 class="hero-panel-title">当前工作台概览</h3>
               </div>
               <div class="hero-metrics-grid">
-                <article class="hero-metric-card">
+                <article class="hero-metric-card hero-metric-card-compact">
                   <span class="hero-metric-label">分析区间</span>
                   <strong id="hero-report-range" class="hero-metric-value">未设置</strong>
                 </article>
-                <article class="hero-metric-card">
-                  <span class="hero-metric-label">产品数</span>
-                  <strong id="hero-products-count" class="hero-metric-value">0</strong>
-                </article>
-                <article class="hero-metric-card">
+                <article class="hero-metric-card hero-metric-card-compact">
                   <span class="hero-metric-label">记录数</span>
                   <strong id="hero-records-count" class="hero-metric-value">0</strong>
                 </article>
-                <article class="hero-metric-card">
-                  <span class="hero-metric-label">指标年份</span>
-                  <strong id="hero-target-year" class="hero-metric-value">--</strong>
+                <article class="hero-metric-card hero-achievement-card" aria-labelledby="hero-achievement-value">
+                  <div class="hero-achievement-head">
+                    <span class="hero-metric-label">当前达成</span>
+                    <span id="hero-achievement-caption" class="hero-achievement-caption">按当前报表区间的销售金额 / 指标金额计算</span>
+                  </div>
+                  <strong id="hero-achievement-value" class="hero-achievement-value">--</strong>
+                  <div id="hero-achievement-progress" class="hero-achievement-progress is-empty" aria-hidden="true">
+                    <span class="hero-achievement-progress-scale">
+                      <span class="hero-achievement-progress-pill"></span>
+                      <span class="hero-achievement-progress-pill"></span>
+                      <span class="hero-achievement-progress-pill"></span>
+                      <span class="hero-achievement-progress-pill"></span>
+                      <span class="hero-achievement-progress-pill"></span>
+                    </span>
+                    <span id="hero-achievement-progress-fill" class="hero-achievement-progress-fill" style="width: 0%"></span>
+                  </div>
                 </article>
               </div>
               <p id="hero-status-line" class="hero-status-line" aria-live="polite">正在准备首页摘要...</p>

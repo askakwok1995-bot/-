@@ -515,12 +515,19 @@ export function buildReportSnapshot(state, deps, range) {
 }
 
 export function renderReportSection(state, dom, deps) {
-  if (!(dom.reportHintEl instanceof HTMLElement)) return;
-  if (!(dom.reportMonthBody instanceof HTMLElement)) return;
-  if (!(dom.reportQuarterBody instanceof HTMLElement)) return;
-  if (!(dom.reportProductBody instanceof HTMLElement)) return;
-  if (!(dom.reportHospitalBody instanceof HTMLElement)) return;
-  if (!(dom.reportEmptyEl instanceof HTMLElement)) return;
+  const emitSummary = (summary) => {
+    if (typeof deps.onReportSummaryChange === "function") {
+      deps.onReportSummaryChange(summary);
+    }
+    return summary;
+  };
+
+  if (!(dom.reportHintEl instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
+  if (!(dom.reportMonthBody instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
+  if (!(dom.reportQuarterBody instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
+  if (!(dom.reportProductBody instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
+  if (!(dom.reportHospitalBody instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
+  if (!(dom.reportEmptyEl instanceof HTMLElement)) return emitSummary({ snapshot: null, range: null, reason: "missing-dom" });
   renderReportChartPaletteSelect(state, dom);
   renderReportChartDataLabelModeSelect(state, dom);
   renderReportAmountUnitSelect(state, dom);
@@ -537,7 +544,7 @@ export function renderReportSection(state, dom, deps) {
       dom.reportEmptyEl.textContent = "暂无可分析数据";
       renderEmptyRows(dom);
       setChartsUnavailableState(dom, range.error || CHART_EMPTY_TEXT);
-      return;
+      return emitSummary({ snapshot: null, range, reason: "invalid-range" });
     }
 
     const snapshot = buildReportSnapshot(state, deps, range);
@@ -549,7 +556,7 @@ export function renderReportSection(state, dom, deps) {
       dom.reportEmptyEl.textContent = "暂无可分析数据";
       renderEmptyRows(dom);
       setChartsUnavailableState(dom, CHART_EMPTY_TEXT);
-      return;
+      return emitSummary({ snapshot, range, reason: "no-records" });
     }
 
     dom.reportEmptyEl.hidden = true;
@@ -651,6 +658,7 @@ export function renderReportSection(state, dom, deps) {
     `;
 
     renderReportCharts(state, dom, deps, snapshot, range, activeAmountUnit);
+    return emitSummary({ snapshot, range, reason: "" });
   } catch (error) {
     console.error("[Sales Tool] 报表渲染失败，已降级为空态。", error);
     dom.reportHintEl.textContent = "报表计算异常，请刷新页面后重试。";
@@ -659,6 +667,15 @@ export function renderReportSection(state, dom, deps) {
     dom.reportEmptyEl.textContent = "暂无可分析数据";
     renderEmptyRows(dom);
     setChartsUnavailableState(dom, "图表计算异常，请刷新页面后重试。");
+    return emitSummary({
+      snapshot: null,
+      range: {
+        startYm: String(state.reportStartYm || "").trim(),
+        endYm: String(state.reportEndYm || "").trim(),
+        error: "",
+      },
+      reason: "render-error",
+    });
   }
 }
 
