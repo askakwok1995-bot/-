@@ -1,0 +1,2 @@
+[     137ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:5173/config.js:0
+[     382ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:5173/favicon.ico:0

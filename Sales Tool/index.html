@@ -114,6 +114,284 @@
       </section>
 
       <div class="workspace-grid">
+      <section id="report-deck" class="card section-card section-card-report">
+        <div class="section-head report-section-head">
+          <div>
+            <p class="section-kicker">Sales Intelligence</p>
+            <h2>报表区</h2>
+          </div>
+          <div class="report-section-range">
+            <label class="inline-field report-month-field" for="report-start-month">
+              起始月
+              <input id="report-start-month" type="month" aria-label="选择起始月份" />
+            </label>
+            <label class="inline-field report-month-field" for="report-end-month">
+              结束月
+              <input id="report-end-month" type="month" aria-label="选择结束月份" />
+            </label>
+            <label class="inline-field report-unit-field" for="report-amount-unit-select">
+              单位
+              <select id="report-amount-unit-select" aria-label="选择报表金额单位">
+                <option value="">加载中...</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <p class="section-desc section-desc-report">优先查看月度、季度、产品和医院表现，再继续处理录入与明细。</p>
+        <details class="sub-card sub-card-report" open>
+          <summary>
+            <div class="summary-copy">
+              <span class="summary-kicker">Analysis</span>
+              <h3>销售分析</h3>
+            </div>
+            <span class="fold-tip">核心报表</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="report-panel">
+              <div class="report-meta-row">
+                <p id="report-hint" class="hint report-hint"></p>
+                <button id="export-report-tables-btn" class="secondary-btn report-export-btn" type="button">
+                  导出销售分析（XLSX）
+                </button>
+              </div>
+
+              <p id="report-empty" class="empty report-empty" hidden>暂无可分析数据</p>
+
+              <div class="report-block">
+                <h4 class="report-block-title">总览（按月）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th>月份</th>
+                        <th>指标金额</th>
+                        <th>实际金额</th>
+                        <th>达成率</th>
+                        <th>金额同比</th>
+                        <th>金额环比</th>
+                        <th>实际数量</th>
+                        <th>数量同比</th>
+                        <th>数量环比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-month-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">总览（按季度）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th>季度</th>
+                        <th>指标金额</th>
+                        <th>实际金额</th>
+                        <th>达成率</th>
+                        <th>金额同比</th>
+                        <th>金额环比</th>
+                        <th>实际数量</th>
+                        <th>数量同比</th>
+                        <th>数量环比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-quarter-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">产品分析</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table report-product-table">
+                    <thead>
+                      <tr>
+                        <th>产品/规格</th>
+                        <th>实际金额</th>
+                        <th>指标金额</th>
+                        <th>达成率</th>
+                        <th>金额占比</th>
+                        <th>金额同比</th>
+                        <th>实际数量</th>
+                        <th>数量占比</th>
+                        <th>数量同比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-product-body">
+                      <tr>
+                        <td colspan="9" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="report-block">
+                <h4 class="report-block-title">医院分析（按销售金额 Top20）</h4>
+                <div class="table-wrap report-table-wrap">
+                  <table class="report-table report-hospital-table">
+                    <thead>
+                      <tr>
+                        <th>医院</th>
+                        <th>销售金额</th>
+                        <th>金额占比</th>
+                        <th>金额同比</th>
+                        <th>采购数量</th>
+                        <th>数量占比</th>
+                        <th>数量同比</th>
+                      </tr>
+                    </thead>
+                    <tbody id="report-hospital-body">
+                      <tr>
+                        <td colspan="7" class="empty">报表加载中...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details id="report-visual-board" class="sub-card sub-card-report">
+          <summary>
+            <div class="summary-copy">
+              <span class="summary-kicker">Visual Board</span>
+              <h3>可视化图表</h3>
+            </div>
+            <span class="fold-tip">趋势与结构</span>
+          </summary>
+          <div class="sub-card-body">
+            <div class="report-charts-panel">
+              <p class="hint report-charts-intro">图表口径与销售分析表一致，时间范围跟随起始月/结束月。</p>
+              <div class="report-charts-toolbar">
+                <label class="inline-field report-chart-palette-field" for="report-chart-palette-select">
+                  配色方案
+                  <select id="report-chart-palette-select" aria-label="选择图表配色方案">
+                    <option value="">加载中...</option>
+                  </select>
+                </label>
+                <label class="inline-field report-chart-data-label-field" for="report-chart-data-label-mode-select">
+                  标注图表数据
+                  <select id="report-chart-data-label-mode-select" aria-label="选择图表数据标注模式">
+                    <option value="">加载中...</option>
+                  </select>
+                </label>
+              </div>
+              <p id="report-charts-hint" class="hint report-charts-hint"></p>
+              <div class="report-charts-grid">
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">月度趋势</h4>
+                    <div class="report-chart-export-group">
+                      <button id="export-chart-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                      <button id="export-chart-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    </div>
+                  </header>
+                  <div id="chart-monthly-trend" class="report-chart-canvas" aria-label="月度趋势图"></div>
+                </section>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">季度趋势</h4>
+                    <div class="report-chart-export-group">
+                      <button id="export-chart-quarterly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                      <button id="export-chart-quarterly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    </div>
+                  </header>
+                  <div id="chart-quarterly-trend" class="report-chart-canvas" aria-label="季度趋势图"></div>
+                </section>
+
+                <div class="report-chart-row-product">
+                  <section class="report-chart-card report-chart-card-product-pie">
+                    <header class="report-chart-card-head">
+                      <h4 class="report-chart-card-title">产品 Top10 金额占比</h4>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-product-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-product-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
+                    </header>
+                    <div id="chart-product-top" class="report-chart-canvas" aria-label="产品金额占比图"></div>
+                  </section>
+
+                  <section class="report-chart-card report-chart-card-product-performance">
+                    <header class="report-chart-card-head">
+                      <h4 class="report-chart-card-title">产品达成与增长（Top10）</h4>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-product-performance-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-product-performance-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
+                    </header>
+                    <div id="chart-product-performance" class="report-chart-canvas" aria-label="产品达成与增长图"></div>
+                  </section>
+                </div>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">产品月度变化趋势（Top10）</h4>
+                    <div class="report-chart-export-group">
+                      <button id="export-chart-product-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                      <button id="export-chart-product-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    </div>
+                  </header>
+                  <div id="chart-product-monthly-trend" class="report-chart-canvas" aria-label="产品月度变化趋势图"></div>
+                </section>
+
+                <section class="report-chart-card">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">医院 Top10 销售金额</h4>
+                    <div class="report-chart-export-group">
+                      <button id="export-chart-hospital-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                      <button id="export-chart-hospital-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    </div>
+                  </header>
+                  <div id="chart-hospital-top" class="report-chart-canvas" aria-label="医院销售金额图"></div>
+                </section>
+
+                <section class="report-chart-card">
+                  <header class="report-chart-card-head">
+                    <h4 class="report-chart-card-title">TOP10医院销售金额占比</h4>
+                    <div class="report-chart-export-group">
+                      <button id="export-chart-hospital-share-btn" class="secondary-btn" type="button">导出 PNG</button>
+                      <button id="export-chart-hospital-share-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    </div>
+                  </header>
+                  <div id="chart-hospital-share" class="report-chart-canvas" aria-label="医院销售金额占比图"></div>
+                </section>
+
+                <section class="report-chart-card report-chart-card-wide">
+                  <header class="report-chart-card-head report-chart-card-head-with-tools">
+                    <h4 class="report-chart-card-title">医院月度趋势与增长率（Top10可选）</h4>
+                    <div class="report-chart-card-tools">
+                      <label class="inline-field report-hospital-trend-field" for="chart-hospital-trend-select">
+                        医院
+                        <select id="chart-hospital-trend-select" aria-label="选择医院趋势图医院">
+                          <option value="">加载中...</option>
+                        </select>
+                      </label>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-hospital-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-hospital-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
+                    </div>
+                  </header>
+                  <div id="chart-hospital-trend" class="report-chart-canvas" aria-label="医院月度趋势与增长率图"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
+
       <section id="operations-deck" class="card section-card section-card-input">
         <header class="section-head">
           <div>
@@ -404,284 +682,6 @@
                   <option value="100">100</option>
                 </select>
               </label>
-            </div>
-          </div>
-        </details>
-      </section>
-
-      <section id="report-deck" class="card section-card section-card-report">
-        <div class="section-head report-section-head">
-          <div>
-            <p class="section-kicker">Sales Intelligence</p>
-            <h2>报表区</h2>
-          </div>
-          <div class="report-section-range">
-            <label class="inline-field report-month-field" for="report-start-month">
-              起始月
-              <input id="report-start-month" type="month" aria-label="选择起始月份" />
-            </label>
-            <label class="inline-field report-month-field" for="report-end-month">
-              结束月
-              <input id="report-end-month" type="month" aria-label="选择结束月份" />
-            </label>
-            <label class="inline-field report-unit-field" for="report-amount-unit-select">
-              单位
-              <select id="report-amount-unit-select" aria-label="选择报表金额单位">
-                <option value="">加载中...</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <p class="section-desc section-desc-report">优先查看月度、季度、产品和医院表现，再继续处理录入与明细。</p>
-        <details class="sub-card sub-card-report" open>
-          <summary>
-            <div class="summary-copy">
-              <span class="summary-kicker">Analysis</span>
-              <h3>销售分析</h3>
-            </div>
-            <span class="fold-tip">核心报表</span>
-          </summary>
-          <div class="sub-card-body">
-            <div class="report-panel">
-              <div class="report-meta-row">
-                <p id="report-hint" class="hint report-hint"></p>
-                <button id="export-report-tables-btn" class="secondary-btn report-export-btn" type="button">
-                  导出销售分析（XLSX）
-                </button>
-              </div>
-
-              <p id="report-empty" class="empty report-empty" hidden>暂无可分析数据</p>
-
-              <div class="report-block">
-                <h4 class="report-block-title">总览（按月）</h4>
-                <div class="table-wrap report-table-wrap">
-                  <table class="report-table">
-                    <thead>
-                      <tr>
-                        <th>月份</th>
-                        <th>指标金额</th>
-                        <th>实际金额</th>
-                        <th>达成率</th>
-                        <th>金额同比</th>
-                        <th>金额环比</th>
-                        <th>实际数量</th>
-                        <th>数量同比</th>
-                        <th>数量环比</th>
-                      </tr>
-                    </thead>
-                    <tbody id="report-month-body">
-                      <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div class="report-block">
-                <h4 class="report-block-title">总览（按季度）</h4>
-                <div class="table-wrap report-table-wrap">
-                  <table class="report-table">
-                    <thead>
-                      <tr>
-                        <th>季度</th>
-                        <th>指标金额</th>
-                        <th>实际金额</th>
-                        <th>达成率</th>
-                        <th>金额同比</th>
-                        <th>金额环比</th>
-                        <th>实际数量</th>
-                        <th>数量同比</th>
-                        <th>数量环比</th>
-                      </tr>
-                    </thead>
-                    <tbody id="report-quarter-body">
-                      <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div class="report-block">
-                <h4 class="report-block-title">产品分析</h4>
-                <div class="table-wrap report-table-wrap">
-                  <table class="report-table report-product-table">
-                    <thead>
-                      <tr>
-                        <th>产品/规格</th>
-                        <th>实际金额</th>
-                        <th>指标金额</th>
-                        <th>达成率</th>
-                        <th>金额占比</th>
-                        <th>金额同比</th>
-                        <th>实际数量</th>
-                        <th>数量占比</th>
-                        <th>数量同比</th>
-                      </tr>
-                    </thead>
-                    <tbody id="report-product-body">
-                      <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div class="report-block">
-                <h4 class="report-block-title">医院分析（按销售金额 Top20）</h4>
-                <div class="table-wrap report-table-wrap">
-                  <table class="report-table report-hospital-table">
-                    <thead>
-                      <tr>
-                        <th>医院</th>
-                        <th>销售金额</th>
-                        <th>金额占比</th>
-                        <th>金额同比</th>
-                        <th>采购数量</th>
-                        <th>数量占比</th>
-                        <th>数量同比</th>
-                      </tr>
-                    </thead>
-                    <tbody id="report-hospital-body">
-                      <tr>
-                        <td colspan="7" class="empty">报表加载中...</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details id="report-visual-board" class="sub-card sub-card-report">
-          <summary>
-            <div class="summary-copy">
-              <span class="summary-kicker">Visual Board</span>
-              <h3>可视化图表</h3>
-            </div>
-            <span class="fold-tip">趋势与结构</span>
-          </summary>
-          <div class="sub-card-body">
-            <div class="report-charts-panel">
-              <p class="hint report-charts-intro">图表口径与销售分析表一致，时间范围跟随起始月/结束月。</p>
-              <div class="report-charts-toolbar">
-                <label class="inline-field report-chart-palette-field" for="report-chart-palette-select">
-                  配色方案
-                  <select id="report-chart-palette-select" aria-label="选择图表配色方案">
-                    <option value="">加载中...</option>
-                  </select>
-                </label>
-                <label class="inline-field report-chart-data-label-field" for="report-chart-data-label-mode-select">
-                  标注图表数据
-                  <select id="report-chart-data-label-mode-select" aria-label="选择图表数据标注模式">
-                    <option value="">加载中...</option>
-                  </select>
-                </label>
-              </div>
-              <p id="report-charts-hint" class="hint report-charts-hint"></p>
-              <div class="report-charts-grid">
-                <section class="report-chart-card report-chart-card-wide">
-                  <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">月度趋势</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                    </div>
-                  </header>
-                  <div id="chart-monthly-trend" class="report-chart-canvas" aria-label="月度趋势图"></div>
-                </section>
-
-                <section class="report-chart-card report-chart-card-wide">
-                  <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">季度趋势</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-quarterly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-quarterly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                    </div>
-                  </header>
-                  <div id="chart-quarterly-trend" class="report-chart-canvas" aria-label="季度趋势图"></div>
-                </section>
-
-                <div class="report-chart-row-product">
-                  <section class="report-chart-card report-chart-card-product-pie">
-                    <header class="report-chart-card-head">
-                      <h4 class="report-chart-card-title">产品 Top10 金额占比</h4>
-                      <div class="report-chart-export-group">
-                        <button id="export-chart-product-top-btn" class="secondary-btn" type="button">导出 PNG</button>
-                        <button id="export-chart-product-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                      </div>
-                    </header>
-                    <div id="chart-product-top" class="report-chart-canvas" aria-label="产品金额占比图"></div>
-                  </section>
-
-                  <section class="report-chart-card report-chart-card-product-performance">
-                    <header class="report-chart-card-head">
-                      <h4 class="report-chart-card-title">产品达成与增长（Top10）</h4>
-                      <div class="report-chart-export-group">
-                        <button id="export-chart-product-performance-btn" class="secondary-btn" type="button">导出 PNG</button>
-                        <button id="export-chart-product-performance-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                      </div>
-                    </header>
-                    <div id="chart-product-performance" class="report-chart-canvas" aria-label="产品达成与增长图"></div>
-                  </section>
-                </div>
-
-                <section class="report-chart-card report-chart-card-wide">
-                  <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">产品月度变化趋势（Top10）</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-product-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-product-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                    </div>
-                  </header>
-                  <div id="chart-product-monthly-trend" class="report-chart-canvas" aria-label="产品月度变化趋势图"></div>
-                </section>
-
-                <section class="report-chart-card">
-                  <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">医院 Top10 销售金额</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-hospital-top-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-hospital-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                    </div>
-                  </header>
-                  <div id="chart-hospital-top" class="report-chart-canvas" aria-label="医院销售金额图"></div>
-                </section>
-
-                <section class="report-chart-card">
-                  <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">TOP10医院销售金额占比</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-hospital-share-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-hospital-share-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                    </div>
-                  </header>
-                  <div id="chart-hospital-share" class="report-chart-canvas" aria-label="医院销售金额占比图"></div>
-                </section>
-
-                <section class="report-chart-card report-chart-card-wide">
-                  <header class="report-chart-card-head report-chart-card-head-with-tools">
-                    <h4 class="report-chart-card-title">医院月度趋势与增长率（Top10可选）</h4>
-                    <div class="report-chart-card-tools">
-                      <label class="inline-field report-hospital-trend-field" for="chart-hospital-trend-select">
-                        医院
-                        <select id="chart-hospital-trend-select" aria-label="选择医院趋势图医院">
-                          <option value="">加载中...</option>
-                        </select>
-                      </label>
-                      <div class="report-chart-export-group">
-                        <button id="export-chart-hospital-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                        <button id="export-chart-hospital-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
-                      </div>
-                    </div>
-                  </header>
-                  <div id="chart-hospital-trend" class="report-chart-canvas" aria-label="医院月度趋势与增长率图"></div>
-                </section>
-              </div>
             </div>
           </div>
         </details>
