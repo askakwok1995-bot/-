@@ -60,6 +60,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   const toolCalls = [];
   let firstRoundDeclarationNames = [];
   let firstRoundSystemInstruction = "";
+  let firstRoundGenerationConfig = null;
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
     message: "分析销售趋势",
@@ -79,6 +80,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
             ? payload.tools[0].functionDeclarations.map((item) => item?.name)
             : [];
           firstRoundSystemInstruction = String(payload?.systemInstruction?.parts?.[0]?.text || "");
+          firstRoundGenerationConfig = payload?.generationConfig || null;
         }
         if (geminiCallCount === 1) {
           return {
@@ -166,6 +168,8 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.match(firstRoundSystemInstruction, /策略 A：Direct Answer/u);
   assert.match(firstRoundSystemInstruction, /策略 B：Bounded Answer/u);
   assert.equal((firstRoundSystemInstruction.match(/角色定位：/g) || []).length, 1);
+  assert.equal(firstRoundGenerationConfig?.temperature, 0.7);
+  assert.equal(firstRoundGenerationConfig?.maxOutputTokens, 1800);
   assert.deepEqual(firstRoundDeclarationNames, [
     "submit_analysis_plan",
     "get_sales_overview_brief",
@@ -176,6 +180,174 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
   assert.deepEqual(result.missingEvidenceTypes, []);
+});
+
+test("runToolFirstChat retries once with planner-only payload when first round misses planner", async () => {
+  const toolCalls = [];
+  let secondRoundDeclarationNames = [];
+  let secondRoundSystemInstruction = "";
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析产品表现并给建议",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-planner-recovery-success",
+    deps: {
+      requestGeminiGenerateContent: async (payload) => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [{ text: "当前产品表现稳健，可继续关注头部产品。"}],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        if (geminiCallCount === 2) {
+          secondRoundDeclarationNames = Array.isArray(payload?.tools?.[0]?.functionDeclarations)
+            ? payload.tools[0].functionDeclarations.map((item) => item?.name)
+            : [];
+          secondRoundSystemInstruction = String(payload?.systemInstruction?.parts?.[0]?.text || "");
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "diagnosis",
+                            required_evidence: ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"],
+                            requested_views: ["get_dimension_report_brief"],
+                            synthesis_expectation: "先总结产品表现，再给出趋势、结构和建议。",
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_report_brief",
+                                args: { dimension: "product", limit: 4 },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内头部产品贡献集中，整体趋势向上，建议围绕强势产品继续放大增长。"}],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_product_report_brief"],
+            summary: { overview_dimension: "product" },
+            rows: [{ row_label: "趋势:2025-03", sales_amount: "12.00万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_dimension_report",
+            coverage_code: "full",
+            analysis_view: "product_report_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 3);
+  assert.deepEqual(secondRoundDeclarationNames, ["submit_analysis_plan"]);
+  assert.match(secondRoundSystemInstruction, /此轮禁止输出自然语言文本，也禁止调用任何业务工具/u);
+  assert.deepEqual(toolCalls, ["get_dimension_report_brief"]);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+});
+
+test("runToolFirstChat still returns planner_call_missing when recovery round also misses planner", async () => {
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析产品表现并给建议",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-planner-recovery-fail",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "先给你一个简短判断。"}],
+                },
+              },
+            ],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(geminiCallCount, 2);
+  assert.equal(result.fallbackReason, "planner_call_missing");
 });
 
 test("runToolFirstChat prefers dimension report macro for product report questions", async () => {

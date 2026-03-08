@@ -6,6 +6,7 @@ import {
   TOOL_RUNTIME_MAX_ROUNDS,
   normalizeBusinessSnapshot,
   normalizeNumericValue,
+  TOOL_RUNTIME_PLANNER_RECOVERY_APPEND_PROMPT,
   TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT,
   trimString,
 } from "./shared.js";
@@ -171,19 +172,26 @@ function buildAllowedToolDeclarations(allowedViewNames) {
   return buildToolDeclarations().filter((item) => allowedSet.has(trimString(item?.name)));
 }
 
-function buildToolPayload(contents, allowedViewNames = PLANNER_VIEW_NAMES) {
+function buildToolPayload(contents, allowedViewNames = PLANNER_VIEW_NAMES, options = {}) {
+  const plannerOnly = Boolean(options?.plannerOnly);
+  const forcePlannerRecovery = Boolean(options?.forcePlannerRecovery);
+  const systemInstructionText = forcePlannerRecovery
+    ? `${TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT}\n\n${TOOL_RUNTIME_PLANNER_RECOVERY_APPEND_PROMPT}`
+    : TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT;
   return {
     systemInstruction: {
       parts: [
         {
-          text: TOOL_RUNTIME_STATE_MACHINE_SYSTEM_PROMPT,
+          text: systemInstructionText,
         },
       ],
     },
     contents,
     tools: [
       {
-        functionDeclarations: [buildPlannerDeclaration(allowedViewNames), ...buildAllowedToolDeclarations(allowedViewNames)],
+        functionDeclarations: plannerOnly
+          ? [buildPlannerDeclaration(allowedViewNames)]
+          : [buildPlannerDeclaration(allowedViewNames), ...buildAllowedToolDeclarations(allowedViewNames)],
       },
     ],
     toolConfig: {
@@ -192,8 +200,8 @@ function buildToolPayload(contents, allowedViewNames = PLANNER_VIEW_NAMES) {
       },
     },
     generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: 1024,
+      temperature: 0.7,
+      maxOutputTokens: 1800,
     },
   };
 }
@@ -951,6 +959,7 @@ export async function runToolFirstChat({
   const contents = buildInitialContents(historyWindow, message, businessSnapshot);
   let lastToolResult = null;
   let plannerState = null;
+  let plannerRecoveryAttempted = false;
   const firstRoundDimensionReportMacroOnly = shouldUseDimensionReportMacroFirstRound(message);
   const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
 
@@ -964,8 +973,13 @@ export async function runToolFirstChat({
             ? MACRO_TOOL_NAMES
             : PLANNER_VIEW_NAMES
         : PLANNER_VIEW_NAMES;
+    const shouldForcePlannerRecovery =
+      !state.planner_completed && state.tool_call_count === 0 && plannerRecoveryAttempted;
     const geminiResponse = await requestGeminiGenerateContentImpl(
-      buildToolPayload(contents, allowedViewNames),
+      buildToolPayload(contents, allowedViewNames, {
+        plannerOnly: shouldForcePlannerRecovery,
+        forcePlannerRecovery: shouldForcePlannerRecovery,
+      }),
       env,
       requestId,
       "tool",
@@ -986,6 +1000,15 @@ export async function runToolFirstChat({
 
     if (!state.planner_completed) {
       if (!plannerCall) {
+        const canRetryPlanner =
+          !plannerRecoveryAttempted &&
+          roundIndex === 0 &&
+          state.tool_call_count === 0 &&
+          trimString(questionJudgment?.relevance?.code) !== QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT;
+        if (canRetryPlanner) {
+          plannerRecoveryAttempted = true;
+          continue;
+        }
         state.fallback_reason = TOOL_FALLBACK_REASONS.PLANNER_CALL_MISSING;
         logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
         return {
