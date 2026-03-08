@@ -173,6 +173,11 @@ async function initializeApp() {
     exportChartHospitalShareXlsxBtn: document.getElementById("export-chart-hospital-share-xlsx-btn"),
     exportChartHospitalTrendBtn: document.getElementById("export-chart-hospital-trend-btn"),
     exportChartHospitalTrendXlsxBtn: document.getElementById("export-chart-hospital-trend-xlsx-btn"),
+    heroProductsCountEl: document.getElementById("hero-products-count"),
+    heroRecordsCountEl: document.getElementById("hero-records-count"),
+    heroReportRangeEl: document.getElementById("hero-report-range"),
+    heroTargetYearEl: document.getElementById("hero-target-year"),
+    heroStatusLineEl: document.getElementById("hero-status-line"),
   };
 
   const state = {
@@ -226,6 +231,39 @@ async function initializeApp() {
     }
     if (endInput) {
       endInput.value = String(stateRef.reportEndYm || "").trim();
+    }
+  }
+
+  function updateHeroOverview() {
+    const productsCount = Array.isArray(state.products) ? state.products.length : 0;
+    const recordsCount = Number.isFinite(state.recordListTotal) ? state.recordListTotal : 0;
+    const targetYear = String(state.activeTargetYear || "").trim();
+    const reportRange =
+      state.reportStartYm && state.reportEndYm ? `${state.reportStartYm} - ${state.reportEndYm}` : "未设置分析区间";
+
+    if (dom.heroProductsCountEl instanceof HTMLElement) {
+      dom.heroProductsCountEl.textContent = String(productsCount);
+    }
+
+    if (dom.heroRecordsCountEl instanceof HTMLElement) {
+      dom.heroRecordsCountEl.textContent = String(recordsCount);
+    }
+
+    if (dom.heroReportRangeEl instanceof HTMLElement) {
+      dom.heroReportRangeEl.textContent = reportRange;
+    }
+
+    if (dom.heroTargetYearEl instanceof HTMLElement) {
+      dom.heroTargetYearEl.textContent = targetYear || "--";
+    }
+
+    if (dom.heroStatusLineEl instanceof HTMLElement) {
+      if (!productsCount && !recordsCount) {
+        dom.heroStatusLineEl.textContent = "已登录，可先设置分析区间，或从录入区开始补充业务数据。";
+        return;
+      }
+
+      dom.heroStatusLineEl.textContent = `已同步 ${productsCount} 个产品、${recordsCount} 条记录，当前指标年 ${targetYear || "--"}。`;
     }
   }
 
@@ -387,6 +425,30 @@ async function initializeApp() {
     },
   });
 
+  const originalRenderProductMaster = deps.renderProductMaster;
+  deps.renderProductMaster = () => {
+    originalRenderProductMaster();
+    updateHeroOverview();
+  };
+
+  const originalRenderRecords = deps.renderRecords;
+  deps.renderRecords = () => {
+    originalRenderRecords();
+    updateHeroOverview();
+  };
+
+  const originalRenderTargets = deps.renderTargets;
+  deps.renderTargets = () => {
+    originalRenderTargets();
+    updateHeroOverview();
+  };
+
+  const originalRenderReports = deps.renderReports;
+  deps.renderReports = () => {
+    originalRenderReports();
+    updateHeroOverview();
+  };
+
   const requestAiChatReply = createChatReplyRequester({
     getAccessToken: () => getSupabaseSessionAccessToken({ getSupabaseClient }),
     getBusinessSnapshot: () =>
@@ -410,6 +472,7 @@ async function initializeApp() {
     dom.pageSizeSelect.value = String(state.pageSize);
   }
   hydrateReportRangeInputs(dom, state);
+  updateHeroOverview();
 
   try {
     state.products = await productsRepository.fetchProductsFromCloud();
@@ -465,7 +528,7 @@ async function bootstrap() {
     });
 
     await bootstrapAuthGate({
-      appRoot: document.querySelector("main.container"),
+      appRoot: document.querySelector(".workspace-grid"),
     });
 
     await runReadOnlyRecordsCountCheck({ getAuthContext });

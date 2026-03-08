@@ -113,7 +113,7 @@ function setGateLocked(locked, options = {}) {
     authDom.appRoot.classList.toggle("runtime-blocked", locked);
   }
 
-  document.body.classList.toggle("auth-lock-scroll", locked);
+  document.body.classList.toggle("auth-gated", locked);
 
   if (authDom?.modal instanceof HTMLElement) {
     authDom.modal.hidden = !showModal;
@@ -134,6 +134,8 @@ function updateUserPanel(user) {
   if (!(authDom?.userEmailEl instanceof HTMLElement) || !(authDom?.signOutBtn instanceof HTMLButtonElement)) {
     return;
   }
+
+  document.body.classList.toggle("auth-signed-in", Boolean(user?.email));
 
   if (user?.email) {
     authDom.userEmailEl.hidden = false;

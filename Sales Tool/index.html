@@ -18,19 +18,119 @@
     </div>
     <main class="container">
       <header class="app-topbar">
-        <h1>医药代表销售汇报工具</h1>
+        <div class="topbar-brand">
+          <span class="topbar-badge">Sales Command</span>
+          <div class="topbar-title-group">
+            <p class="topbar-kicker">医药销售经营工作台</p>
+            <h1>医药代表销售汇报工具</h1>
+          </div>
+        </div>
         <div class="auth-user-panel" aria-live="polite">
           <span id="auth-user-email" class="auth-user-email" hidden></span>
           <button id="auth-signout-btn" class="secondary-btn auth-signout-btn" type="button" hidden>退出登录</button>
         </div>
       </header>
 
-      <section class="card">
-        <h2>录入区</h2>
+      <section class="hero-shell">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="hero-kicker">FIELD INTELLIGENCE</p>
+            <h2 class="hero-title">把销售录入、指标协同与经营分析，收拢到一张更像企业产品的首页里。</h2>
+            <p class="hero-desc">
+              首页优先呈现经营视角，再承接录入、清单和 AI 洞察，适合医药销售团队做日常复盘与阶段性分析。
+            </p>
+            <div class="hero-actions">
+              <a class="hero-link-btn hero-link-btn-primary" href="#report-deck">先看分析</a>
+              <a class="hero-link-btn" href="#operations-deck">进入录入</a>
+              <a class="hero-link-btn" href="#records-deck">查看明细</a>
+            </div>
+            <div class="hero-tags" aria-label="工作台能力">
+              <span class="hero-tag">目标协同</span>
+              <span class="hero-tag">产品与医院分析</span>
+              <span class="hero-tag">云端记录与导出</span>
+              <span class="hero-tag">AI 业务问答</span>
+            </div>
+          </div>
+
+          <div class="hero-side">
+            <section class="hero-panel hero-panel-metrics" aria-label="首页经营摘要">
+              <div class="hero-panel-head">
+                <p class="hero-panel-kicker">Overview</p>
+                <h3 class="hero-panel-title">当前工作台摘要</h3>
+              </div>
+              <div class="hero-metrics-grid">
+                <article class="hero-metric-card">
+                  <span class="hero-metric-label">分析区间</span>
+                  <strong id="hero-report-range" class="hero-metric-value">未设置</strong>
+                </article>
+                <article class="hero-metric-card">
+                  <span class="hero-metric-label">产品数</span>
+                  <strong id="hero-products-count" class="hero-metric-value">0</strong>
+                </article>
+                <article class="hero-metric-card">
+                  <span class="hero-metric-label">记录数</span>
+                  <strong id="hero-records-count" class="hero-metric-value">0</strong>
+                </article>
+                <article class="hero-metric-card">
+                  <span class="hero-metric-label">指标年份</span>
+                  <strong id="hero-target-year" class="hero-metric-value">--</strong>
+                </article>
+              </div>
+              <p id="hero-status-line" class="hero-status-line" aria-live="polite">正在准备首页摘要...</p>
+            </section>
+
+            <section
+              id="auth-modal"
+              class="hero-panel hero-panel-auth auth-modal"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="auth-modal-title"
+              hidden
+            >
+              <div class="hero-panel-head">
+                <p class="hero-panel-kicker">Access</p>
+                <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">邮箱登录</h3>
+              </div>
+              <p class="auth-modal-desc">登录后可访问云端记录、目标配置、销售报表与 AI 洞察。</p>
+              <form id="auth-form" class="auth-form" novalidate>
+                <label for="auth-email">
+                  邮箱
+                  <input id="auth-email" name="email" type="email" placeholder="name@example.com" autocomplete="email" required />
+                </label>
+                <label for="auth-password">
+                  密码
+                  <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
+                </label>
+                <div class="auth-form-actions">
+                  <button id="auth-login-btn" type="submit">登录</button>
+                  <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
+                </div>
+                <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
+                <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
+              </form>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <div class="workspace-grid">
+      <section id="operations-deck" class="card section-card section-card-input">
+        <header class="section-head">
+          <div>
+            <p class="section-kicker">Execution Deck</p>
+            <h2>录入区</h2>
+          </div>
+          <p class="section-desc">维护产品主数据、提交销售记录，并同步年度指标与季度分配。</p>
+        </header>
+
+        <div class="operations-grid">
         <details class="sub-card sub-card-product">
           <summary>
-            <h3>产品配置</h3>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Master Data</span>
+              <h3>产品配置</h3>
+            </div>
+            <span class="fold-tip">维护主数据</span>
           </summary>
           <div class="sub-card-body">
             <div class="product-layout">
@@ -75,8 +175,11 @@
 
         <details class="sub-card sub-card-sales">
           <summary>
-            <h3>销售录入</h3>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Field Input</span>
+              <h3>销售录入</h3>
+            </div>
+            <span class="fold-tip">快速提交</span>
           </summary>
           <div class="sub-card-body">
             <form id="sales-form" novalidate>
@@ -126,8 +229,11 @@
 
         <details class="sub-card sub-card-report">
           <summary>
-            <h3>指标录入</h3>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Planning</span>
+              <h3>指标录入</h3>
+            </div>
+            <span class="fold-tip">年度目标</span>
           </summary>
           <div class="sub-card-body">
             <div class="target-panel">
@@ -206,13 +312,24 @@
             </div>
           </div>
         </details>
+        </div>
       </section>
 
-      <section class="card">
+      <section id="records-deck" class="card section-card section-card-list">
+        <header class="section-head">
+          <div>
+            <p class="section-kicker">Ledger View</p>
+            <h2>列表区</h2>
+          </div>
+          <p class="section-desc">按时间、产品、医院筛选云端销售明细，支持批量删除、导入导出与分页管理。</p>
+        </header>
         <details class="sub-card sub-card-list">
           <summary>
-            <h2 class="section-title-inline">列表区</h2>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Records</span>
+              <h3 class="section-title-inline">销售明细账</h3>
+            </div>
+            <span class="fold-tip">筛选与导出</span>
           </summary>
           <div class="sub-card-body">
             <p id="list-error" class="error" role="alert" aria-live="polite"></p>
@@ -292,9 +409,12 @@
         </details>
       </section>
 
-      <section class="card">
-        <div class="report-section-head">
-          <h2>报表区</h2>
+      <section id="report-deck" class="card section-card section-card-report">
+        <div class="section-head report-section-head">
+          <div>
+            <p class="section-kicker">Sales Intelligence</p>
+            <h2>报表区</h2>
+          </div>
           <div class="report-section-range">
             <label class="inline-field report-month-field" for="report-start-month">
               起始月
@@ -312,10 +432,14 @@
             </label>
           </div>
         </div>
-        <details class="sub-card sub-card-report">
+        <p class="section-desc section-desc-report">优先查看月度、季度、产品和医院表现，再继续处理录入与明细。</p>
+        <details class="sub-card sub-card-report" open>
           <summary>
-            <h3>销售分析</h3>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Analysis</span>
+              <h3>销售分析</h3>
+            </div>
+            <span class="fold-tip">核心报表</span>
           </summary>
           <div class="sub-card-body">
             <div class="report-panel">
@@ -435,8 +559,11 @@
 
         <details id="report-visual-board" class="sub-card sub-card-report">
           <summary>
-            <h3>可视化图表</h3>
-            <span class="fold-tip">点击展开/收起</span>
+            <div class="summary-copy">
+              <span class="summary-kicker">Visual Board</span>
+              <h3>可视化图表</h3>
+            </div>
+            <span class="fold-tip">趋势与结构</span>
           </summary>
           <div class="sub-card-body">
             <div class="report-charts-panel">
@@ -559,6 +686,7 @@
           </div>
         </details>
       </section>
+      </div>
     </main>
     <button
       id="ai-chat-fab"
@@ -568,7 +696,7 @@
       aria-controls="ai-chat-sheet"
       aria-expanded="false"
     >
-      AI
+      AI 洞察
     </button>
     <div id="ai-chat-backdrop" class="ai-chat-backdrop" hidden></div>
     <section id="ai-chat-sheet" class="ai-chat-sheet" role="dialog" aria-label="AI 对话窗口" aria-hidden="true">
@@ -614,27 +742,6 @@
       </form>
       <p id="ai-chat-status" class="ai-chat-status"></p>
     </section>
-    <div id="auth-modal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
-      <div class="auth-modal-backdrop"></div>
-      <section class="auth-modal-card" aria-describedby="auth-status">
-        <h2 id="auth-modal-title" class="auth-modal-title">邮箱登录</h2>
-        <p class="auth-modal-desc">请输入邮箱和密码登录；首次可直接注册。</p>
-        <form id="auth-form" class="auth-form" novalidate>
-          <label for="auth-email">
-            邮箱
-            <input id="auth-email" name="email" type="email" placeholder="name@example.com" autocomplete="email" required />
-          </label>
-          <label for="auth-password">
-            密码
-            <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
-          </label>
-          <button id="auth-login-btn" type="submit">登录</button>
-          <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
-          <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
-          <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
-        </form>
-      </section>
-    </div>
     <div id="auth-bootstrap-state" class="auth-bootstrap-state" aria-live="polite" hidden>正在验证登录状态...</div>
 
     <script src="./vendor/xlsx.full.min.js"></script>
