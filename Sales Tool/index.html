@@ -91,20 +91,28 @@
                 <p class="hero-panel-kicker">开始使用</p>
                 <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">登录后开始录入与分析</h3>
               </div>
-              <p class="auth-modal-desc">登录后即可查看云端记录、维护指标、补录销售数据，并使用 AI 洞察助手。</p>
+              <p class="auth-modal-desc">登录后即可继续查看云端记录、补录销售数据、维护指标，并让 AI 帮你整理当前重点。</p>
+              <div class="auth-value-list" aria-hidden="true">
+                <span class="auth-value-chip">云端记录同步</span>
+                <span class="auth-value-chip">销售与指标录入</span>
+                <span class="auth-value-chip">AI 洞察助手</span>
+              </div>
               <form id="auth-form" class="auth-form" novalidate>
-                <label for="auth-email">
-                  邮箱
-                  <input id="auth-email" name="email" type="email" placeholder="name@example.com" autocomplete="email" required />
-                </label>
-                <label for="auth-password">
-                  密码
-                  <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
-                </label>
+                <div class="auth-form-shell">
+                  <label for="auth-email">
+                    邮箱
+                    <input id="auth-email" name="email" type="email" placeholder="name@example.com" autocomplete="email" required />
+                  </label>
+                  <label for="auth-password">
+                    密码
+                    <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
+                  </label>
+                </div>
                 <div class="auth-form-actions">
                   <button id="auth-login-btn" type="submit">登录</button>
                   <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
                 </div>
+                <p class="auth-subnote">首次使用可直接注册，后续数据会按账号隔离保存。</p>
                 <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
                 <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
               </form>
