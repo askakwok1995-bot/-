@@ -1,0 +1,252 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: Sales Command
+        - generic [ref=e6]:
+          - paragraph [ref=e7]: 医药销售经营工作台
+          - heading "医药代表销售汇报工具" [level=1] [ref=e8]
+      - generic [ref=e56]:
+        - generic [ref=e57]: 已登录：aska_kwok@163.com
+        - button "退出登录" [ref=e58] [cursor=pointer]
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: FIELD INTELLIGENCE
+        - heading "把销售录入、指标协同与经营分析，收拢到一张更像企业产品的首页里。" [level=2] [ref=e13]
+        - paragraph [ref=e14]: 首页优先呈现经营视角，再承接录入、清单和 AI 洞察，适合医药销售团队做日常复盘与阶段性分析。
+        - generic [ref=e15]:
+          - link "先看分析" [ref=e16] [cursor=pointer]:
+            - /url: "#report-deck"
+          - link "进入录入" [ref=e17] [cursor=pointer]:
+            - /url: "#operations-deck"
+          - link "查看明细" [ref=e18] [cursor=pointer]:
+            - /url: "#records-deck"
+        - generic "工作台能力" [ref=e19]:
+          - generic [ref=e20]: 目标协同
+          - generic [ref=e21]: 产品与医院分析
+          - generic [ref=e22]: 云端记录与导出
+          - generic [ref=e23]: AI 业务问答
+      - generic [ref=e24]:
+        - region "首页经营摘要" [ref=e25]:
+          - generic [ref=e26]:
+            - paragraph [ref=e27]: Overview
+            - heading "当前工作台摘要" [level=3] [ref=e28]
+          - generic [ref=e29]:
+            - article [ref=e30]:
+              - generic [ref=e31]: 分析区间
+              - strong [ref=e32]: 未设置分析区间
+            - article [ref=e33]:
+              - generic [ref=e34]: 产品数
+              - strong [ref=e35]: "10"
+            - article [ref=e36]:
+              - generic [ref=e37]: 记录数
+              - strong [ref=e38]: "1893"
+            - article [ref=e39]:
+              - generic [ref=e40]: 指标年份
+              - strong [ref=e41]: "2026"
+          - paragraph [ref=e42]: 已同步 10 个产品、1893 条记录，当前指标年 2026。
+        - region "登录后快捷洞察" [ref=e59]:
+          - generic [ref=e60]:
+            - paragraph [ref=e61]: Quick Notes
+            - heading "下一步建议" [level=3] [ref=e62]
+          - list [ref=e63]:
+            - listitem [ref=e64]: 先设定报表区间，再看月度、季度和产品结构。
+            - listitem [ref=e65]: 录入区适合当天新增数据，列表区适合回查和批量处理。
+            - listitem [ref=e66]: AI 助手会基于当前报表区间回答，不会跨账号读取数据。
+          - generic [ref=e67]:
+            - link "继续分析" [ref=e68] [cursor=pointer]:
+              - /url: "#report-deck"
+            - link "查看清单" [ref=e69] [cursor=pointer]:
+              - /url: "#records-deck"
+    - generic [ref=e70]:
+      - generic [ref=e71]:
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - paragraph [ref=e74]: Sales Intelligence
+            - heading "报表区" [level=2] [ref=e75]
+          - generic [ref=e76]:
+            - generic [ref=e77]:
+              - text: 起始月
+              - textbox "选择起始月份" [ref=e78]
+            - generic [ref=e79]:
+              - text: 结束月
+              - textbox "选择结束月份" [ref=e80]
+            - generic [ref=e81]:
+              - text: 单位
+              - combobox "选择报表金额单位" [ref=e82]:
+                - option "元" [selected]
+                - option "千元"
+                - option "万元"
+                - option "十万元"
+                - option "百万元"
+        - paragraph [ref=e83]: 优先查看月度、季度、产品和医院表现，再继续处理录入与明细。
+        - group [ref=e84]:
+          - generic "Analysis 销售分析 核心报表" [ref=e85] [cursor=pointer]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: Analysis
+              - heading "销售分析" [level=3] [ref=e88]
+            - generic [ref=e89]: 核心报表
+          - generic [ref=e91]:
+            - generic [ref=e92]:
+              - paragraph [ref=e93]: 请选择起始月和结束月
+              - button "导出销售分析（XLSX）" [ref=e94] [cursor=pointer]
+            - paragraph [ref=e95]: 暂无可分析数据
+            - generic [ref=e96]:
+              - heading "总览（按月）" [level=4] [ref=e97]
+              - table [ref=e99]:
+                - rowgroup [ref=e100]:
+                  - row "月份 指标金额 实际金额 达成率 金额同比 金额环比 实际数量 数量同比 数量环比" [ref=e101]:
+                    - columnheader "月份" [ref=e102]
+                    - columnheader "指标金额" [ref=e103]
+                    - columnheader "实际金额" [ref=e104]
+                    - columnheader "达成率" [ref=e105]
+                    - columnheader "金额同比" [ref=e106]
+                    - columnheader "金额环比" [ref=e107]
+                    - columnheader "实际数量" [ref=e108]
+                    - columnheader "数量同比" [ref=e109]
+                    - columnheader "数量环比" [ref=e110]
+                - rowgroup [ref=e111]:
+                  - row "暂无可分析数据" [ref=e112]:
+                    - cell "暂无可分析数据" [ref=e113]
+            - generic [ref=e114]:
+              - heading "总览（按季度）" [level=4] [ref=e115]
+              - table [ref=e117]:
+                - rowgroup [ref=e118]:
+                  - row "季度 指标金额 实际金额 达成率 金额同比 金额环比 实际数量 数量同比 数量环比" [ref=e119]:
+                    - columnheader "季度" [ref=e120]
+                    - columnheader "指标金额" [ref=e121]
+                    - columnheader "实际金额" [ref=e122]
+                    - columnheader "达成率" [ref=e123]
+                    - columnheader "金额同比" [ref=e124]
+                    - columnheader "金额环比" [ref=e125]
+                    - columnheader "实际数量" [ref=e126]
+                    - columnheader "数量同比" [ref=e127]
+                    - columnheader "数量环比" [ref=e128]
+                - rowgroup [ref=e129]:
+                  - row "暂无可分析数据" [ref=e130]:
+                    - cell "暂无可分析数据" [ref=e131]
+            - generic [ref=e132]:
+              - heading "产品分析" [level=4] [ref=e133]
+              - table [ref=e135]:
+                - rowgroup [ref=e136]:
+                  - row "产品/规格 实际金额 指标金额 达成率 金额占比 金额同比 实际数量 数量占比 数量同比" [ref=e137]:
+                    - columnheader "产品/规格" [ref=e138]
+                    - columnheader "实际金额" [ref=e139]
+                    - columnheader "指标金额" [ref=e140]
+                    - columnheader "达成率" [ref=e141]
+                    - columnheader "金额占比" [ref=e142]
+                    - columnheader "金额同比" [ref=e143]
+                    - columnheader "实际数量" [ref=e144]
+                    - columnheader "数量占比" [ref=e145]
+                    - columnheader "数量同比" [ref=e146]
+                - rowgroup [ref=e147]:
+                  - row "暂无可分析数据" [ref=e148]:
+                    - cell "暂无可分析数据" [ref=e149]
+            - generic [ref=e150]:
+              - heading "医院分析（按销售金额 Top20）" [level=4] [ref=e151]
+              - table [ref=e153]:
+                - rowgroup [ref=e154]:
+                  - row "医院 销售金额 金额占比 金额同比 采购数量 数量占比 数量同比" [ref=e155]:
+                    - columnheader "医院" [ref=e156]
+                    - columnheader "销售金额" [ref=e157]
+                    - columnheader "金额占比" [ref=e158]
+                    - columnheader "金额同比" [ref=e159]
+                    - columnheader "采购数量" [ref=e160]
+                    - columnheader "数量占比" [ref=e161]
+                    - columnheader "数量同比" [ref=e162]
+                - rowgroup [ref=e163]:
+                  - row "暂无可分析数据" [ref=e164]:
+                    - cell "暂无可分析数据" [ref=e165]
+        - group [ref=e166]:
+          - generic "Visual Board 可视化图表 趋势与结构" [ref=e167] [cursor=pointer]:
+            - generic [ref=e168]:
+              - generic [ref=e169]: Visual Board
+              - heading "可视化图表" [level=3] [ref=e170]
+            - generic [ref=e171]: 趋势与结构
+          - option "经典蓝绿" [selected]
+          - option "深海蓝"
+          - option "薄荷清新"
+          - option "日落暖调"
+          - option "薰衣草"
+          - option "石墨灰"
+          - option "森林绿"
+          - option "珊瑚橙"
+          - option "琥珀金"
+          - option "黑白灰"
+          - option "无"
+          - option "简洁" [selected]
+          - option "强调"
+          - option "暂无可选医院" [selected]
+      - generic [ref=e172]:
+        - generic [ref=e173]:
+          - generic [ref=e174]:
+            - paragraph [ref=e175]: Execution Deck
+            - heading "录入区" [level=2] [ref=e176]
+          - paragraph [ref=e177]: 维护产品主数据、提交销售记录，并同步年度指标与季度分配。
+        - generic [ref=e178]:
+          - group [ref=e179]:
+            - generic "Master Data 产品配置 维护主数据" [ref=e180] [cursor=pointer]:
+              - generic [ref=e181]:
+                - generic [ref=e182]: Master Data
+                - heading "产品配置" [level=3] [ref=e183]
+              - generic [ref=e184]: 维护主数据
+          - group [ref=e185]:
+            - generic "Field Input 销售录入 快速提交" [ref=e186] [cursor=pointer]:
+              - generic [ref=e187]:
+                - generic [ref=e188]: Field Input
+                - heading "销售录入" [level=3] [ref=e189]
+              - generic [ref=e190]: 快速提交
+            - option "请选择产品/规格" [selected]
+            - option "Volux"
+            - option "Ultra Plus XC"
+            - option "Ultra XC"
+            - option "Ultra Plus"
+            - option "Ultra"
+            - option "Volbella"
+            - option "Volift"
+            - option "Voluma"
+            - option "Botox50"
+            - option "Botox100"
+          - group [ref=e191]:
+            - generic "Planning 指标录入 年度目标" [ref=e192] [cursor=pointer]:
+              - generic [ref=e193]:
+                - generic [ref=e194]: Planning
+                - heading "指标录入" [level=3] [ref=e195]
+              - generic [ref=e196]: 年度目标
+            - option "2024年"
+            - option "2025年"
+            - option "2026年" [selected]
+            - option "2027年"
+            - option "2028年"
+            - option "Q1（1-3月）" [selected]
+            - option "Q2（4-6月）"
+            - option "Q3（7-9月）"
+            - option "Q4（10-12月）"
+      - generic [ref=e197]:
+        - generic [ref=e198]:
+          - generic [ref=e199]:
+            - paragraph [ref=e200]: Ledger View
+            - heading "列表区" [level=2] [ref=e201]
+          - paragraph [ref=e202]: 按时间、产品、医院筛选云端销售明细，支持批量删除、导入导出与分页管理。
+        - group [ref=e203]:
+          - generic "Records 销售明细账 筛选与导出" [ref=e204] [cursor=pointer]:
+            - generic [ref=e205]:
+              - generic [ref=e206]: Records
+              - heading "销售明细账" [level=3] [ref=e207]
+            - generic [ref=e208]: 筛选与导出
+          - option "20" [selected]
+          - option "50"
+          - option "100"
+  - button "打开 AI 对话窗口" [ref=e209] [cursor=pointer]: AI 洞察
+  - dialog:
+    - banner:
+      - button:
+        - img
+      - button:
+        - img
+    - generic:
+      - article: 我是销售分析助手，仅基于当前账号已录入的销售记录、产品主数据和目标配置进行分析。当前分析时间范围：尚未设置，请先在报表区选择起始月和结束月。可在报表区调整起止月后继续提问。
+    - generic:
+      - textbox:
+        - /placeholder: 请输入你的问题，例如：本月销售趋势如何？
+      - button: 发送

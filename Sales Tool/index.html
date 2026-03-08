@@ -418,64 +418,22 @@
         </header>
 
         <div class="operations-grid">
-        <details class="sub-card sub-card-product">
-          <summary>
-            <div class="summary-copy">
-              <span class="summary-kicker">Master Data</span>
-              <h3>产品配置</h3>
-            </div>
-            <span class="fold-tip">维护主数据</span>
-          </summary>
-          <div class="sub-card-body">
-            <div class="product-layout">
-              <form id="product-form" class="product-form-pane" novalidate>
-                <div class="product-form-stack">
-                  <label>
-                    产品/规格
-                    <input id="product-name" name="productName" type="text" placeholder="如：阿莫西林 0.25g*24粒" required />
-                  </label>
-
-                  <label>
-                    单盒考核价
-                    <input id="unit-price" name="unitPrice" type="text" inputmode="decimal" placeholder="请输入数字" required />
-                  </label>
-
-                  <button class="product-submit-btn" type="submit">新增产品</button>
-                </div>
-                <p id="product-error" class="error" role="alert" aria-live="polite"></p>
-              </form>
-
-              <div class="product-table-pane">
-                <div class="table-wrap">
-                  <table class="product-table">
-                    <thead>
-                      <tr>
-                        <th>产品/规格</th>
-                        <th>单盒考核价</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="product-master-body">
-                      <tr>
-                        <td colspan="3" class="empty">暂无产品配置</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="sub-card sub-card-sales">
+        <details class="sub-card sub-card-sales operation-card-primary" open>
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">Field Input</span>
               <h3>销售录入</h3>
             </div>
-            <span class="fold-tip">快速提交</span>
+            <span class="fold-tip">日常高频</span>
           </summary>
           <div class="sub-card-body">
+            <div class="entry-flow-hint" aria-label="销售录入步骤">
+              <span class="entry-flow-step">1 选择日期</span>
+              <span class="entry-flow-step">2 选择产品</span>
+              <span class="entry-flow-step">3 填写医院与数量</span>
+              <span class="entry-flow-step">4 确认配送并提交</span>
+            </div>
+            <p class="operation-note">优先完成当日成交录入，系统会按产品主数据自动计算考核金额。</p>
             <form id="sales-form" novalidate>
               <div class="form-grid">
                 <label>
@@ -521,16 +479,78 @@
           </div>
         </details>
 
-        <details class="sub-card sub-card-report">
+        <details class="sub-card sub-card-product">
+          <summary>
+            <div class="summary-copy">
+              <span class="summary-kicker">Master Data</span>
+              <h3>产品配置</h3>
+            </div>
+            <span class="fold-tip">维护主数据</span>
+          </summary>
+          <div class="sub-card-body">
+            <p class="operation-note">左侧维护产品与单价，右侧滚动核对当前清单，适合按批次整理主数据。</p>
+            <div class="product-layout">
+              <form id="product-form" class="product-form-pane" novalidate>
+                <div class="product-form-stack">
+                  <div class="operation-microcopy">
+                    <span class="operation-microcopy-kicker">Catalog Setup</span>
+                    <p>新增或修正产品规格后，销售录入和指标分配会立即复用这里的主数据。</p>
+                  </div>
+                  <label>
+                    产品/规格
+                    <input id="product-name" name="productName" type="text" placeholder="如：阿莫西林 0.25g*24粒" required />
+                  </label>
+
+                  <label>
+                    单盒考核价
+                    <input id="unit-price" name="unitPrice" type="text" inputmode="decimal" placeholder="请输入数字" required />
+                  </label>
+
+                  <button class="product-submit-btn" type="submit">新增产品</button>
+                </div>
+                <p id="product-error" class="error" role="alert" aria-live="polite"></p>
+              </form>
+
+              <div class="product-table-pane">
+                <div class="product-table-shell-head">
+                  <div>
+                    <p class="operation-microcopy-kicker">Current Catalog</p>
+                    <h4 class="product-table-title">当前产品清单</h4>
+                  </div>
+                  <p class="product-table-caption">长表保持独立滚动，避免影响整张维护卡。</p>
+                </div>
+                <div class="table-wrap">
+                  <table class="product-table">
+                    <thead>
+                      <tr>
+                        <th>产品/规格</th>
+                        <th>单盒考核价</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="product-master-body">
+                      <tr>
+                        <td colspan="3" class="empty">暂无产品配置</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="sub-card sub-card-report operation-card-wide">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">Planning</span>
               <h3>指标录入</h3>
             </div>
-            <span class="fold-tip">年度目标</span>
+            <span class="fold-tip">年度目标台</span>
           </summary>
           <div class="sub-card-body">
             <div class="target-panel">
+              <p class="operation-note">季度目标和按产品分配属于宽表工作流，展开后占满整行，便于集中校验与批量调整。</p>
               <div class="target-toolbar">
                 <label class="inline-field target-year-field" for="target-year-select">
                   指标年份
