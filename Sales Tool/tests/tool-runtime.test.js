@@ -164,7 +164,8 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.match(firstRoundSystemInstruction, /\[阶段 1：首轮规划阶段\]/u);
   assert.match(firstRoundSystemInstruction, /\[阶段 2：深挖取数阶段\]/u);
   assert.match(firstRoundSystemInstruction, /\[阶段 3：最终总结阶段\]/u);
-  assert.match(firstRoundSystemInstruction, /强制且只能调用 submit_analysis_plan/u);
+  assert.match(firstRoundSystemInstruction, /默认优先调用 submit_analysis_plan/u);
+  assert.match(firstRoundSystemInstruction, /泛整体问题，可直接先调用宏工具获取首轮事实/u);
   assert.match(firstRoundSystemInstruction, /策略 A：Direct Answer/u);
   assert.match(firstRoundSystemInstruction, /策略 B：Bounded Answer/u);
   assert.equal((firstRoundSystemInstruction.match(/角色定位：/g) || []).length, 1);
@@ -180,6 +181,184 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
   assert.deepEqual(result.missingEvidenceTypes, []);
+});
+
+test("runToolFirstChat allows direct macro start for broad overall report question", async () => {
+  const toolCalls = [];
+  let firstRoundDeclarationNames = [];
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "生成销售分析报告",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-overall-report-direct-macro",
+    deps: {
+      requestGeminiGenerateContent: async (payload) => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          firstRoundDeclarationNames = Array.isArray(payload?.tools?.[0]?.functionDeclarations)
+            ? payload.tools[0].functionDeclarations.map((item) => item?.name)
+            : [];
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "get_sales_overview_brief",
+                          args: { limit: 5 },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内整体销售表现稳健，头部产品贡献集中，最近月延续上升趋势，建议围绕增长势头继续放大核心品类。"}],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_sales_overview_brief"],
+            summary: { sales_amount: "2861.75万元" },
+            rows: [{ row_label: "Top1产品", sales_amount: "1064.83万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_overview",
+            coverage_code: "full",
+            analysis_view: "sales_overview_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 2);
+  assert.deepEqual(firstRoundDeclarationNames, [
+    "submit_analysis_plan",
+    "get_sales_overview_brief",
+    "get_sales_trend_brief",
+    "get_dimension_overview_brief",
+  ]);
+  assert.deepEqual(toolCalls, ["get_sales_overview_brief"]);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.equal(result.plannerState?.question_type, "report");
+  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_overview_brief"]);
+});
+
+test("runToolFirstChat allows direct macro start for broad overall trend question without planner", async () => {
+  const toolCalls = [];
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "分析销售趋势",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-overall-trend-direct-macro",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "get_sales_trend_brief",
+                          args: { limit: 4 },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内销售趋势整体向上，最近月增速明显抬升，说明市场活跃度正在恢复。"}],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_sales_trend_brief"],
+            summary: { sales_amount: "2861.75万元" },
+            rows: [{ row_label: "趋势:2025-12", sales_amount: "316.08万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_trend",
+            coverage_code: "full",
+            analysis_view: "sales_trend_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 2);
+  assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+  assert.equal(result.plannerState?.question_type, "trend");
+  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
 });
 
 test("runToolFirstChat retries once with planner-only payload when first round misses planner", async () => {

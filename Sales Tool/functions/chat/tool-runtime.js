@@ -100,6 +100,18 @@ const GENERIC_HOSPITAL_MENTIONS = Object.freeze([
   "这家医院",
   "某医院",
 ]);
+
+const DIRECT_MACRO_START_TOOL_NAMES = Object.freeze([
+  "get_sales_overview_brief",
+  "get_sales_trend_brief",
+  "get_dimension_overview_brief",
+]);
+
+const MACRO_EVIDENCE_BY_TOOL_NAME = Object.freeze({
+  get_sales_overview_brief: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+  get_sales_trend_brief: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+  get_dimension_overview_brief: ["aggregate", "breakdown", "ranking"],
+});
 const TOOL_DECLARATION_BY_NAME = new Map(
   buildToolDeclarations().map((declaration) => [trimString(declaration?.name), declaration]),
 );
@@ -352,6 +364,165 @@ function shouldUseDimensionReportMacroFirstRound(message) {
     safeMessage.includes("风险") ||
     safeMessage.includes("机会");
   return hasReportIntent || (hasPerformanceIntent && hasAdviceIntent);
+}
+
+function isBroadOverallMacroStartCandidate(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  if (!shouldUseMacroOnlyFirstRound(safeMessage) || shouldUseDimensionReportMacroFirstRound(safeMessage)) {
+    return false;
+  }
+  if (safeMessage.includes("产品") || safeMessage.includes("医院")) {
+    return false;
+  }
+  return true;
+}
+
+function inferQuestionTypeForDirectMacroStart(message, toolCalls) {
+  const safeMessage = trimString(message);
+  const toolNames = Array.isArray(toolCalls) ? toolCalls.map((item) => trimString(item?.name)) : [];
+  if (safeMessage.includes("趋势") || toolNames.includes("get_sales_trend_brief")) {
+    return "trend";
+  }
+  if (safeMessage.includes("报告") || safeMessage.includes("汇报")) {
+    return "report";
+  }
+  return "overview";
+}
+
+function inferPrimaryDimensionForDirectMacroStart(toolCalls) {
+  const firstCall = Array.isArray(toolCalls) && toolCalls.length > 0 ? toolCalls[0] : null;
+  const toolName = trimString(firstCall?.name);
+  if (toolName === "get_dimension_overview_brief") {
+    const dimension = trimString(firstCall?.args?.dimension);
+    if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
+      return QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+    }
+    if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL) {
+      return QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL;
+    }
+  }
+  if (toolName === "get_sales_trend_brief") {
+    return QUESTION_JUDGMENT_CODES.primary_dimension.TREND;
+  }
+  return QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+}
+
+function buildQuestionJudgmentFromCodes(primaryDimensionCode, fallbackQuestionJudgment) {
+  const fallback = fallbackQuestionJudgment && typeof fallbackQuestionJudgment === "object" ? fallbackQuestionJudgment : {};
+  return {
+    ...fallback,
+    primary_dimension: {
+      code: primaryDimensionCode,
+      label: QUESTION_JUDGMENT_LABELS.primary_dimension[primaryDimensionCode] || trimString(fallback?.primary_dimension?.label),
+    },
+    granularity: {
+      code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY,
+      label: QUESTION_JUDGMENT_LABELS.granularity[QUESTION_JUDGMENT_CODES.granularity.SUMMARY],
+    },
+    relevance: {
+      code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+      label: QUESTION_JUDGMENT_LABELS.relevance[QUESTION_JUDGMENT_CODES.relevance.RELEVANT],
+    },
+  };
+}
+
+function buildDirectMacroPlannerState(message, toolCalls, fallbackQuestionJudgment) {
+  const requestedViews = Array.isArray(toolCalls)
+    ? toolCalls.map((item) => trimString(item?.name)).filter((item) => item)
+    : [];
+  const uniqueViews = Array.from(new Set(requestedViews));
+  const questionType = inferQuestionTypeForDirectMacroStart(message, toolCalls);
+  const requiredEvidence = Array.from(
+    new Set(
+      uniqueViews.flatMap((toolName) => {
+        const evidenceTypes = MACRO_EVIDENCE_BY_TOOL_NAME[toolName];
+        return Array.isArray(evidenceTypes) ? evidenceTypes : [];
+      }),
+    ),
+  );
+  const primaryDimensionCode = inferPrimaryDimensionForDirectMacroStart(toolCalls);
+  return {
+    relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+    route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+    question_type: questionType,
+    required_evidence: requiredEvidence.length > 0 ? requiredEvidence : deriveRequiredEvidenceByQuestionType(questionType),
+    requested_views: uniqueViews,
+    refuse_reason: "",
+    bounded_reason: "",
+    synthesis_expectation: "",
+    required_tool_call_min: 1,
+    zero_tool_refuse: false,
+    initial_tools: Array.isArray(toolCalls)
+      ? toolCalls.map((call) => ({
+          name: trimString(call?.name),
+          args: call?.args && typeof call.args === "object" && !Array.isArray(call.args) ? { ...call.args } : {},
+        }))
+      : [],
+    missing_evidence_types: [],
+    analysis_confidence: "low",
+    questionJudgment: buildQuestionJudgmentFromCodes(primaryDimensionCode, fallbackQuestionJudgment),
+  };
+}
+
+async function executePlannedCalls({
+  plannedCalls,
+  state,
+  runtimeContext,
+  deps,
+  executeToolByNameImpl,
+  lastToolResultRef,
+  toolCallTrace,
+  contents,
+  env,
+  requestId,
+}) {
+  for (const call of plannedCalls) {
+    if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
+      state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
+      logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+      return {
+        ok: false,
+        fallbackReason: state.fallback_reason,
+        toolRuntimeState: state,
+        toolCallTrace,
+      };
+    }
+    let executionResult;
+    try {
+      executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
+    } catch (_error) {
+      state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
+      logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
+      return {
+        ok: false,
+        fallbackReason: state.fallback_reason,
+        toolRuntimeState: state,
+        toolCallTrace,
+      };
+    }
+    state.tool_call_count += 1;
+    state.used_tools.push(trimString(call.name));
+    state.evidence_types_completed = Array.from(
+      new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
+    );
+    lastToolResultRef.current = executionResult;
+    toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          functionResponse: {
+            name: trimString(call.name),
+            response: executionResult.result,
+          },
+        },
+      ],
+    });
+  }
+  return { ok: true };
 }
 
 function deriveRequiredEvidenceByQuestionType(questionType) {
@@ -957,11 +1128,12 @@ export async function runToolFirstChat({
   const requestGeminiGenerateContentImpl = deps.requestGeminiGenerateContent || requestGeminiGenerateContent;
 
   const contents = buildInitialContents(historyWindow, message, businessSnapshot);
-  let lastToolResult = null;
+  const lastToolResultRef = { current: null };
   let plannerState = null;
   let plannerRecoveryAttempted = false;
   const firstRoundDimensionReportMacroOnly = shouldUseDimensionReportMacroFirstRound(message);
   const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
+  const allowDirectMacroStart = isBroadOverallMacroStartCandidate(message);
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
@@ -999,6 +1171,46 @@ export async function runToolFirstChat({
     const { content, plannerCall, toolCalls } = extractRuntimeCalls(geminiResponse.payload);
 
     if (!state.planner_completed) {
+      const canDirectMacroStart =
+        allowDirectMacroStart &&
+        roundIndex === 0 &&
+        !plannerCall &&
+        toolCalls.length > 0 &&
+        toolCalls.every((call) => DIRECT_MACRO_START_TOOL_NAMES.includes(trimString(call?.name)));
+
+      if (canDirectMacroStart) {
+        if (content) {
+          contents.push(content);
+        }
+        plannerState = buildDirectMacroPlannerState(message, toolCalls, questionJudgment);
+        state.planner_completed = true;
+        state.planner_relevance = plannerState.relevance;
+        state.planner_route_intent = plannerState.route_intent;
+        state.question_type = plannerState.question_type;
+        state.evidence_types_requested = plannerState.required_evidence.slice(0, 8);
+        state.planner_requested_views = plannerState.requested_views.slice(0, 6);
+        state.planner_refuse_reason = plannerState.refuse_reason;
+        state.planner_bounded_reason = plannerState.bounded_reason;
+        state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
+
+        const directStartResult = await executePlannedCalls({
+          plannedCalls: toolCalls,
+          state,
+          runtimeContext,
+          deps,
+          executeToolByNameImpl,
+          lastToolResultRef,
+          toolCallTrace,
+          contents,
+          env,
+          requestId,
+        });
+        if (!directStartResult.ok) {
+          return directStartResult;
+        }
+        continue;
+      }
+
       if (!plannerCall) {
         const canRetryPlanner =
           !plannerRecoveryAttempted &&
@@ -1059,48 +1271,20 @@ export async function runToolFirstChat({
       }
 
       contents.push(buildPlannerFunctionResponse(plannerState, true, "planner_accepted"));
-      for (const call of plannedCalls) {
-        if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
-          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
-          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-          return {
-            ok: false,
-            fallbackReason: state.fallback_reason,
-            toolRuntimeState: state,
-            toolCallTrace,
-          };
-        }
-        let executionResult;
-        try {
-          executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
-        } catch (_error) {
-          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
-          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-          return {
-            ok: false,
-            fallbackReason: state.fallback_reason,
-            toolRuntimeState: state,
-            toolCallTrace,
-          };
-        }
-        state.tool_call_count += 1;
-        state.used_tools.push(trimString(call.name));
-        state.evidence_types_completed = Array.from(
-          new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
-        );
-        lastToolResult = executionResult;
-        toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
-        contents.push({
-          role: "user",
-          parts: [
-            {
-              functionResponse: {
-                name: trimString(call.name),
-                response: executionResult.result,
-              },
-            },
-          ],
-        });
+      const plannedCallResult = await executePlannedCalls({
+        plannedCalls,
+        state,
+        runtimeContext,
+        deps,
+        executeToolByNameImpl,
+        lastToolResultRef,
+        toolCallTrace,
+        contents,
+        env,
+        requestId,
+      });
+      if (!plannedCallResult.ok) {
+        return plannedCallResult;
       }
       continue;
     }
@@ -1132,8 +1316,8 @@ export async function runToolFirstChat({
       const plannerQuestionJudgment = plannerState?.questionJudgment || questionJudgment;
       const missingEvidenceTypes = computeMissingEvidenceTypes(plannerState, state.evidence_types_completed);
       plannerState.missing_evidence_types = missingEvidenceTypes;
-      const outputContext = buildToolOutputContext(plannerQuestionJudgment, lastToolResult, plannerState);
-      const coverageCode = trimString(lastToolResult?.result?.coverage?.code);
+      const outputContext = buildToolOutputContext(plannerQuestionJudgment, lastToolResultRef.current, plannerState);
+      const coverageCode = trimString(lastToolResultRef.current?.result?.coverage?.code);
       plannerState.analysis_confidence = buildAnalysisConfidence(
         trimString(outputContext.route_code),
         missingEvidenceTypes,
@@ -1154,7 +1338,7 @@ export async function runToolFirstChat({
         missingEvidenceTypes,
         analysisConfidence: trimString(plannerState?.analysis_confidence),
         questionJudgment: plannerQuestionJudgment,
-        toolResult: lastToolResult?.result || null,
+        toolResult: lastToolResultRef.current?.result || null,
         toolRuntimeState: state,
         toolCallTrace,
       };
@@ -1201,48 +1385,20 @@ export async function runToolFirstChat({
       }
 
       contents.push(buildPlannerFunctionResponse(plannerState, true, "planner_accepted"));
-      for (const call of plannedCalls) {
-        if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
-          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
-          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-          return {
-            ok: false,
-            fallbackReason: state.fallback_reason,
-            toolRuntimeState: state,
-            toolCallTrace,
-          };
-        }
-        let executionResult;
-        try {
-          executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
-        } catch (_error) {
-          state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
-          logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-          return {
-            ok: false,
-            fallbackReason: state.fallback_reason,
-            toolRuntimeState: state,
-            toolCallTrace,
-          };
-        }
-        state.tool_call_count += 1;
-        state.used_tools.push(trimString(call.name));
-        state.evidence_types_completed = Array.from(
-          new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
-        );
-        lastToolResult = executionResult;
-        toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
-        contents.push({
-          role: "user",
-          parts: [
-            {
-              functionResponse: {
-                name: trimString(call.name),
-                response: executionResult.result,
-              },
-            },
-          ],
-        });
+      const plannedCallResult = await executePlannedCalls({
+        plannedCalls,
+        state,
+        runtimeContext,
+        deps,
+        executeToolByNameImpl,
+        lastToolResultRef,
+        toolCallTrace,
+        contents,
+        env,
+        requestId,
+      });
+      if (!plannedCallResult.ok) {
+        return plannedCallResult;
       }
       continue;
     }
@@ -1262,48 +1418,20 @@ export async function runToolFirstChat({
       contents.push(content);
     }
 
-    for (const call of toolCalls) {
-      if (state.tool_call_count >= TOOL_RUNTIME_MAX_CALLS) {
-        state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_LOOP_LIMIT_EXCEEDED;
-        logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-        return {
-          ok: false,
-          fallbackReason: state.fallback_reason,
-          toolRuntimeState: state,
-          toolCallTrace,
-        };
-      }
-      let executionResult;
-      try {
-        executionResult = await executeToolByNameImpl(call.name, call.args, runtimeContext, deps);
-      } catch (_error) {
-        state.fallback_reason = TOOL_FALLBACK_REASONS.TOOL_EXECUTION_FAILED;
-        logToolTrace(buildToolTracePayload({ requestId, state, toolCallTrace }), env);
-        return {
-          ok: false,
-          fallbackReason: state.fallback_reason,
-          toolRuntimeState: state,
-          toolCallTrace,
-        };
-      }
-      state.tool_call_count += 1;
-      state.used_tools.push(trimString(call.name));
-      state.evidence_types_completed = Array.from(
-        new Set([...state.evidence_types_completed, ...collectCompletedEvidenceTypes(executionResult)]),
-      );
-      lastToolResult = executionResult;
-      toolCallTrace.push(buildToolCallTraceEntry(call, executionResult));
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            functionResponse: {
-              name: trimString(call.name),
-              response: executionResult.result,
-            },
-          },
-        ],
-      });
+    const directToolResult = await executePlannedCalls({
+      plannedCalls: toolCalls,
+      state,
+      runtimeContext,
+      deps,
+      executeToolByNameImpl,
+      lastToolResultRef,
+      toolCallTrace,
+      contents,
+      env,
+      requestId,
+    });
+    if (!directToolResult.ok) {
+      return directToolResult;
     }
   }
 
