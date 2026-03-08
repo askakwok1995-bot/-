@@ -2643,11 +2643,10 @@ h1,
 .auth-modal-title {
   color: #122230;
   max-width: none;
-  margin-left: auto;
   font-size: clamp(22px, 1.7vw, 27px);
   line-height: 1.12;
   letter-spacing: -0.03em;
-  text-align: right;
+  text-align: left;
 }
 
 .auth-modal-desc {
@@ -2666,12 +2665,24 @@ h1,
   gap: 10px;
 }
 
+.hero-panel-metrics .hero-panel-head,
 .hero-panel-auth .hero-panel-head {
-  align-items: flex-end;
-  justify-content: space-between;
-  flex-direction: row;
-  gap: 12px;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: end;
+  justify-content: stretch;
+  gap: 10px 16px;
+}
+
+.hero-panel-metrics .hero-panel-kicker,
+.hero-panel-auth .hero-panel-kicker {
+  margin: 0;
+}
+
+.hero-panel-metrics .hero-panel-title,
+.hero-panel-auth .hero-panel-title {
+  justify-self: start;
+  text-align: left;
 }
 
 .hero-panel-auth,
@@ -3604,11 +3615,10 @@ body.ai-chat-open .ai-chat-fab {
     padding: 16px;
   }
 
+  .hero-panel-metrics .hero-panel-head,
   .hero-panel-auth .hero-panel-head {
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 12px;
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .hero-achievement-head {
