@@ -102,33 +102,18 @@
               </div>
               <div class="hero-panel-head">
                 <p class="hero-panel-kicker">开始使用</p>
-                <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">登录后进入销售经营工作台</h3>
+                <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">登录后继续当前工作</h3>
               </div>
-              <p class="auth-modal-desc">登录后即可继续当前报表区间，查看云端记录、维护指标、补录销售数据，并调用 AI 洞察助手完成复盘。</p>
-              <div class="auth-benefit-grid" aria-label="登录后可用能力">
-                <article class="auth-benefit-card">
-                  <span class="auth-benefit-kicker">同步</span>
-                  <strong>记录与产品</strong>
-                  <p>进入后自动接续当前账号的产品、销售记录和区间分析。</p>
-                </article>
-                <article class="auth-benefit-card">
-                  <span class="auth-benefit-kicker">更新</span>
-                  <strong>指标与达成</strong>
-                  <p>维护目标后，首页摘要和报表区会立刻同步达成表现。</p>
-                </article>
-                <article class="auth-benefit-card auth-benefit-card-wide">
-                  <span class="auth-benefit-kicker">复盘</span>
-                  <strong>AI 洞察助手</strong>
-                  <p>基于当前区间给出结论、趋势提示和下一步建议。</p>
-                </article>
+              <p class="auth-modal-desc">登录后即可接续当前报表区间，查看云端记录、维护指标并补录销售数据。</p>
+              <div class="auth-inline-features" aria-label="登录后能力">
+                <span class="auth-inline-feature">云端记录</span>
+                <span class="auth-inline-feature">指标维护</span>
+                <span class="auth-inline-feature">AI 洞察</span>
               </div>
               <form id="auth-form" class="auth-form" novalidate>
                 <div class="auth-form-panel">
                   <div class="auth-form-panel-head">
-                    <div>
-                      <p class="auth-form-kicker">账户登录</p>
-                      <p class="auth-form-note">输入邮箱与密码后即可回到当前工作进度。</p>
-                    </div>
+                    <p class="auth-form-kicker">账户登录</p>
                     <span class="auth-form-security">加密会话</span>
                   </div>
                   <div class="auth-form-shell">
@@ -146,7 +131,7 @@
                   <button id="auth-login-btn" type="submit">登录</button>
                   <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
                 </div>
-                <p class="auth-form-footnote">首次使用可以先注册；登录后将继续当前分析区间与录入进度。</p>
+                <p class="auth-form-footnote">首次使用可直接注册。</p>
                 <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
                 <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
               </form>
