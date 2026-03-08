@@ -474,6 +474,20 @@ async function initializeApp() {
   hydrateReportRangeInputs(dom, state);
   updateHeroOverview();
 
+  const syncHeroOverviewFromReportControls = () => {
+    updateHeroOverview();
+  };
+
+  if (dom.reportStartMonthInput instanceof HTMLInputElement) {
+    dom.reportStartMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
+    dom.reportStartMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+  }
+
+  if (dom.reportEndMonthInput instanceof HTMLInputElement) {
+    dom.reportEndMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
+    dom.reportEndMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+  }
+
   try {
     state.products = await productsRepository.fetchProductsFromCloud();
     clearProductError();
