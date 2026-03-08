@@ -19,7 +19,7 @@
     <main class="container">
       <header class="app-topbar">
         <div class="topbar-brand">
-          <span class="topbar-badge">Sales Command</span>
+          <span class="topbar-badge">销售指挥台</span>
           <div class="topbar-title-group">
             <p class="topbar-kicker">医药销售经营工作台</p>
             <h1>医药代表销售汇报工具</h1>
@@ -34,29 +34,29 @@
       <section class="hero-shell">
         <div class="hero-grid">
           <div class="hero-copy">
-            <p class="hero-kicker">FIELD INTELLIGENCE</p>
-            <h2 class="hero-title">把销售录入、指标协同与经营分析，收拢到一张更像企业产品的首页里。</h2>
+            <p class="hero-kicker">给一线销售的经营首页</p>
+            <h2 class="hero-title">先看本期结果，再补录数据，最后让 AI 帮你总结重点。</h2>
             <p class="hero-desc">
-              首页优先呈现经营视角，再承接录入、清单和 AI 洞察，适合医药销售团队做日常复盘与阶段性分析。
+              你可以先查看本期销售表现，再补录产品、销量和指标，最后把结果交给 AI 洞察助手做总结，适合日常跟进和阶段复盘。
             </p>
             <div class="hero-actions">
-              <a class="hero-link-btn hero-link-btn-primary" href="#report-deck">先看分析</a>
-              <a class="hero-link-btn" href="#operations-deck">进入录入</a>
-              <a class="hero-link-btn" href="#records-deck">查看明细</a>
+              <a class="hero-link-btn hero-link-btn-primary" href="#report-deck">查看本期表现</a>
+              <a class="hero-link-btn" href="#operations-deck">补录今天数据</a>
+              <a class="hero-link-btn" href="#records-deck">回查历史明细</a>
             </div>
             <div class="hero-tags" aria-label="工作台能力">
-              <span class="hero-tag">目标协同</span>
-              <span class="hero-tag">产品与医院分析</span>
-              <span class="hero-tag">云端记录与导出</span>
-              <span class="hero-tag">AI 业务问答</span>
+              <span class="hero-tag">看本期达成</span>
+              <span class="hero-tag">补录销售与产品</span>
+              <span class="hero-tag">回查明细并导出</span>
+              <span class="hero-tag">问 AI 拿结论</span>
             </div>
           </div>
 
           <div class="hero-side">
             <section class="hero-panel hero-panel-metrics" aria-label="首页经营摘要">
               <div class="hero-panel-head">
-                <p class="hero-panel-kicker">Overview</p>
-                <h3 class="hero-panel-title">当前工作台摘要</h3>
+                <p class="hero-panel-kicker">首页摘要</p>
+                <h3 class="hero-panel-title">当前工作台概览</h3>
               </div>
               <div class="hero-metrics-grid">
                 <article class="hero-metric-card">
@@ -88,10 +88,10 @@
               hidden
             >
               <div class="hero-panel-head">
-                <p class="hero-panel-kicker">Access</p>
-                <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">邮箱登录</h3>
+                <p class="hero-panel-kicker">开始使用</p>
+                <h3 id="auth-modal-title" class="hero-panel-title auth-modal-title">登录后开始录入与分析</h3>
               </div>
-              <p class="auth-modal-desc">登录后可访问云端记录、目标配置、销售报表与 AI 洞察。</p>
+              <p class="auth-modal-desc">登录后即可查看云端记录、维护指标、补录销售数据，并使用 AI 洞察助手。</p>
               <form id="auth-form" class="auth-form" novalidate>
                 <label for="auth-email">
                   邮箱
@@ -112,17 +112,17 @@
 
             <section class="hero-panel hero-panel-brief" aria-label="登录后快捷洞察">
               <div class="hero-panel-head">
-                <p class="hero-panel-kicker">Quick Notes</p>
-                <h3 class="hero-panel-title">下一步建议</h3>
+                <p class="hero-panel-kicker">登录后可做什么</p>
+                <h3 class="hero-panel-title">建议你先从这里开始</h3>
               </div>
               <ul class="hero-brief-list">
-                <li>先设定报表区间，再看月度、季度和产品结构。</li>
-                <li>录入区适合当天新增数据，列表区适合回查和批量处理。</li>
-                <li>AI 助手会基于当前报表区间回答，不会跨账号读取数据。</li>
+                <li>先选分析月份，马上就能看到本期销售、产品和医院表现。</li>
+                <li>当天新增数据建议直接在录入区补齐，历史修订更适合去明细账处理。</li>
+                <li>问 AI 之前先选报表区间，回答会更贴近你当前在看的业务范围。</li>
               </ul>
               <div class="hero-brief-actions">
-                <a class="hero-link-btn hero-link-btn-soft" href="#report-deck">继续分析</a>
-                <a class="hero-link-btn hero-link-btn-soft" href="#records-deck">查看清单</a>
+                <a class="hero-link-btn hero-link-btn-soft" href="#report-deck">先看报表</a>
+                <a class="hero-link-btn hero-link-btn-soft" href="#records-deck">去看明细账</a>
               </div>
             </section>
           </div>
@@ -133,7 +133,7 @@
       <section id="report-deck" class="card section-card section-card-report">
         <div class="section-head report-section-head">
           <div>
-            <p class="section-kicker">Sales Intelligence</p>
+            <p class="section-kicker">本期销售分析</p>
             <h2>报表区</h2>
           </div>
           <div class="report-section-range">
@@ -153,14 +153,14 @@
             </label>
           </div>
         </div>
-        <p class="section-desc section-desc-report">优先查看月度、季度、产品和医院表现，再继续处理录入与明细。</p>
+        <p class="section-desc section-desc-report">先确认本期卖得怎么样、哪些产品和医院贡献最多，再决定后续录入和回查动作。</p>
         <details class="sub-card sub-card-report" open>
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Analysis</span>
+              <span class="summary-kicker">销售分析</span>
               <h3>销售分析</h3>
             </div>
-            <span class="fold-tip">核心报表</span>
+            <span class="fold-tip">重点结果</span>
           </summary>
           <div class="sub-card-body">
             <div class="report-panel">
@@ -281,10 +281,10 @@
         <details id="report-visual-board" class="sub-card sub-card-report">
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Visual Board</span>
+              <span class="summary-kicker">图表趋势</span>
               <h3>可视化图表</h3>
             </div>
-            <span class="fold-tip">趋势与结构</span>
+            <span class="fold-tip">走势变化</span>
           </summary>
           <div class="sub-card-body">
             <div class="report-charts-panel">
@@ -411,17 +411,17 @@
       <section id="operations-deck" class="card section-card section-card-input">
         <header class="section-head">
           <div>
-            <p class="section-kicker">Execution Deck</p>
+            <p class="section-kicker">日常录入与维护</p>
             <h2>录入区</h2>
           </div>
-          <p class="section-desc">维护产品主数据、提交销售记录，并同步年度指标与季度分配。</p>
+          <p class="section-desc">这里适合补录今天新增的销售、维护产品资料，或按年度整理目标指标。</p>
         </header>
 
         <div class="operations-grid">
         <details class="sub-card sub-card-sales operation-card-primary" open>
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Field Input</span>
+              <span class="summary-kicker">销售录入</span>
               <h3>销售录入</h3>
             </div>
             <span class="fold-tip">日常高频</span>
@@ -433,7 +433,7 @@
               <span class="entry-flow-step">3 填写医院与数量</span>
               <span class="entry-flow-step">4 确认配送并提交</span>
             </div>
-            <p class="operation-note">优先完成当日成交录入，系统会按产品主数据自动计算考核金额。</p>
+            <p class="operation-note">当天成交建议优先补在这里，系统会按产品资料自动算出考核金额，减少重复填写。</p>
             <form id="sales-form" novalidate>
               <div class="form-grid">
                 <label>
@@ -482,19 +482,19 @@
         <details class="sub-card sub-card-product" open>
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Master Data</span>
+              <span class="summary-kicker">产品主数据</span>
               <h3>产品配置</h3>
             </div>
             <span class="fold-tip">维护主数据</span>
           </summary>
           <div class="sub-card-body">
-            <p class="operation-note">左侧维护产品与单价，右侧滚动核对当前清单，适合按批次整理主数据。</p>
+            <p class="operation-note">左侧新增或修正产品与单价，右侧立即核对当前清单，适合一次性整理主数据。</p>
             <div class="product-layout">
               <form id="product-form" class="product-form-pane" novalidate>
                 <div class="product-form-stack">
                   <div class="operation-microcopy">
-                    <span class="operation-microcopy-kicker">Catalog Setup</span>
-                    <p>新增或修正产品规格后，销售录入和指标分配会立即复用这里的主数据。</p>
+                    <span class="operation-microcopy-kicker">产品资料维护</span>
+                    <p>这里维护的产品规格和单价，会立刻同步到销售录入和指标分配，不需要重复设置。</p>
                   </div>
                   <label>
                     产品/规格
@@ -514,10 +514,10 @@
               <div class="product-table-pane">
                 <div class="product-table-shell-head">
                   <div>
-                    <p class="operation-microcopy-kicker">Current Catalog</p>
+                    <p class="operation-microcopy-kicker">当前产品资料</p>
                     <h4 class="product-table-title">当前产品清单</h4>
                   </div>
-                  <p class="product-table-caption">长表保持独立滚动，避免影响整张维护卡。</p>
+                  <p class="product-table-caption">产品较多时可直接滚动清单，不会打断左侧维护动作。</p>
                 </div>
                 <div class="table-wrap">
                   <table class="product-table">
@@ -543,11 +543,11 @@
         <details class="sub-card sub-card-report operation-card-wide">
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Planning</span>
+              <span class="summary-kicker">年度指标</span>
               <h3>指标录入</h3>
             </div>
             <span class="fold-tip">年度目标台</span>
-            <p class="summary-preview-text">录入季度目标并按产品分配，适合集中校验全年节奏与阶段达成。</p>
+            <p class="summary-preview-text">先录入季度目标，再看产品分配是否均衡，适合集中整理全年节奏。</p>
             <div class="summary-chip-row" aria-hidden="true">
               <span class="summary-chip">季度拆分</span>
               <span class="summary-chip">产品分配</span>
@@ -556,7 +556,7 @@
           </summary>
           <div class="sub-card-body">
             <div class="target-panel">
-              <p class="operation-note">季度目标和按产品分配属于宽表工作流，展开后占满整行，便于集中校验与批量调整。</p>
+              <p class="operation-note">建议先录入季度目标，再检查按产品分配是否合理，适合年度规划和阶段复盘时集中处理。</p>
               <div class="target-toolbar">
                 <label class="inline-field target-year-field" for="target-year-select">
                   指标年份
@@ -638,19 +638,19 @@
       <section id="records-deck" class="card section-card section-card-list">
         <header class="section-head">
           <div>
-            <p class="section-kicker">Ledger View</p>
+            <p class="section-kicker">销售明细回查</p>
             <h2>列表区</h2>
           </div>
-          <p class="section-desc">按时间、产品、医院筛选云端销售明细，支持批量删除、导入导出与分页管理。</p>
+          <p class="section-desc">如果你要查历史记录、批量修订或导入导出数据，这里会更顺手。</p>
         </header>
         <details class="sub-card sub-card-list">
           <summary>
             <div class="summary-copy">
-              <span class="summary-kicker">Records</span>
+              <span class="summary-kicker">销售明细</span>
               <h3 class="section-title-inline">销售明细账</h3>
             </div>
-            <span class="fold-tip">筛选与导出</span>
-            <p class="summary-preview-text">按时间、产品与医院回查明细，适合批量删除、导入导出和分页管理。</p>
+            <span class="fold-tip">回查与导出</span>
+            <p class="summary-preview-text">按时间、产品与医院快速回查明细，适合批量删除、导入导出和分页管理。</p>
             <div class="summary-chip-row" aria-hidden="true">
               <span class="summary-chip">日期筛选</span>
               <span class="summary-chip">批量处理</span>
@@ -749,6 +749,15 @@
     <div id="ai-chat-backdrop" class="ai-chat-backdrop" hidden></div>
     <section id="ai-chat-sheet" class="ai-chat-sheet" role="dialog" aria-label="AI 对话窗口" aria-hidden="true">
       <header class="ai-chat-head">
+        <div class="ai-chat-head-copy">
+          <p class="ai-chat-kicker">AI 洞察助手</p>
+          <h3 class="ai-chat-title">把你当前看的销售结果，整理成更好理解的结论</h3>
+          <p class="ai-chat-head-desc">可直接问趋势、产品、医院、目标达成或异常变化，回答只基于当前账号和当前分析区间。</p>
+        </div>
+        <div class="ai-chat-head-actions">
+          <span class="ai-chat-context-chip">建议先选择报表月份</span>
+          <span class="ai-chat-context-chip">回答不会跨账号读取数据</span>
+        </div>
         <button
           id="ai-chat-resize-btn"
           class="ai-chat-head-btn ai-chat-head-btn--resize secondary-btn"
@@ -776,6 +785,18 @@
           </svg>
         </button>
       </header>
+      <section class="ai-chat-welcome" aria-label="AI 助手使用提示">
+        <div class="ai-chat-welcome-copy">
+          <p class="ai-chat-welcome-title">你可以这样提问</p>
+          <p class="ai-chat-welcome-desc">先用一句话说明你想看什么，AI 会结合当前区间帮你概括重点、找异常并给出下一步建议。</p>
+        </div>
+        <div class="ai-chat-prompt-grid" aria-hidden="true">
+          <span class="ai-chat-prompt-chip">本期销售趋势怎么样？</span>
+          <span class="ai-chat-prompt-chip">哪个产品拉动最大？</span>
+          <span class="ai-chat-prompt-chip">哪些医院波动明显？</span>
+          <span class="ai-chat-prompt-chip">目标达成还差多少？</span>
+        </div>
+      </section>
       <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"></div>
       <form id="ai-chat-form" class="ai-chat-composer" novalidate>
         <input
@@ -788,6 +809,7 @@
         />
         <button id="ai-chat-send" class="ai-chat-send-btn" type="submit" disabled>发送</button>
       </form>
+      <p class="ai-chat-footnote">不知道怎么开口时，可以直接问“请帮我总结当前销售表现”。</p>
       <p id="ai-chat-status" class="ai-chat-status"></p>
     </section>
     <div id="auth-bootstrap-state" class="auth-bootstrap-state" aria-live="polite" hidden>正在验证登录状态...</div>
