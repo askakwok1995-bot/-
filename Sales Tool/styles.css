@@ -253,10 +253,10 @@ body.ai-chat-open .container {
 .ai-chat-sheet {
   position: fixed;
   left: 50%;
-  bottom: 84px;
+  bottom: 18px;
   z-index: 961;
   width: min(92vw, 1080px);
-  max-height: calc(100dvh - 132px);
+  max-height: calc(100dvh - 32px);
   min-height: 250px;
   border: 1px solid #a8cbdf;
   border-radius: 16px;
@@ -278,11 +278,11 @@ body.ai-chat-open .container {
 }
 
 .ai-chat-sheet--compact {
-  height: 40dvh;
+  height: calc(100dvh - 40px);
 }
 
 .ai-chat-sheet--expanded {
-  height: 80dvh;
+  height: calc(100dvh - 20px);
 }
 
 .ai-chat-head {
@@ -2157,19 +2157,19 @@ tr.selected-row td {
 
   .ai-chat-sheet {
     width: calc(100vw - 12px);
-    bottom: 74px;
+    bottom: 6px;
     border-radius: 14px;
     padding: 10px;
     min-height: 220px;
-    max-height: calc(100dvh - 92px);
+    max-height: calc(100dvh - 12px);
   }
 
   .ai-chat-sheet--compact {
-    height: 40dvh;
+    height: calc(100dvh - 12px);
   }
 
   .ai-chat-sheet--expanded {
-    height: 80dvh;
+    height: calc(100dvh - 6px);
   }
 
   .ai-chat-head {
@@ -3037,8 +3037,8 @@ th {
 }
 
 .ai-chat-sheet {
-  width: min(92vw, 1024px);
-  max-height: calc(100dvh - 122px);
+  width: min(94vw, 1120px);
+  max-height: calc(100dvh - 32px);
   border: 1px solid rgb(173 201 218 / 76%);
   border-radius: 24px;
   background:
@@ -3178,6 +3178,15 @@ th {
   border-radius: 20px;
   background: linear-gradient(180deg, rgb(255 255 255 / 96%) 0%, rgb(245 250 252 / 98%) 100%);
   padding: 14px;
+  min-height: 260px;
+}
+
+.ai-chat-sheet--compact .ai-chat-messages {
+  min-height: 320px;
+}
+
+.ai-chat-sheet--expanded .ai-chat-messages {
+  min-height: 360px;
 }
 
 .ai-chat-composer {
