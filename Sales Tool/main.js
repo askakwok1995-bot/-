@@ -60,9 +60,72 @@ import { createTargetsRepository } from "./infra/targets-repository.js";
 
 window.__SALES_TOOL_MODULE_BOOTED__ = false;
 window.__SALES_TOOL_MODULE_BOOT_ERROR__ = false;
+const HERO_CARD_NAVIGATION_HASHES = new Set(["#report-analysis-card", "#sales-entry-card", "#records-list-card"]);
 
 function getAuthContext() {
   return getSupabaseAuthContext({ getSupabaseClient, getCurrentAuthUser });
+}
+
+function getHeroCardNavigationTarget(hash) {
+  const normalizedHash = typeof hash === "string" ? hash.trim() : "";
+  if (!HERO_CARD_NAVIGATION_HASHES.has(normalizedHash)) {
+    return null;
+  }
+
+  const target = document.querySelector(normalizedHash);
+  return target instanceof HTMLDetailsElement ? target : null;
+}
+
+function openHeroCardNavigationTarget(hash, { shouldScroll = false } = {}) {
+  const target = getHeroCardNavigationTarget(hash);
+  if (!(target instanceof HTMLDetailsElement)) {
+    return false;
+  }
+
+  if (!target.open) {
+    target.open = true;
+  }
+
+  if (shouldScroll) {
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  return true;
+}
+
+function bindHeroCardNavigation() {
+  if (document.body?.dataset.heroCardNavigationBound === "true") {
+    return;
+  }
+
+  const primaryLinks = Array.from(document.querySelectorAll(".hero-actions .hero-link-btn[href^='#']"));
+  primaryLinks.forEach((link) => {
+    if (!(link instanceof HTMLAnchorElement)) return;
+
+    link.addEventListener("click", (event) => {
+      const targetHash = String(link.getAttribute("href") || "").trim();
+      const handled = openHeroCardNavigationTarget(targetHash, { shouldScroll: true });
+      if (!handled) return;
+
+      event.preventDefault();
+      if (window.location.hash !== targetHash) {
+        window.history.pushState(null, "", targetHash);
+      }
+    });
+  });
+
+  const syncFromHash = () => {
+    openHeroCardNavigationTarget(window.location.hash, { shouldScroll: true });
+  };
+
+  window.addEventListener("hashchange", syncFromHash);
+  if (window.location.hash) {
+    requestAnimationFrame(syncFromHash);
+  }
+
+  document.body.dataset.heroCardNavigationBound = "true";
 }
 
 async function initializeApp() {
@@ -532,6 +595,7 @@ async function initializeApp() {
   }
   hydrateReportRangeInputs(dom, state);
   updateHeroOverview();
+  bindHeroCardNavigation();
 
   const syncHeroOverviewFromReportControls = () => {
     updateHeroOverview();
@@ -599,6 +663,7 @@ async function bootstrap() {
     initAiChatUi({
       placeholderStatus: "聊天服务连接中，请稍后再试。",
     });
+    bindHeroCardNavigation();
 
     await bootstrapAuthGate({
       appRoot: document.querySelector(".workspace-grid"),

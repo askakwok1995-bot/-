@@ -40,9 +40,9 @@
               你可以先查看本期销售表现，再补录产品、销量和指标，最后把结果交给 AI 洞察助手做总结，适合日常跟进和阶段复盘。
             </p>
             <div class="hero-actions">
-              <a class="hero-link-btn hero-link-btn-primary" href="#report-deck">查看本期表现</a>
-              <a class="hero-link-btn" href="#operations-deck">补录今天数据</a>
-              <a class="hero-link-btn" href="#records-deck">回查历史明细</a>
+              <a class="hero-link-btn hero-link-btn-primary" href="#report-analysis-card">查看本期表现</a>
+              <a class="hero-link-btn" href="#sales-entry-card">补录今天数据</a>
+              <a class="hero-link-btn" href="#records-list-card">回查历史明细</a>
             </div>
           </div>
 
@@ -117,20 +117,16 @@
               </form>
             </section>
 
-            <section class="hero-panel hero-panel-brief" aria-label="登录后快捷洞察">
+            <section class="hero-panel hero-panel-brief" aria-label="登录后使用教程">
               <div class="hero-panel-head">
-                <p class="hero-panel-kicker">登录后可做什么</p>
-                <h3 class="hero-panel-title">建议你先从这里开始</h3>
+                <p class="hero-panel-kicker">登录后怎么用</p>
+                <h3 class="hero-panel-title">两种常用方式</h3>
               </div>
-              <ul class="hero-brief-list">
-                <li>先选分析月份，马上就能看到本期销售、产品和医院表现。</li>
-                <li>当天新增数据建议直接在录入区补齐，历史修订更适合去明细账处理。</li>
-                <li>问 AI 之前先选报表区间，回答会更贴近你当前在看的业务范围。</li>
-              </ul>
-              <div class="hero-brief-actions">
-                <a class="hero-link-btn hero-link-btn-soft" href="#report-deck">先看报表</a>
-                <a class="hero-link-btn hero-link-btn-soft" href="#records-deck">去看明细账</a>
-              </div>
+              <ol class="hero-brief-list">
+                <li><strong class="hero-brief-label">日常录入：</strong>先配好产品和指标，之后每天有销售就补录。</li>
+                <li><strong class="hero-brief-label">批量导入：</strong>先下模板导入记录，再补产品考核价和指标。</li>
+              </ol>
+              <p class="hero-brief-note">两种方式都能接着用 AI 洞察生成报告。</p>
             </section>
           </div>
         </div>
@@ -161,7 +157,7 @@
           </div>
         </div>
         <p class="section-desc section-desc-report">先确认本期卖得怎么样、哪些产品和医院贡献最多，再决定后续录入和回查动作。</p>
-        <details class="sub-card sub-card-report" open>
+        <details id="report-analysis-card" class="sub-card sub-card-report">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">销售分析</span>
@@ -284,7 +280,7 @@
           </div>
         </details>
 
-        <details id="report-visual-board" class="sub-card sub-card-report">
+        <details id="report-visual-board" class="sub-card sub-card-report" open>
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">图表趋势</span>
@@ -423,7 +419,7 @@
         </header>
 
         <div class="operations-grid">
-        <details class="sub-card sub-card-sales operation-card-primary" open>
+        <details id="sales-entry-card" class="sub-card sub-card-sales operation-card-primary">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">销售录入</span>
@@ -484,7 +480,7 @@
           </div>
         </details>
 
-        <details class="sub-card sub-card-product" open>
+        <details id="product-config-card" class="sub-card sub-card-product">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">产品主数据</span>
@@ -545,7 +541,7 @@
           </div>
         </details>
 
-        <details class="sub-card sub-card-report operation-card-wide">
+        <details id="target-entry-card" class="sub-card sub-card-report operation-card-wide">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">年度指标</span>
@@ -648,7 +644,7 @@
           </div>
           <p class="section-desc">如果你要查历史记录、批量修订或导入导出数据，这里会更顺手。</p>
         </header>
-        <details class="sub-card sub-card-list">
+        <details id="records-list-card" class="sub-card sub-card-list">
           <summary>
             <div class="summary-copy">
               <span class="summary-kicker">销售明细</span>

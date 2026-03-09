@@ -2821,30 +2821,27 @@ h1,
 }
 
 .hero-brief-list {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   padding-left: 18px;
   color: #587082;
   font-size: 13px;
-  line-height: 1.7;
+  line-height: 1.65;
 }
 
 .hero-brief-list li + li {
-  margin-top: 6px;
+  margin-top: 5px;
 }
 
-.hero-brief-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
+.hero-brief-label {
+  color: #233d50;
+  font-weight: 700;
 }
 
-.hero-link-btn-soft {
-  min-height: 38px;
-  padding: 0 14px;
-  border-color: rgb(87 116 137 / 12%);
-  background: linear-gradient(180deg, rgb(255 255 255 / 94%) 0%, rgb(241 246 249 / 94%) 100%);
-  color: #173548;
+.hero-brief-note {
+  margin: 10px 0 0;
+  color: #6d8190;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 body.auth-signed-in .hero-panel-auth {
@@ -3266,6 +3263,15 @@ th {
   scroll-margin-top: 16px;
 }
 
+#report-analysis-card,
+#report-visual-board,
+#sales-entry-card,
+#product-config-card,
+#target-entry-card,
+#records-list-card {
+  scroll-margin-top: 24px;
+}
+
 .report-chart-card {
   border-radius: 24px;
   border-color: rgb(88 119 141 / 12%);
@@ -3639,10 +3645,6 @@ body.ai-chat-open .ai-chat-fab {
   .hero-achievement-caption {
     max-width: none;
     text-align: left;
-  }
-
-  .hero-brief-actions {
-    flex-direction: column;
   }
 
   .operations-grid {
