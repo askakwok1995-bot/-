@@ -3306,8 +3306,9 @@ th {
 .ai-chat-head {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   gap: 12px;
-  min-height: 0;
+  min-height: auto;
   padding: 4px 58px 0 0;
   margin-bottom: 16px;
 }
@@ -3386,6 +3387,7 @@ th {
 .ai-chat-composer-stack {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   gap: 8px;
   margin-top: 12px;
 }
@@ -3458,10 +3460,15 @@ th {
 }
 
 .ai-chat-footnote {
+  flex: 0 0 auto;
   margin: 10px 2px 0;
   color: #6a7f8f;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.ai-chat-status {
+  flex: 0 0 auto;
 }
 
 .ai-chat-fab {
