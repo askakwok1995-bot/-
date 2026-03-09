@@ -60,9 +60,72 @@ import { createTargetsRepository } from "./infra/targets-repository.js";
 
 window.__SALES_TOOL_MODULE_BOOTED__ = false;
 window.__SALES_TOOL_MODULE_BOOT_ERROR__ = false;
+const HERO_CARD_NAVIGATION_HASHES = new Set(["#report-analysis-card", "#sales-entry-card", "#records-list-card"]);
 
 function getAuthContext() {
   return getSupabaseAuthContext({ getSupabaseClient, getCurrentAuthUser });
+}
+
+function getHeroCardNavigationTarget(hash) {
+  const normalizedHash = typeof hash === "string" ? hash.trim() : "";
+  if (!HERO_CARD_NAVIGATION_HASHES.has(normalizedHash)) {
+    return null;
+  }
+
+  const target = document.querySelector(normalizedHash);
+  return target instanceof HTMLDetailsElement ? target : null;
+}
+
+function openHeroCardNavigationTarget(hash, { shouldScroll = false } = {}) {
+  const target = getHeroCardNavigationTarget(hash);
+  if (!(target instanceof HTMLDetailsElement)) {
+    return false;
+  }
+
+  if (!target.open) {
+    target.open = true;
+  }
+
+  if (shouldScroll) {
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  return true;
+}
+
+function bindHeroCardNavigation() {
+  if (document.body?.dataset.heroCardNavigationBound === "true") {
+    return;
+  }
+
+  const primaryLinks = Array.from(document.querySelectorAll(".hero-actions .hero-link-btn[href^='#']"));
+  primaryLinks.forEach((link) => {
+    if (!(link instanceof HTMLAnchorElement)) return;
+
+    link.addEventListener("click", (event) => {
+      const targetHash = String(link.getAttribute("href") || "").trim();
+      const handled = openHeroCardNavigationTarget(targetHash, { shouldScroll: true });
+      if (!handled) return;
+
+      event.preventDefault();
+      if (window.location.hash !== targetHash) {
+        window.history.pushState(null, "", targetHash);
+      }
+    });
+  });
+
+  const syncFromHash = () => {
+    openHeroCardNavigationTarget(window.location.hash, { shouldScroll: true });
+  };
+
+  window.addEventListener("hashchange", syncFromHash);
+  if (window.location.hash) {
+    requestAnimationFrame(syncFromHash);
+  }
+
+  document.body.dataset.heroCardNavigationBound = "true";
 }
 
 async function initializeApp() {
@@ -173,6 +236,13 @@ async function initializeApp() {
     exportChartHospitalShareXlsxBtn: document.getElementById("export-chart-hospital-share-xlsx-btn"),
     exportChartHospitalTrendBtn: document.getElementById("export-chart-hospital-trend-btn"),
     exportChartHospitalTrendXlsxBtn: document.getElementById("export-chart-hospital-trend-xlsx-btn"),
+    heroRecordsCountEl: document.getElementById("hero-records-count"),
+    heroReportRangeEl: document.getElementById("hero-report-range"),
+    heroAchievementValueEl: document.getElementById("hero-achievement-value"),
+    heroAchievementCaptionEl: document.getElementById("hero-achievement-caption"),
+    heroAchievementProgressEl: document.getElementById("hero-achievement-progress"),
+    heroAchievementProgressFillEl: document.getElementById("hero-achievement-progress-fill"),
+    heroStatusLineEl: document.getElementById("hero-status-line"),
   };
 
   const state = {
@@ -217,6 +287,7 @@ async function initializeApp() {
     activeHospitalChartKey: "",
   };
   let listStatusTimer = null;
+  let currentReportSummary = null;
 
   function hydrateReportRangeInputs(domRef, stateRef) {
     const startInput = domRef.reportStartMonthInput instanceof HTMLInputElement ? domRef.reportStartMonthInput : null;
@@ -226,6 +297,91 @@ async function initializeApp() {
     }
     if (endInput) {
       endInput.value = String(stateRef.reportEndYm || "").trim();
+    }
+  }
+
+  function formatHeroAchievementValue(value) {
+    if (!Number.isFinite(value)) return "--";
+    const percent = Number((value * 100).toFixed(1));
+    return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
+  }
+
+  function updateHeroOverview(reportSummary = currentReportSummary) {
+    const reportRange =
+      state.reportStartYm && state.reportEndYm ? `${state.reportStartYm} - ${state.reportEndYm}` : "未设置分析区间";
+    const snapshot = reportSummary && typeof reportSummary === "object" ? reportSummary.snapshot : null;
+    const reason = reportSummary && typeof reportSummary === "object" ? String(reportSummary.reason || "") : "";
+    const recordsCount = Number.isFinite(snapshot?.rangeRecordCount) ? snapshot.rangeRecordCount : 0;
+    const achievementRatio = Number.isFinite(snapshot?.rangeAmountAchievement) ? snapshot.rangeAmountAchievement : null;
+    const hasTargetGap = Boolean(snapshot?.rangeTargetAmountTotal === null);
+    const isOverTarget = Number.isFinite(achievementRatio) && achievementRatio > 1;
+    const progressPercent = Number.isFinite(achievementRatio) ? Math.max(0, Math.min(achievementRatio * 100, 100)) : 0;
+
+    if (dom.heroRecordsCountEl instanceof HTMLElement) {
+      dom.heroRecordsCountEl.textContent = String(recordsCount);
+    }
+
+    if (dom.heroReportRangeEl instanceof HTMLElement) {
+      dom.heroReportRangeEl.textContent = reportRange;
+    }
+
+    if (dom.heroAchievementValueEl instanceof HTMLElement) {
+      dom.heroAchievementValueEl.textContent = formatHeroAchievementValue(achievementRatio);
+    }
+
+    if (dom.heroAchievementCaptionEl instanceof HTMLElement) {
+      if (!state.reportStartYm || !state.reportEndYm || reason === "invalid-range") {
+        dom.heroAchievementCaptionEl.textContent = "设置有效的报表区间后，这里会显示当前区间达成率";
+      } else if (reason === "no-records") {
+        dom.heroAchievementCaptionEl.textContent = "当前区间暂无销售记录，达成率将在录入后自动计算";
+      } else if (hasTargetGap) {
+        dom.heroAchievementCaptionEl.textContent = "当前区间缺少有效指标，暂无法计算达成率";
+      } else {
+        dom.heroAchievementCaptionEl.textContent = "按当前报表区间的销售金额 / 指标金额计算";
+      }
+    }
+
+    if (dom.heroAchievementProgressEl instanceof HTMLElement) {
+      dom.heroAchievementProgressEl.classList.toggle("is-empty", !Number.isFinite(achievementRatio));
+      dom.heroAchievementProgressEl.classList.toggle("is-over-target", isOverTarget);
+    }
+
+    if (dom.heroAchievementProgressFillEl instanceof HTMLElement) {
+      dom.heroAchievementProgressFillEl.style.width = `${progressPercent}%`;
+    }
+
+    if (dom.heroStatusLineEl instanceof HTMLElement) {
+      if (!state.reportStartYm || !state.reportEndYm) {
+        dom.heroStatusLineEl.textContent = "先设置报表区间，这里会同步显示当前区间的记录数和达成进度。";
+        return;
+      }
+
+      if (reason === "invalid-range") {
+        dom.heroStatusLineEl.textContent = "当前分析区间无效，请重新选择开始和结束月份。";
+        return;
+      }
+
+      if (reason === "no-records") {
+        dom.heroStatusLineEl.textContent = "当前区间暂无销售记录，可先到录入区补录后再看达成进度。";
+        return;
+      }
+
+      if (hasTargetGap) {
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，但缺少有效指标，暂不显示达成率。`;
+        return;
+      }
+
+      if (Number.isFinite(achievementRatio) && isOverTarget) {
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，达成率 ${formatHeroAchievementValue(achievementRatio)}，进度条按 100% 封顶显示。`;
+        return;
+      }
+
+      if (Number.isFinite(achievementRatio)) {
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，当前达成 ${formatHeroAchievementValue(achievementRatio)}。`;
+        return;
+      }
+
+      dom.heroStatusLineEl.textContent = "当前区间已有记录，达成率将在有效指标生效后显示。";
     }
   }
 
@@ -386,6 +542,34 @@ async function initializeApp() {
       clearListStatus,
     },
   });
+  deps.onReportSummaryChange = (summary) => {
+    currentReportSummary = summary && typeof summary === "object" ? summary : null;
+    updateHeroOverview(currentReportSummary);
+  };
+
+  const originalRenderProductMaster = deps.renderProductMaster;
+  deps.renderProductMaster = () => {
+    originalRenderProductMaster();
+    updateHeroOverview();
+  };
+
+  const originalRenderRecords = deps.renderRecords;
+  deps.renderRecords = () => {
+    originalRenderRecords();
+    updateHeroOverview();
+  };
+
+  const originalRenderTargets = deps.renderTargets;
+  deps.renderTargets = () => {
+    originalRenderTargets();
+    updateHeroOverview();
+  };
+
+  const originalRenderReports = deps.renderReports;
+  deps.renderReports = () => {
+    originalRenderReports();
+    updateHeroOverview();
+  };
 
   const requestAiChatReply = createChatReplyRequester({
     getAccessToken: () => getSupabaseSessionAccessToken({ getSupabaseClient }),
@@ -410,6 +594,22 @@ async function initializeApp() {
     dom.pageSizeSelect.value = String(state.pageSize);
   }
   hydrateReportRangeInputs(dom, state);
+  updateHeroOverview();
+  bindHeroCardNavigation();
+
+  const syncHeroOverviewFromReportControls = () => {
+    updateHeroOverview();
+  };
+
+  if (dom.reportStartMonthInput instanceof HTMLInputElement) {
+    dom.reportStartMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
+    dom.reportStartMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+  }
+
+  if (dom.reportEndMonthInput instanceof HTMLInputElement) {
+    dom.reportEndMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
+    dom.reportEndMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+  }
 
   try {
     state.products = await productsRepository.fetchProductsFromCloud();
@@ -435,7 +635,7 @@ async function initializeApp() {
   clearImportResult(state, dom, deps);
   ensureYearTargets(state, state.activeTargetYear, deps);
   renderTargetInputSection(state, dom, deps);
-  renderReportSection(state, dom, deps);
+  deps.renderReports();
   bindTargetInputEvents(state, dom, deps);
   bindReportEvents(state, dom, deps);
   bindProductEvents(state, dom, deps);
@@ -463,9 +663,10 @@ async function bootstrap() {
     initAiChatUi({
       placeholderStatus: "聊天服务连接中，请稍后再试。",
     });
+    bindHeroCardNavigation();
 
     await bootstrapAuthGate({
-      appRoot: document.querySelector("main.container"),
+      appRoot: document.querySelector(".workspace-grid"),
     });
 
     await runReadOnlyRecordsCountCheck({ getAuthContext });

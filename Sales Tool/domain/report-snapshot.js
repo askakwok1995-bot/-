@@ -310,19 +310,32 @@ export function buildReportSnapshot(state, deps, range) {
 
   let rangeAmountTotal = 0;
   let rangeQuantityTotal = 0;
+  let rangeRecordCount = 0;
   let hasRangeRecords = false;
+  let rangeTargetAmountTotal = 0;
+  let hasMissingRangeTarget = false;
 
   for (const ym of monthKeys) {
     const current = readValue(monthlyTotals, ym, deps);
     if (current.count > 0) {
       hasRangeRecords = true;
+      rangeRecordCount += current.count;
     }
     rangeAmountTotal += current.amount;
     rangeQuantityTotal += current.quantity;
+
+    const monthTarget = getMonthTarget(ym);
+    if (monthTarget === null) {
+      hasMissingRangeTarget = true;
+      continue;
+    }
+    rangeTargetAmountTotal += Number(monthTarget);
   }
 
   rangeAmountTotal = deps.roundMoney(rangeAmountTotal);
   rangeQuantityTotal = deps.roundMoney(rangeQuantityTotal);
+  rangeTargetAmountTotal = hasMissingRangeTarget ? null : deps.roundMoney(rangeTargetAmountTotal);
+  const rangeAmountAchievement = calcRate(rangeAmountTotal, rangeTargetAmountTotal);
 
   for (const [productKey, byMonthMap] of productMonthlyTotals.entries()) {
     const current = sumMonths(byMonthMap, monthKeys, deps);
@@ -428,6 +441,10 @@ export function buildReportSnapshot(state, deps, range) {
     hospitalMonthlySeries,
     hospitalRows: hospitalRows.slice(0, HOSPITAL_TOP_LIMIT),
     hospitalTotalCount: hospitalRows.length,
+    rangeRecordCount,
+    rangeAmountTotal,
+    rangeTargetAmountTotal,
+    rangeAmountAchievement,
     hasRangeRecords,
     hasTargetGap: targetUnavailableYears.size > 0,
     targetGapYears: Array.from(targetUnavailableYears).sort((a, b) => a - b),

@@ -1,0 +1,224 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: Sales Command
+      - generic [ref=e6]:
+        - paragraph [ref=e7]: 医药销售经营工作台
+        - heading "医药代表销售汇报工具" [level=1] [ref=e8]
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: FIELD INTELLIGENCE
+        - heading "把销售录入、指标协同与经营分析，收拢到一张更像企业产品的首页里。" [level=2] [ref=e13]
+        - paragraph [ref=e14]: 首页优先呈现经营视角，再承接录入、清单和 AI 洞察，适合医药销售团队做日常复盘与阶段性分析。
+        - generic [ref=e15]:
+          - link "先看分析" [ref=e16] [cursor=pointer]:
+            - /url: "#report-deck"
+          - link "进入录入" [ref=e17] [cursor=pointer]:
+            - /url: "#operations-deck"
+          - link "查看明细" [ref=e18] [cursor=pointer]:
+            - /url: "#records-deck"
+        - generic "工作台能力" [ref=e19]:
+          - generic [ref=e20]: 目标协同
+          - generic [ref=e21]: 产品与医院分析
+          - generic [ref=e22]: 云端记录与导出
+          - generic [ref=e23]: AI 业务问答
+      - generic [ref=e24]:
+        - region "首页经营摘要" [ref=e25]:
+          - generic [ref=e26]:
+            - paragraph [ref=e27]: Overview
+            - heading "当前工作台摘要" [level=3] [ref=e28]
+          - generic [ref=e29]:
+            - article [ref=e30]:
+              - generic [ref=e31]: 分析区间
+              - strong [ref=e32]: 未设置
+            - article [ref=e33]:
+              - generic [ref=e34]: 产品数
+              - strong [ref=e35]: "0"
+            - article [ref=e36]:
+              - generic [ref=e37]: 记录数
+              - strong [ref=e38]: "0"
+            - article [ref=e39]:
+              - generic [ref=e40]: 指标年份
+              - strong [ref=e41]: "--"
+          - paragraph [ref=e42]: 正在准备首页摘要...
+        - dialog "邮箱登录" [ref=e43]:
+          - generic [ref=e44]:
+            - paragraph [ref=e45]: Access
+            - heading "邮箱登录" [level=3] [ref=e46]
+          - paragraph [ref=e47]: 登录后可访问云端记录、目标配置、销售报表与 AI 洞察。
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - text: 邮箱
+              - textbox "邮箱" [ref=e50]:
+                - /placeholder: name@example.com
+                - text: aska_kwok@163.com
+            - generic [ref=e51]:
+              - text: 密码
+              - textbox "密码" [active] [ref=e52]:
+                - /placeholder: 请输入密码
+                - text: "27525965"
+            - generic [ref=e53]:
+              - button "登录" [ref=e54] [cursor=pointer]
+              - button "注册" [ref=e55] [cursor=pointer]
+            - alert [ref=e56]: 请输入密码。
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - paragraph: Sales Intelligence
+            - heading "报表区" [level=2]
+          - generic:
+            - generic:
+              - text: 起始月
+              - textbox "选择起始月份"
+            - generic:
+              - text: 结束月
+              - textbox "选择结束月份"
+            - generic:
+              - text: 单位
+              - combobox "选择报表金额单位":
+                - option "加载中..." [selected]
+        - paragraph: 优先查看月度、季度、产品和医院表现，再继续处理录入与明细。
+        - group:
+          - generic "Analysis 销售分析 核心报表":
+            - generic:
+              - generic: Analysis
+              - heading "销售分析" [level=3]
+            - generic: 核心报表
+          - generic:
+            - generic:
+              - generic:
+                - button "导出销售分析（XLSX）"
+              - generic:
+                - heading "总览（按月）" [level=4]
+                - generic:
+                  - table:
+                    - rowgroup:
+                      - row "月份 指标金额 实际金额 达成率 金额同比 金额环比 实际数量 数量同比 数量环比":
+                        - columnheader "月份"
+                        - columnheader "指标金额"
+                        - columnheader "实际金额"
+                        - columnheader "达成率"
+                        - columnheader "金额同比"
+                        - columnheader "金额环比"
+                        - columnheader "实际数量"
+                        - columnheader "数量同比"
+                        - columnheader "数量环比"
+                    - rowgroup:
+                      - row "报表加载中...":
+                        - cell "报表加载中..."
+              - generic:
+                - heading "总览（按季度）" [level=4]
+                - generic:
+                  - table:
+                    - rowgroup:
+                      - row "季度 指标金额 实际金额 达成率 金额同比 金额环比 实际数量 数量同比 数量环比":
+                        - columnheader "季度"
+                        - columnheader "指标金额"
+                        - columnheader "实际金额"
+                        - columnheader "达成率"
+                        - columnheader "金额同比"
+                        - columnheader "金额环比"
+                        - columnheader "实际数量"
+                        - columnheader "数量同比"
+                        - columnheader "数量环比"
+                    - rowgroup:
+                      - row "报表加载中...":
+                        - cell "报表加载中..."
+              - generic:
+                - heading "产品分析" [level=4]
+                - generic:
+                  - table:
+                    - rowgroup:
+                      - row "产品/规格 实际金额 指标金额 达成率 金额占比 金额同比 实际数量 数量占比 数量同比":
+                        - columnheader "产品/规格"
+                        - columnheader "实际金额"
+                        - columnheader "指标金额"
+                        - columnheader "达成率"
+                        - columnheader "金额占比"
+                        - columnheader "金额同比"
+                        - columnheader "实际数量"
+                        - columnheader "数量占比"
+                        - columnheader "数量同比"
+                    - rowgroup:
+                      - row "报表加载中...":
+                        - cell "报表加载中..."
+              - generic:
+                - heading "医院分析（按销售金额 Top20）" [level=4]
+                - generic:
+                  - table:
+                    - rowgroup:
+                      - row "医院 销售金额 金额占比 金额同比 采购数量 数量占比 数量同比":
+                        - columnheader "医院"
+                        - columnheader "销售金额"
+                        - columnheader "金额占比"
+                        - columnheader "金额同比"
+                        - columnheader "采购数量"
+                        - columnheader "数量占比"
+                        - columnheader "数量同比"
+                    - rowgroup:
+                      - row "报表加载中...":
+                        - cell "报表加载中..."
+        - group:
+          - generic "Visual Board 可视化图表 趋势与结构":
+            - generic:
+              - generic: Visual Board
+              - heading "可视化图表" [level=3]
+            - generic: 趋势与结构
+          - option "加载中..." [selected]
+          - option "加载中..." [selected]
+          - option "加载中..." [selected]
+      - generic:
+        - generic:
+          - generic:
+            - paragraph: Execution Deck
+            - heading "录入区" [level=2]
+          - paragraph: 维护产品主数据、提交销售记录，并同步年度指标与季度分配。
+        - generic:
+          - group:
+            - generic "Master Data 产品配置 维护主数据":
+              - generic:
+                - generic: Master Data
+                - heading "产品配置" [level=3]
+              - generic: 维护主数据
+          - group:
+            - generic "Field Input 销售录入 快速提交":
+              - generic:
+                - generic: Field Input
+                - heading "销售录入" [level=3]
+              - generic: 快速提交
+            - option "请选择产品/规格" [selected]
+          - group:
+            - generic "Planning 指标录入 年度目标":
+              - generic:
+                - generic: Planning
+                - heading "指标录入" [level=3]
+              - generic: 年度目标
+      - generic:
+        - generic:
+          - generic:
+            - paragraph: Ledger View
+            - heading "列表区" [level=2]
+          - paragraph: 按时间、产品、医院筛选云端销售明细，支持批量删除、导入导出与分页管理。
+        - group:
+          - generic "Records 销售明细账 筛选与导出":
+            - generic:
+              - generic: Records
+              - heading "销售明细账" [level=3]
+            - generic: 筛选与导出
+          - option "20" [selected]
+          - option "50"
+          - option "100"
+  - button "打开 AI 对话窗口": AI 洞察
+  - dialog:
+    - banner:
+      - button:
+        - img
+      - button:
+        - img
+    - generic:
+      - article: 我是销售分析助手，仅基于当前账号已录入的销售记录、产品主数据和目标配置进行分析。当前分析时间范围：尚未设置，请先在报表区选择起始月和结束月。可在报表区调整起止月后继续提问。
+    - generic:
+      - textbox:
+        - /placeholder: 请输入你的问题，例如：本月销售趋势如何？
+      - button [disabled]: 发送
