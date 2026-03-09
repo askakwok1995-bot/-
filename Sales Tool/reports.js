@@ -453,6 +453,46 @@ export function getDefaultReportRange() {
   };
 }
 
+export function buildYmFromParts(yearValue, monthValue) {
+  const year = String(yearValue || "").trim();
+  const month = String(monthValue || "").trim();
+  if (!/^\d{4}$/.test(year)) return "";
+  if (!/^\d{1,2}$/.test(month)) return "";
+  return normalizeYm(`${year}-${month.padStart(2, "0")}`);
+}
+
+export function parseReportYmParts(ym) {
+  const normalized = normalizeYm(ym);
+  if (!normalized) {
+    return { year: "", month: "" };
+  }
+  const matched = normalized.match(MONTH_RE);
+  if (!matched) {
+    return { year: "", month: "" };
+  }
+  return {
+    year: matched[1],
+    month: matched[2],
+  };
+}
+
+export function getReportRangeControlYears(startYm, endYm, options = {}) {
+  const now = new Date();
+  const currentYear =
+    Number.isInteger(options.currentYear) && options.currentYear > 0 ? options.currentYear : now.getFullYear();
+  const paddingPastYears = Number.isInteger(options.paddingPastYears) ? Math.max(options.paddingPastYears, 0) : 5;
+  const paddingFutureYears =
+    Number.isInteger(options.paddingFutureYears) ? Math.max(options.paddingFutureYears, 0) : 1;
+  const selectedYears = [parseYm(startYm)?.year, parseYm(endYm)?.year].filter(Number.isInteger);
+  const minYear = Math.min(currentYear - paddingPastYears, ...selectedYears);
+  const maxYear = Math.max(currentYear + paddingFutureYears, ...selectedYears);
+  const years = [];
+  for (let year = minYear; year <= maxYear; year += 1) {
+    years.push(String(year));
+  }
+  return years;
+}
+
 export function normalizeReportRange(state, dom, deps) {
   const defaults = getDefaultReportRange();
 
@@ -736,6 +776,22 @@ export function bindReportEvents(state, dom, deps) {
     dom.reportStartMonthInput.addEventListener("change", rerender);
   }
 
+  if (
+    dom.reportStartYearSelect instanceof HTMLSelectElement &&
+    dom.reportStartMonthSelect instanceof HTMLSelectElement &&
+    dom.reportStartMonthInput instanceof HTMLInputElement
+  ) {
+    const rerender = () => {
+      const nextYm = buildYmFromParts(dom.reportStartYearSelect.value, dom.reportStartMonthSelect.value);
+      dom.reportStartMonthInput.value = nextYm;
+      state.reportStartYm = nextYm;
+      renderReportSection(state, dom, deps);
+    };
+
+    dom.reportStartYearSelect.addEventListener("change", rerender);
+    dom.reportStartMonthSelect.addEventListener("change", rerender);
+  }
+
   if (dom.reportEndMonthInput instanceof HTMLInputElement) {
     const rerender = () => {
       state.reportEndYm = String(dom.reportEndMonthInput.value || "").trim();
@@ -744,6 +800,22 @@ export function bindReportEvents(state, dom, deps) {
 
     dom.reportEndMonthInput.addEventListener("input", rerender);
     dom.reportEndMonthInput.addEventListener("change", rerender);
+  }
+
+  if (
+    dom.reportEndYearSelect instanceof HTMLSelectElement &&
+    dom.reportEndMonthSelect instanceof HTMLSelectElement &&
+    dom.reportEndMonthInput instanceof HTMLInputElement
+  ) {
+    const rerender = () => {
+      const nextYm = buildYmFromParts(dom.reportEndYearSelect.value, dom.reportEndMonthSelect.value);
+      dom.reportEndMonthInput.value = nextYm;
+      state.reportEndYm = nextYm;
+      renderReportSection(state, dom, deps);
+    };
+
+    dom.reportEndYearSelect.addEventListener("change", rerender);
+    dom.reportEndMonthSelect.addEventListener("change", rerender);
   }
 
   if (dom.reportChartsDetails instanceof HTMLDetailsElement) {

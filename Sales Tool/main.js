@@ -45,7 +45,10 @@ import {
   DEFAULT_REPORT_CHART_DATA_LABEL_MODE,
   DEFAULT_REPORT_CHART_PALETTE_ID,
   bindReportEvents,
+  buildYmFromParts,
   getDefaultReportRange,
+  getReportRangeControlYears,
+  parseReportYmParts,
   renderReportSection,
 } from "./reports.js";
 import { bootstrapAuthGate, getCurrentAuthUser, getSupabaseClient } from "./auth.js";
@@ -198,7 +201,11 @@ async function initializeApp() {
     targetProductAllocBody: document.getElementById("target-product-alloc-body"),
 
     reportStartMonthInput: document.getElementById("report-start-month"),
+    reportStartYearSelect: document.getElementById("report-start-year-select"),
+    reportStartMonthSelect: document.getElementById("report-start-month-select"),
     reportEndMonthInput: document.getElementById("report-end-month"),
+    reportEndYearSelect: document.getElementById("report-end-year-select"),
+    reportEndMonthSelect: document.getElementById("report-end-month-select"),
     reportAmountUnitSelect: document.getElementById("report-amount-unit-select"),
     exportReportTablesBtn: document.getElementById("export-report-tables-btn"),
     reportHintEl: document.getElementById("report-hint"),
@@ -289,14 +296,54 @@ async function initializeApp() {
   let listStatusTimer = null;
   let currentReportSummary = null;
 
+  function populateSelectOptions(selectEl, options, placeholder) {
+    if (!(selectEl instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const currentValue = String(selectEl.value || "").trim();
+    const nextOptions = [`<option value="">${escapeHtml(placeholder)}</option>`]
+      .concat(options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`))
+      .join("");
+    selectEl.innerHTML = nextOptions;
+    selectEl.value = options.includes(currentValue) ? currentValue : "";
+  }
+
+  function renderReportRangeSelectOptions(domRef, stateRef) {
+    const years = getReportRangeControlYears(stateRef.reportStartYm, stateRef.reportEndYm);
+    const months = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0"));
+
+    populateSelectOptions(domRef.reportStartYearSelect, years, "年份");
+    populateSelectOptions(domRef.reportEndYearSelect, years, "年份");
+    populateSelectOptions(domRef.reportStartMonthSelect, months, "月份");
+    populateSelectOptions(domRef.reportEndMonthSelect, months, "月份");
+  }
+
   function hydrateReportRangeInputs(domRef, stateRef) {
     const startInput = domRef.reportStartMonthInput instanceof HTMLInputElement ? domRef.reportStartMonthInput : null;
     const endInput = domRef.reportEndMonthInput instanceof HTMLInputElement ? domRef.reportEndMonthInput : null;
+    const startParts = parseReportYmParts(stateRef.reportStartYm);
+    const endParts = parseReportYmParts(stateRef.reportEndYm);
+
+    renderReportRangeSelectOptions(domRef, stateRef);
+
     if (startInput) {
       startInput.value = String(stateRef.reportStartYm || "").trim();
     }
     if (endInput) {
       endInput.value = String(stateRef.reportEndYm || "").trim();
+    }
+    if (domRef.reportStartYearSelect instanceof HTMLSelectElement) {
+      domRef.reportStartYearSelect.value = startParts.year;
+    }
+    if (domRef.reportStartMonthSelect instanceof HTMLSelectElement) {
+      domRef.reportStartMonthSelect.value = startParts.month;
+    }
+    if (domRef.reportEndYearSelect instanceof HTMLSelectElement) {
+      domRef.reportEndYearSelect.value = endParts.year;
+    }
+    if (domRef.reportEndMonthSelect instanceof HTMLSelectElement) {
+      domRef.reportEndMonthSelect.value = endParts.month;
     }
   }
 
@@ -606,9 +653,47 @@ async function initializeApp() {
     dom.reportStartMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
   }
 
+  const syncReportRangeFromStartSelects = () => {
+    if (!(dom.reportStartMonthInput instanceof HTMLInputElement)) {
+      return;
+    }
+    dom.reportStartMonthInput.value = buildYmFromParts(
+      dom.reportStartYearSelect instanceof HTMLSelectElement ? dom.reportStartYearSelect.value : "",
+      dom.reportStartMonthSelect instanceof HTMLSelectElement ? dom.reportStartMonthSelect.value : "",
+    );
+    syncHeroOverviewFromReportControls();
+  };
+
+  if (dom.reportStartYearSelect instanceof HTMLSelectElement) {
+    dom.reportStartYearSelect.addEventListener("change", syncReportRangeFromStartSelects);
+  }
+
+  if (dom.reportStartMonthSelect instanceof HTMLSelectElement) {
+    dom.reportStartMonthSelect.addEventListener("change", syncReportRangeFromStartSelects);
+  }
+
   if (dom.reportEndMonthInput instanceof HTMLInputElement) {
     dom.reportEndMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
     dom.reportEndMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+  }
+
+  const syncReportRangeFromEndSelects = () => {
+    if (!(dom.reportEndMonthInput instanceof HTMLInputElement)) {
+      return;
+    }
+    dom.reportEndMonthInput.value = buildYmFromParts(
+      dom.reportEndYearSelect instanceof HTMLSelectElement ? dom.reportEndYearSelect.value : "",
+      dom.reportEndMonthSelect instanceof HTMLSelectElement ? dom.reportEndMonthSelect.value : "",
+    );
+    syncHeroOverviewFromReportControls();
+  };
+
+  if (dom.reportEndYearSelect instanceof HTMLSelectElement) {
+    dom.reportEndYearSelect.addEventListener("change", syncReportRangeFromEndSelects);
+  }
+
+  if (dom.reportEndMonthSelect instanceof HTMLSelectElement) {
+    dom.reportEndMonthSelect.addEventListener("change", syncReportRangeFromEndSelects);
   }
 
   try {

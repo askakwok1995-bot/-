@@ -142,11 +142,27 @@
           <div class="report-section-range">
             <label class="inline-field report-month-field" for="report-start-month">
               起始月
-              <input id="report-start-month" type="month" aria-label="选择起始月份" />
+              <span class="report-month-controls">
+                <select id="report-start-year-select" aria-label="选择起始年份">
+                  <option value="">年份</option>
+                </select>
+                <select id="report-start-month-select" aria-label="选择起始月份">
+                  <option value="">月份</option>
+                </select>
+              </span>
+              <input id="report-start-month" type="hidden" aria-hidden="true" />
             </label>
             <label class="inline-field report-month-field" for="report-end-month">
               结束月
-              <input id="report-end-month" type="month" aria-label="选择结束月份" />
+              <span class="report-month-controls">
+                <select id="report-end-year-select" aria-label="选择结束年份">
+                  <option value="">年份</option>
+                </select>
+                <select id="report-end-month-select" aria-label="选择结束月份">
+                  <option value="">月份</option>
+                </select>
+              </span>
+              <input id="report-end-month" type="hidden" aria-hidden="true" />
             </label>
             <label class="inline-field report-unit-field" for="report-amount-unit-select">
               单位
