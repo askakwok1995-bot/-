@@ -71,6 +71,8 @@ const BROAD_QUERY_KEYWORDS = Object.freeze([
   "整体表现",
   "整体情况",
 ]);
+const BROAD_OVERALL_INTENT_KEYWORDS = Object.freeze(["报告", "分析", "趋势", "情况", "表现", "概况", "概览", "汇报"]);
+const OVERALL_SCOPE_KEYWORDS = Object.freeze(["销售", "整体", "业务", "当前区间", "当前分析区间", "本区间", "报表区间"]);
 const DEEP_DIVE_QUERY_KEYWORDS = Object.freeze([
   "为什么",
   "原因",
@@ -186,9 +188,9 @@ function mapHistoryRole(role) {
   return safeRole === "assistant" ? "model" : "user";
 }
 
-function buildInitialContents(historyWindow, message, businessSnapshot, conversationState, followupContext) {
+function buildInitialContents(historyWindow, message, businessSnapshot, conversationState, followupContext, options = {}) {
   const contents = [];
-  const safeHistory = Array.isArray(historyWindow) ? historyWindow : [];
+  const safeHistory = compactHistoryWindow(historyWindow, options);
   safeHistory.forEach((item) => {
     const content = trimString(item?.content);
     if (!content) {
@@ -389,7 +391,23 @@ function shouldUseMacroOnlyFirstRound(message) {
   if (hasNamedProductLikeQuestion(safeMessage) || hasSpecificHospitalLikeQuestion(safeMessage)) {
     return false;
   }
-  return containsKeyword(safeMessage, BROAD_QUERY_KEYWORDS);
+  return containsKeyword(safeMessage, BROAD_QUERY_KEYWORDS) || isBroadOverallIntentLike(safeMessage);
+}
+
+function isBroadOverallIntentLike(message) {
+  const safeMessage = trimString(message);
+  if (!safeMessage) {
+    return false;
+  }
+  const hasScopeSignal = containsKeyword(safeMessage, OVERALL_SCOPE_KEYWORDS);
+  const hasIntentSignal = containsKeyword(safeMessage, BROAD_OVERALL_INTENT_KEYWORDS);
+  if (!(hasScopeSignal && hasIntentSignal)) {
+    return false;
+  }
+  if (!safeMessage.includes("销售") && !safeMessage.includes("整体") && !safeMessage.includes("业务")) {
+    return false;
+  }
+  return true;
 }
 
 function shouldUseDimensionReportMacroFirstRound(message) {
@@ -452,6 +470,14 @@ function isDimensionOverviewMacroStartCandidate(message) {
 
 function normalizeScopedEntityNames(value) {
   return Array.isArray(value) ? value.map((item) => trimString(item)).filter((item) => item) : [];
+}
+
+function compactHistoryWindow(historyWindow, options = {}) {
+  const safeHistory = Array.isArray(historyWindow) ? historyWindow : [];
+  if (!options?.compactBroadOverallHistory) {
+    return safeHistory;
+  }
+  return safeHistory.slice(-2);
 }
 
 function normalizePlannerToolCalls(toolCalls, message, conversationState = null) {
@@ -1337,7 +1363,15 @@ export async function runToolFirstChat({
   const executeToolByNameImpl = deps.executeToolByName || executeToolByName;
   const requestGeminiGenerateContentImpl = deps.requestGeminiGenerateContent || requestGeminiGenerateContent;
 
-  const contents = buildInitialContents(historyWindow, message, businessSnapshot, conversationState, followupContext);
+  const compactBroadOverallHistory = isBroadOverallMacroStartCandidate(message);
+  const contents = buildInitialContents(
+    historyWindow,
+    message,
+    businessSnapshot,
+    conversationState,
+    followupContext,
+    { compactBroadOverallHistory },
+  );
   const lastToolResultRef = { current: null };
   let plannerState = null;
   let plannerRecoveryAttempted = false;

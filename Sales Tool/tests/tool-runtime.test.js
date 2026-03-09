@@ -438,6 +438,91 @@ test("runToolFirstChat auto-starts overview macro when broad overall report ques
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_overview_brief"]);
 });
 
+test("runToolFirstChat keeps broad overall report entry stable under noisy history", async () => {
+  const toolCalls = [];
+  const payloads = [];
+  let geminiCallCount = 0;
+  const result = await runToolFirstChat({
+    message: "请给我一份当前区间的详细销售分析报告",
+    historyWindow: [
+      { role: "user", content: "先看看医院表现" },
+      { role: "assistant", content: "医院表现整体稳定，头部医院贡献较高。" },
+      { role: "user", content: "再看看产品结构" },
+      { role: "assistant", content: "产品结构较集中，头部规格贡献明显。" },
+    ],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-overall-report-history-compact",
+    deps: {
+      requestGeminiGenerateContent: async (payload) => {
+        geminiCallCount += 1;
+        payloads.push(JSON.parse(JSON.stringify(payload)));
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [{ text: "请给我本区间的详细报告。" }],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前报表区间内销售表现稳健，头部产品贡献集中，最近月延续上行，建议继续放大核心产品的增长势能。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name) => {
+        toolCalls.push(name);
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_sales_overview_brief"],
+            summary: { sales_amount: "2861.75万元" },
+            rows: [{ row_label: "Top1产品", sales_amount: "1064.83万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_overview",
+            coverage_code: "full",
+            analysis_view: "sales_overview_brief",
+            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 2);
+  assert.deepEqual(toolCalls, ["get_sales_overview_brief"]);
+  assert.equal(payloads[0]?.contents?.length, 3);
+  assert.equal(payloads[0]?.contents?.[0]?.parts?.[0]?.text, "再看看产品结构");
+  assert.equal(payloads[0]?.contents?.[1]?.parts?.[0]?.text, "产品结构较集中，头部规格贡献明显。");
+  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
+});
+
 test("runToolFirstChat auto-starts dimension overview macro for broad product performance question", async () => {
   const toolCalls = [];
   let geminiCallCount = 0;
