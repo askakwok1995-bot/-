@@ -798,7 +798,7 @@ tbody tr:hover td {
 
 .report-section-range {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: nowrap;
@@ -846,15 +846,15 @@ tbody tr:hover td {
 
 .report-unit-field {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
-  flex-direction: row;
+  flex-direction: column;
   white-space: nowrap;
 }
 
 .report-unit-field select {
-  width: 128px;
-  min-width: 128px;
+  width: 180px;
+  min-width: 180px;
 }
 
 .report-export-btn {
