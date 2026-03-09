@@ -16,6 +16,46 @@ import { buildChatSuccessPayload, buildEvidenceBundleFromToolResult } from "../c
 
 const TERM_EXPLAIN_CUE_RE = /(什么意思|是什么|指什么|怎么理解)/u;
 const EXPLICIT_TERM_RE = /([A-Za-z0-9\u4e00-\u9fa5]{1,16}(?:覆盖率|占比|集中度|贡献|趋势))/u;
+const REFERENTIAL_ENTITY_CUE_RE = /(这两家|这几个|这两个|它们|这些)/u;
+
+function normalizeStringArray(value, maxItems = 6) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .map((item) => trimString(item))
+        .filter((item) => item),
+    ),
+  ).slice(0, maxItems);
+}
+
+function extractNamedEntitiesFromRows(rows, key) {
+  return normalizeStringArray(
+    (Array.isArray(rows) ? rows : []).map((row) => {
+      if (!row || typeof row !== "object") {
+        return "";
+      }
+      return trimString(row[key]);
+    }),
+  );
+}
+
+function extractEntityScopeFromToolResult(toolResult) {
+  const safeToolResult = toolResult && typeof toolResult === "object" ? toolResult : {};
+  const matchedEntities =
+    safeToolResult.matched_entities && typeof safeToolResult.matched_entities === "object"
+      ? safeToolResult.matched_entities
+      : {};
+  const rows = Array.isArray(safeToolResult.rows) ? safeToolResult.rows : [];
+  const matchedProducts = normalizeStringArray(matchedEntities.products);
+  const matchedHospitals = normalizeStringArray(matchedEntities.hospitals);
+  return {
+    products: matchedProducts.length > 0 ? matchedProducts : extractNamedEntitiesFromRows(rows, "product_name"),
+    hospitals: matchedHospitals.length > 0 ? matchedHospitals : extractNamedEntitiesFromRows(rows, "hospital_name"),
+  };
+}
 
 function jsonResponse(payload, status = 200, requestId = "") {
   const safeRequestId = trimString(requestId);
@@ -180,13 +220,64 @@ function createDefaultQuestionJudgment() {
 
 function buildConversationStatePayload(incomingConversationState, questionJudgment, toolResult) {
   const baseState = normalizeConversationState(incomingConversationState);
+  const nextEntityScope = extractEntityScopeFromToolResult(toolResult);
+  const primaryDimensionCode = trimString(questionJudgment?.primary_dimension?.code);
+  const shouldPreferHospitals = primaryDimensionCode === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL;
+  const shouldPreferProducts = primaryDimensionCode === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
   return {
     ...baseState,
-    primary_dimension_code:
-      trimString(questionJudgment?.primary_dimension?.code) || trimString(baseState.primary_dimension_code),
+    primary_dimension_code: primaryDimensionCode || trimString(baseState.primary_dimension_code),
+    entity_scope: {
+      products:
+        shouldPreferHospitals && nextEntityScope.hospitals.length > 0
+          ? baseState.entity_scope.products
+          : nextEntityScope.products.length > 0
+            ? nextEntityScope.products
+            : baseState.entity_scope.products,
+      hospitals:
+        shouldPreferProducts && nextEntityScope.products.length > 0
+          ? baseState.entity_scope.hospitals
+          : nextEntityScope.hospitals.length > 0
+            ? nextEntityScope.hospitals
+            : baseState.entity_scope.hospitals,
+    },
     source_period:
       trimString(toolResult?.range?.period) ||
       trimString(baseState.source_period),
+  };
+}
+
+function buildEntityScopeFollowupContext(message, conversationState) {
+  const safeMessage = trimString(message);
+  if (!safeMessage || safeMessage.length > 40 || !REFERENTIAL_ENTITY_CUE_RE.test(safeMessage)) {
+    return null;
+  }
+  const safeState = normalizeConversationState(conversationState);
+  const hospitals = normalizeStringArray(safeState.entity_scope?.hospitals);
+  const products = normalizeStringArray(safeState.entity_scope?.products);
+  if (hospitals.length === 0 && products.length === 0) {
+    return null;
+  }
+  const primaryDimensionCode = trimString(safeState.primary_dimension_code);
+  let primaryEntityType = "";
+  if (primaryDimensionCode === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL && hospitals.length > 0) {
+    primaryEntityType = "hospital";
+  } else if (primaryDimensionCode === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT && products.length > 0) {
+    primaryEntityType = "product";
+  } else if (hospitals.length > 0 && products.length === 0) {
+    primaryEntityType = "hospital";
+  } else if (products.length > 0 && hospitals.length === 0) {
+    primaryEntityType = "product";
+  } else if (hospitals.length > 0) {
+    primaryEntityType = "hospital";
+  } else {
+    primaryEntityType = "product";
+  }
+  return {
+    kind: "entity_scope_followup",
+    primary_entity_type: primaryEntityType,
+    hospitals,
+    products,
   };
 }
 
@@ -411,6 +502,7 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const historyWindow = normalizeSessionHistoryWindowImpl(body?.history);
     const incomingConversationState = normalizeConversationState(body?.conversation_state);
     const normalizedBusinessSnapshot = normalizeBusinessSnapshotImpl(body?.business_snapshot);
+    const followupContext = buildEntityScopeFollowupContext(message, incomingConversationState);
 
     const termExplainPayload = buildTermExplainPayload({
       message,
@@ -429,6 +521,8 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
       historyWindow,
       businessSnapshot: normalizedBusinessSnapshot,
       questionJudgment: createDefaultQuestionJudgment(),
+      conversationState: incomingConversationState,
+      followupContext,
       authToken: authResult.token,
       env: context.env,
       requestId,

@@ -199,6 +199,8 @@ function isValidHistoryRole(value) {
 }
 
 const ASSISTANT_HISTORY_TERM_RE = /([A-Za-z0-9\u4e00-\u9fa5]{1,12}(?:覆盖率|占比|集中度|贡献|趋势))/gu;
+const ASSISTANT_HISTORY_ENTITY_RE =
+  /“([^”]{2,32})”|([A-Za-z0-9\u4e00-\u9fa5]{2,40}(?:医院|门诊部|诊所|有限公司))/gu;
 
 function normalizeAssistantAnchorTerm(term) {
   let next = toText(term);
@@ -242,6 +244,28 @@ export function extractAssistantAnchorTerms(text) {
   return terms;
 }
 
+export function extractAssistantEntityAnchors(text) {
+  const content = toText(text);
+  if (!content) {
+    return [];
+  }
+  const entities = [];
+  const seen = new Set();
+  let matched = ASSISTANT_HISTORY_ENTITY_RE.exec(content);
+  while (matched) {
+    const entity = toText(matched[1] || matched[2]);
+    if (entity && !seen.has(entity)) {
+      seen.add(entity);
+      entities.push(entity);
+      if (entities.length >= 2) {
+        break;
+      }
+    }
+    matched = ASSISTANT_HISTORY_ENTITY_RE.exec(content);
+  }
+  return entities;
+}
+
 export function buildAssistantHistoryText(answer, replyText = "") {
   const summary = toText(answer?.summary || replyText);
   const fullReply = toText(replyText);
@@ -249,14 +273,21 @@ export function buildAssistantHistoryText(answer, replyText = "") {
     return "";
   }
   const anchorTerms = extractAssistantAnchorTerms(fullReply);
-  if (anchorTerms.length === 0) {
-    return summary || fullReply;
+  const entityAnchors = extractAssistantEntityAnchors(fullReply);
+  const baseText = summary || fullReply;
+  const additions = [];
+  const missingTerms = anchorTerms.filter((term) => !baseText.includes(term));
+  if (missingTerms.length > 0) {
+    additions.push(`术语：${missingTerms.join("、")}。`);
   }
-  const missingTerms = anchorTerms.filter((term) => !summary.includes(term));
-  if (missingTerms.length === 0) {
-    return summary || fullReply;
+  const missingEntities = entityAnchors.filter((entity) => !baseText.includes(entity));
+  if (missingEntities.length > 0) {
+    additions.push(`对象：${missingEntities.join("、")}。`);
   }
-  return `${summary || fullReply} 术语：${missingTerms.join("、")}。`;
+  if (additions.length === 0) {
+    return baseText;
+  }
+  return `${baseText} ${additions.join(" ")}`;
 }
 
 export function rollbackFailedUserHistory(historyItems, failedText) {

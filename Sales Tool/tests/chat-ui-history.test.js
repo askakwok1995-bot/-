@@ -15,6 +15,18 @@ test("buildAssistantHistoryText appends missing anchor terms from reply", () => 
   assert.match(text, /术语：月度覆盖率、结构集中度/u);
 });
 
+test("buildAssistantHistoryText appends entity anchors from reply", () => {
+  const text = buildAssistantHistoryText(
+    {
+      summary: "已确认两家医院本季度销售表现。",
+    },
+    "已确认“卓正优社医院”和“广州卓祥医疗门诊部有限公司”本季度销售表现，并建议继续下钻产品规格。",
+  );
+
+  assert.match(text, /已确认两家医院本季度销售表现/u);
+  assert.match(text, /对象：卓正优社医院、广州卓祥医疗门诊部有限公司/u);
+});
+
 test("rollbackFailedUserHistory removes last failed user message only", () => {
   const next = rollbackFailedUserHistory(
     [

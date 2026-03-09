@@ -249,3 +249,145 @@ test("handleChatRequest explains explicit term follow-up from recent assistant h
   assert.match(payload.reply, /医院/u);
   assert.equal(payload.model, "term_explainer");
 });
+
+test("handleChatRequest writes matched hospitals into conversation_state entity_scope", async () => {
+  const response = await handleChatRequest(
+    buildContext({
+      message: "卓正和卓祥这个季度卖了多少了",
+      conversation_state: {
+        primary_dimension_code: "overall",
+        entity_scope: { products: [], hospitals: [] },
+        source_period: "2025-01~2025-12",
+      },
+    }),
+    "req-entity-scope",
+    {
+      verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+      runToolFirstChat: async () => ({
+        ok: true,
+        reply: "卓正优社医院和广州卓祥医疗门诊部有限公司本季度均有销售表现。",
+        model: "tool-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        },
+        plannerState: {
+          relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+          route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          question_type: "overview",
+          required_evidence: ["aggregate"],
+          requested_views: ["get_hospital_summary"],
+          missing_evidence_types: [],
+          analysis_confidence: "high",
+        },
+        questionJudgment: {
+          primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+          granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+          relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+        },
+        toolRuntimeState: {
+          evidence_types_completed: ["aggregate"],
+        },
+        toolResult: {
+          range: { period: "2025-01~2025-12" },
+          matched_entities: {
+            hospitals: ["卓正优社医院", "广州卓祥医疗门诊部有限公司"],
+          },
+          unmatched_entities: {
+            hospitals: [],
+            products: [],
+          },
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          summary: {
+            sales_amount: "11.12万元",
+          },
+          rows: [],
+        },
+      }),
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.answer.conversation_state?.entity_scope?.hospitals, [
+    "卓正优社医院",
+    "广州卓祥医疗门诊部有限公司",
+  ]);
+  assert.equal(payload.answer.conversation_state?.primary_dimension_code, "hospital");
+});
+
+test("handleChatRequest forwards narrow referential follow-up context into tool-first", async () => {
+  const context = buildContext({
+    message: "是这两家，我要看具体产品规格和数量",
+    history: [
+      {
+        role: "assistant",
+        content: "已确认对象：卓正优社医院、广州卓祥医疗门诊部有限公司。",
+      },
+    ],
+    conversation_state: {
+      primary_dimension_code: "hospital",
+      entity_scope: {
+        products: [],
+        hospitals: ["卓正优社医院", "广州卓祥医疗门诊部有限公司"],
+      },
+      source_period: "2025-01~2025-12",
+    },
+    business_snapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+  });
+
+  const response = await handleChatRequest(context, "req-followup-scope", {
+    verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+    runToolFirstChat: async ({ conversationState, followupContext }) => {
+      assert.deepEqual(conversationState?.entity_scope?.hospitals, [
+        "卓正优社医院",
+        "广州卓祥医疗门诊部有限公司",
+      ]);
+      assert.equal(followupContext?.kind, "entity_scope_followup");
+      assert.equal(followupContext?.primary_entity_type, "hospital");
+      return {
+        ok: true,
+        reply: "这两家医院的具体产品规格和数量如下。",
+        model: "tool-model",
+        outputContext: {
+          route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+        },
+        plannerState: {
+          relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+          route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          question_type: "overview",
+          required_evidence: ["breakdown"],
+          requested_views: ["scope_breakdown"],
+          missing_evidence_types: [],
+          analysis_confidence: "high",
+        },
+        questionJudgment: {
+          primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+          granularity: { code: QUESTION_JUDGMENT_CODES.granularity.DETAIL, label: "明细级" },
+          relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+        },
+        toolRuntimeState: {
+          evidence_types_completed: ["breakdown"],
+        },
+        toolResult: {
+          range: { period: "2025-01~2025-12" },
+          coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+          summary: { sales_amount: "11.12万元" },
+          rows: [{ hospital_name: "卓正优社医院", product_name: "诺和盈0.25mg", sales_volume: "10盒" }],
+          matched_entities: {
+            hospitals: ["卓正优社医院", "广州卓祥医疗门诊部有限公司"],
+          },
+          unmatched_entities: {
+            hospitals: [],
+            products: [],
+          },
+        },
+      };
+    },
+  });
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.match(payload.reply, /具体产品规格和数量/u);
+});

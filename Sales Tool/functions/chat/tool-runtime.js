@@ -133,13 +133,44 @@ export function createInitialToolRuntimeState() {
   };
 }
 
-function buildToolSeedPrompt(message, businessSnapshot) {
+function buildToolSeedPrompt(message, businessSnapshot, conversationState = null, followupContext = null) {
   const normalizedSnapshot = normalizeBusinessSnapshot(businessSnapshot);
   const promptLines = [
     "以下是当前分析范围内的轻量业务快照（seed context），可作为初始背景，但不是唯一数据来源。",
     "所有分析必须以当前报表区间为准，不解释用户问题中的时间词。",
     "如需更具体的数据，请优先调用业务工具。",
   ];
+  const scopedHospitals = Array.isArray(conversationState?.entity_scope?.hospitals)
+    ? conversationState.entity_scope.hospitals.map((item) => trimString(item)).filter((item) => item)
+    : [];
+  const scopedProducts = Array.isArray(conversationState?.entity_scope?.products)
+    ? conversationState.entity_scope.products.map((item) => trimString(item)).filter((item) => item)
+    : [];
+  const primaryDimensionCode = trimString(conversationState?.primary_dimension_code);
+  const sourcePeriod = trimString(conversationState?.source_period);
+  if (primaryDimensionCode || scopedHospitals.length > 0 || scopedProducts.length > 0 || sourcePeriod) {
+    promptLines.push("", "当前会话上下文：");
+    if (primaryDimensionCode) {
+      promptLines.push(`- 延续主分析维度：${primaryDimensionCode}`);
+    }
+    if (sourcePeriod) {
+      promptLines.push(`- 上一轮来源时间段：${sourcePeriod}`);
+    }
+    if (scopedHospitals.length > 0) {
+      promptLines.push(`- 已确认医院对象：${scopedHospitals.join("、")}`);
+    }
+    if (scopedProducts.length > 0) {
+      promptLines.push(`- 已确认产品对象：${scopedProducts.join("、")}`);
+    }
+  }
+  if (trimString(followupContext?.kind) === "entity_scope_followup") {
+    promptLines.push("", "本轮用户使用的是延续指代，请默认沿用上一轮已确认对象继续分析。");
+    if (trimString(followupContext?.primary_entity_type) === "hospital" && scopedHospitals.length > 0) {
+      promptLines.push(`- 本轮默认分析医院对象：${scopedHospitals.join("、")}`);
+    } else if (trimString(followupContext?.primary_entity_type) === "product" && scopedProducts.length > 0) {
+      promptLines.push(`- 本轮默认分析产品对象：${scopedProducts.join("、")}`);
+    }
+  }
   promptLines.push(
     "",
     "seed_context:",
@@ -155,7 +186,7 @@ function mapHistoryRole(role) {
   return safeRole === "assistant" ? "model" : "user";
 }
 
-function buildInitialContents(historyWindow, message, businessSnapshot) {
+function buildInitialContents(historyWindow, message, businessSnapshot, conversationState, followupContext) {
   const contents = [];
   const safeHistory = Array.isArray(historyWindow) ? historyWindow : [];
   safeHistory.forEach((item) => {
@@ -170,7 +201,7 @@ function buildInitialContents(historyWindow, message, businessSnapshot) {
   });
   contents.push({
     role: "user",
-    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot) }],
+    parts: [{ text: buildToolSeedPrompt(message, businessSnapshot, conversationState, followupContext) }],
   });
   return contents;
 }
@@ -1153,6 +1184,8 @@ export async function runToolFirstChat({
   message,
   historyWindow,
   businessSnapshot,
+  conversationState,
+  followupContext,
   questionJudgment,
   authToken,
   env,
@@ -1173,7 +1206,7 @@ export async function runToolFirstChat({
   const executeToolByNameImpl = deps.executeToolByName || executeToolByName;
   const requestGeminiGenerateContentImpl = deps.requestGeminiGenerateContent || requestGeminiGenerateContent;
 
-  const contents = buildInitialContents(historyWindow, message, businessSnapshot);
+  const contents = buildInitialContents(historyWindow, message, businessSnapshot, conversationState, followupContext);
   const lastToolResultRef = { current: null };
   let plannerState = null;
   let plannerRecoveryAttempted = false;
