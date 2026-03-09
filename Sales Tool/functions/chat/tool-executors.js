@@ -38,6 +38,9 @@ import {
 } from "../../domain/entity-matchers.js";
 
 const TOOL_TREND_LIMIT = ON_DEMAND_MAX_WINDOW_MONTHS;
+const MACRO_OVERVIEW_DEFAULT_LIMIT = 8;
+const MACRO_REPORT_DEFAULT_LIMIT = 10;
+const MACRO_SAFE_LIMIT_CAP = 10;
 const TOOL_EVIDENCE_TYPE_MAP = Object.freeze({
   [TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF]: ["aggregate", "timeseries", "breakdown", "diagnostics"],
   [TOOL_NAMES.GET_SALES_TREND_BRIEF]: ["aggregate", "timeseries", "breakdown", "diagnostics"],
@@ -1447,7 +1450,7 @@ async function executeRiskOpportunitySummary(args, ctx) {
 }
 
 async function executeSalesOverviewBrief(args, ctx) {
-  const safeLimit = toPositiveInt(args?.limit, 4, 6);
+  const safeLimit = toPositiveInt(args?.limit, MACRO_OVERVIEW_DEFAULT_LIMIT, MACRO_SAFE_LIMIT_CAP);
   const [overall, trend, products, hospitals, diagnostics] = await Promise.all([
     executeOverallSummary({}, ctx),
     executeTrendSummary(
@@ -1460,13 +1463,13 @@ async function executeSalesOverviewBrief(args, ctx) {
     executeProductSummary(
       {
         include_all_products: true,
-        limit: Math.max(3, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
     executeHospitalSummary(
       {
-        limit: Math.max(3, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
@@ -1489,8 +1492,8 @@ async function executeSalesOverviewBrief(args, ctx) {
     opportunity_hints: Array.isArray(diagnostics.result.summary?.opportunity_hints)
       ? diagnostics.result.summary.opportunity_hints.slice(0, 2)
       : [],
-    top_products: decorateRows(products.result.rows, "", 3).map((row) => trimString(row?.product_name)).filter((item) => item),
-    top_hospitals: decorateRows(hospitals.result.rows, "", 3).map((row) => trimString(row?.hospital_name)).filter((item) => item),
+    top_products: decorateRows(products.result.rows, "", safeLimit).map((row) => trimString(row?.product_name)).filter((item) => item),
+    top_hospitals: decorateRows(hospitals.result.rows, "", safeLimit).map((row) => trimString(row?.hospital_name)).filter((item) => item),
   };
 
   return {
@@ -1513,10 +1516,10 @@ async function executeSalesOverviewBrief(args, ctx) {
       ),
       summary,
       rows: [
-        ...decorateRows(trend.result.rows, "趋势:", Math.min(3, safeLimit)),
-        ...decorateRows(products.result.rows, "产品:", Math.min(3, safeLimit)),
-        ...decorateRows(hospitals.result.rows, "医院:", Math.min(3, safeLimit)),
-        ...decorateTextRows(diagnostics.result.rows.slice(0, 2), {
+        ...decorateRows(trend.result.rows, "趋势:", safeLimit),
+        ...decorateRows(products.result.rows, "产品:", safeLimit),
+        ...decorateRows(hospitals.result.rows, "医院:", safeLimit),
+        ...decorateTextRows(diagnostics.result.rows.slice(0, Math.min(safeLimit, 4)), {
           risk: "风险:",
           opportunity: "机会:",
           default: "诊断:",
@@ -1534,7 +1537,7 @@ async function executeSalesOverviewBrief(args, ctx) {
 }
 
 async function executeSalesTrendBrief(args, ctx) {
-  const safeLimit = toPositiveInt(args?.limit, 4, 6);
+  const safeLimit = toPositiveInt(args?.limit, MACRO_OVERVIEW_DEFAULT_LIMIT, MACRO_SAFE_LIMIT_CAP);
   const [overall, trend, breakdown, diagnostics] = await Promise.all([
     executeOverallSummary({}, ctx),
     executeTrendSummary(
@@ -1547,14 +1550,14 @@ async function executeSalesTrendBrief(args, ctx) {
     executeShareBreakdown(
       {
         dimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
-        limit: Math.max(3, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
     executeAnomalyInsights(
       {
         dimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
-        limit: Math.max(3, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
@@ -1587,9 +1590,9 @@ async function executeSalesTrendBrief(args, ctx) {
       ),
       summary,
       rows: [
-        ...decorateRows(trend.result.rows, "趋势:", Math.min(4, safeLimit)),
-        ...decorateRows(breakdown.result.rows, "结构:", Math.min(3, safeLimit)),
-        ...decorateTextRows(diagnostics.result.rows.slice(0, 2), {
+        ...decorateRows(trend.result.rows, "趋势:", safeLimit),
+        ...decorateRows(breakdown.result.rows, "结构:", safeLimit),
+        ...decorateTextRows(diagnostics.result.rows.slice(0, Math.min(safeLimit, 4)), {
           default: "异动:",
         }),
       ].slice(0, Math.max(6, safeLimit * 2)),
@@ -1610,7 +1613,7 @@ async function executeDimensionOverviewBrief(args, ctx) {
     dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
       ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
       : QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
-  const safeLimit = toPositiveInt(args?.limit, 5, safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? 10 : 10);
+  const safeLimit = toPositiveInt(args?.limit, MACRO_OVERVIEW_DEFAULT_LIMIT, MACRO_SAFE_LIMIT_CAP);
   const [summaryResult, rankingResult, breakdownResult] = await Promise.all([
     safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT
       ? executeProductSummary(
@@ -1631,14 +1634,14 @@ async function executeDimensionOverviewBrief(args, ctx) {
         dimension: safeDimension,
         ranking: "bottom",
         metric: "sales_amount",
-        limit: Math.min(3, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
     executeShareBreakdown(
       {
         dimension: safeDimension,
-        limit: Math.min(5, safeLimit),
+        limit: safeLimit,
       },
       ctx,
     ),
@@ -1668,9 +1671,9 @@ async function executeDimensionOverviewBrief(args, ctx) {
       ),
       summary,
       rows: [
-        ...decorateRows(summaryResult.result.rows, safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? "产品:" : "医院:", Math.min(4, safeLimit)),
-        ...decorateRows(rankingResult.result.rows, "待关注:", Math.min(2, safeLimit), "待关注对象"),
-        ...decorateRows(breakdownResult.result.rows, "结构:", Math.min(3, safeLimit)),
+        ...decorateRows(summaryResult.result.rows, safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT ? "产品:" : "医院:", safeLimit),
+        ...decorateRows(rankingResult.result.rows, "待关注:", safeLimit, "待关注对象"),
+        ...decorateRows(breakdownResult.result.rows, "结构:", safeLimit),
       ].slice(0, Math.max(6, safeLimit * 2)),
     },
     meta: {
@@ -1689,7 +1692,7 @@ async function executeDimensionReportBrief(args, ctx) {
     dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
       ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
       : QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
-  const safeLimit = toPositiveInt(args?.limit, 5, 10);
+  const safeLimit = toPositiveInt(args?.limit, MACRO_REPORT_DEFAULT_LIMIT, MACRO_SAFE_LIMIT_CAP);
   const [summaryResult, topRankingResult, bottomRankingResult, breakdownResult, trendResult, riskResult, anomalyResult] =
     await Promise.all([
       safeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT
@@ -1711,7 +1714,7 @@ async function executeDimensionReportBrief(args, ctx) {
           dimension: safeDimension,
           ranking: "top",
           metric: "sales_amount",
-          limit: Math.min(3, safeLimit),
+          limit: safeLimit,
         },
         ctx,
       ),
@@ -1720,14 +1723,14 @@ async function executeDimensionReportBrief(args, ctx) {
           dimension: safeDimension,
           ranking: "bottom",
           metric: "sales_amount",
-          limit: Math.min(3, safeLimit),
+          limit: safeLimit,
         },
         ctx,
       ),
       executeShareBreakdown(
         {
           dimension: safeDimension,
-          limit: Math.min(5, safeLimit),
+          limit: safeLimit,
         },
         ctx,
       ),
@@ -1748,16 +1751,16 @@ async function executeDimensionReportBrief(args, ctx) {
       executeAnomalyInsights(
         {
           dimension: safeDimension,
-          limit: Math.min(3, safeLimit),
+          limit: safeLimit,
         },
         ctx,
       ),
     ]);
 
-  const topEntities = decorateRows(topRankingResult.result.rows, "", 3)
+  const topEntities = decorateRows(topRankingResult.result.rows, "", safeLimit)
     .map((row) => trimString(row?.product_name || row?.hospital_name || row?.row_label))
     .filter((item) => item);
-  const bottomEntities = decorateRows(bottomRankingResult.result.rows, "", 3)
+  const bottomEntities = decorateRows(bottomRankingResult.result.rows, "", safeLimit)
     .map((row) => trimString(row?.product_name || row?.hospital_name || row?.row_label))
     .filter((item) => item);
   const trendSignals = mergeTextArrays(
@@ -1805,12 +1808,12 @@ async function executeDimensionReportBrief(args, ctx) {
       ),
       summary,
       rows: [
-        ...decorateRows(trendResult.result.rows, "趋势:", Math.min(3, safeLimit)),
-        ...decorateRows(topRankingResult.result.rows, "Top:", Math.min(3, safeLimit), "头部对象"),
-        ...decorateRows(bottomRankingResult.result.rows, "待关注:", Math.min(2, safeLimit), "待关注对象"),
-        ...decorateRows(breakdownResult.result.rows, "结构:", Math.min(3, safeLimit)),
+        ...decorateRows(trendResult.result.rows, "趋势:", safeLimit),
+        ...decorateRows(topRankingResult.result.rows, "Top:", safeLimit, "头部对象"),
+        ...decorateRows(bottomRankingResult.result.rows, "待关注:", safeLimit, "待关注对象"),
+        ...decorateRows(breakdownResult.result.rows, "结构:", safeLimit),
         ...decorateTextRows(
-          [...(Array.isArray(riskResult.result.rows) ? riskResult.result.rows : []), ...(Array.isArray(anomalyResult.result.rows) ? anomalyResult.result.rows : [])].slice(0, 3),
+          [...(Array.isArray(riskResult.result.rows) ? riskResult.result.rows : []), ...(Array.isArray(anomalyResult.result.rows) ? anomalyResult.result.rows : [])].slice(0, safeLimit),
           {
             risk: "风险:",
             opportunity: "机会:",

@@ -520,6 +520,188 @@ test("runToolFirstChat auto-starts dimension overview macro for broad product pe
   assert.deepEqual(result.plannerState?.requested_views, ["get_dimension_overview_brief"]);
 });
 
+test("runToolFirstChat promotes spec and quantity follow-up to hospital-to-product breakdown", async () => {
+  const toolCalls = [];
+  const result = await runToolFirstChat({
+    message: "我要看具体产品规格和数量",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+    },
+    conversationState: {
+      entity_scope: {
+        hospitals: ["广州卓祥医疗门诊部有限公司", "卓正优社医院"],
+        products: [],
+      },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+        label: "医院",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-hospital-product-spec-quantity",
+    deps: {
+      requestGeminiGenerateContent: async () => ({
+        ok: true,
+        model: "stub-model",
+        payload: {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      name: "submit_analysis_plan",
+                      args: {
+                        relevance: "relevant",
+                        primary_dimension: "hospital",
+                        granularity: "summary",
+                        route_intent: "direct_answer",
+                        question_type: "report",
+                        required_evidence: ["aggregate"],
+                        requested_views: ["get_dimension_overview_brief"],
+                        synthesis_expectation: "说明这两家医院的产品规格和数量。",
+                        required_tool_call_min: 1,
+                        initial_tools: [
+                          {
+                            name: "get_dimension_overview_brief",
+                            args: { dimension: "hospital" },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+      executeToolByName: async (name, args) => {
+        toolCalls.push({ name, args });
+        return {
+          result: {
+            range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+            matched_entities: { products: [], hospitals: ["广州卓祥医疗门诊部有限公司", "卓正优社医院"] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_scope_breakdown"],
+            summary: { sales_volume: "20盒" },
+            rows: [{ hospital_name: "广州卓祥医疗门诊部有限公司", product_name: "Botox50", sales_volume: "10盒" }],
+          },
+          meta: {
+            detail_request_mode: "scope_breakdown",
+            coverage_code: "full",
+            analysis_view: "hospital_to_product_breakdown",
+            evidence_types: ["breakdown", "ranking"],
+            matched_hospitals: ["广州卓祥医疗门诊部有限公司", "卓正优社医院"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(toolCalls, [
+    {
+      name: "scope_breakdown",
+      args: {
+        scope_dimension: "hospital",
+        breakdown_dimension: "product",
+        target_names: ["广州卓祥医疗门诊部有限公司", "卓正优社医院"],
+        metric: "sales_volume",
+        limit: 10,
+      },
+    },
+  ]);
+});
+
+test("runToolFirstChat raises limit for detailed list intent", async () => {
+  const toolCalls = [];
+  const result = await runToolFirstChat({
+    message: "把所有产品列出来",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment({
+      primary_dimension: {
+        code: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+        label: "产品",
+      },
+    }),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-detail-limit",
+    deps: {
+      requestGeminiGenerateContent: async () => ({
+        ok: true,
+        model: "stub-model",
+        payload: {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      name: "submit_analysis_plan",
+                      args: {
+                        relevance: "relevant",
+                        primary_dimension: "product",
+                        granularity: "summary",
+                        route_intent: "direct_answer",
+                        question_type: "overview",
+                        required_evidence: ["aggregate"],
+                        requested_views: ["get_product_summary"],
+                        synthesis_expectation: "列出产品清单。",
+                        required_tool_call_min: 1,
+                        initial_tools: [
+                          {
+                            name: "get_product_summary",
+                            args: {},
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+      executeToolByName: async (name, args) => {
+        toolCalls.push({ name, args });
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            boundaries: [],
+            diagnostic_flags: ["view_product_summary"],
+            summary: { sales_amount: "2861.75万元" },
+            rows: [{ product_name: "Botox50", sales_amount: "1084.10万元" }],
+          },
+          meta: {
+            detail_request_mode: "product_full",
+            coverage_code: "full",
+            analysis_view: "product_summary",
+            evidence_types: ["aggregate"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(toolCalls, [{ name: "get_product_summary", args: { limit: 10 } }]);
+});
+
 test("runToolFirstChat retries once with planner-only payload when first round misses planner", async () => {
   const toolCalls = [];
   let secondRoundDeclarationNames = [];

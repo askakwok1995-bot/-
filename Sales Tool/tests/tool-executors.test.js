@@ -30,6 +30,43 @@ function createRuntimeContext() {
   );
 }
 
+function createWideRuntimeContext() {
+  const records = [];
+  const catalog = [];
+  for (let index = 1; index <= 6; index += 1) {
+    records.push(
+      {
+        ym: "2025-01",
+        amount: 100000 - index * 5000,
+        quantity: 100 - index * 5,
+        product_name: `Product${index}`,
+        hospital_name: `Hospital${index}`,
+      },
+      {
+        ym: "2025-02",
+        amount: 120000 - index * 4000,
+        quantity: 110 - index * 4,
+        product_name: `Product${index}`,
+        hospital_name: `Hospital${index}`,
+      },
+    );
+    catalog.push({ product_id: `p${index}`, product_name: `Product${index}`, lookup_key: `product${index}` });
+  }
+  return createToolRuntimeContext(
+    {
+      businessSnapshot: {
+        analysis_range: { start_month: "2025-01", end_month: "2025-02", period: "2025-01~2025-02" },
+      },
+      authToken: "token",
+      env: {},
+    },
+    {
+      fetchSalesRecordsByWindow: async () => records,
+      fetchProductsCatalog: async () => catalog,
+    },
+  );
+}
+
 test("scope_aggregate returns unified envelope with aggregate evidence", async () => {
   const runtimeContext = createRuntimeContext();
   const result = await executeToolByName(TOOL_NAMES.SCOPE_AGGREGATE, { dimension: "overall" }, runtimeContext);
@@ -119,6 +156,38 @@ test("get_dimension_overview_brief returns macro dimension envelope", async () =
   assert.equal(result.result.summary.overview_dimension, "hospital");
   assert.deepEqual(result.meta.evidence_types, ["aggregate", "breakdown", "ranking"]);
   assert.equal(result.meta.analysis_view, "hospital_overview_brief");
+});
+
+test("get_hospital_summary rows expose sales volume fields", async () => {
+  const runtimeContext = createRuntimeContext();
+  const result = await executeToolByName(TOOL_NAMES.GET_HOSPITAL_SUMMARY, { limit: 5 }, runtimeContext);
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(result.result.rows.length > 0);
+  assert.ok("sales_volume" in result.result.rows[0]);
+  assert.ok("sales_volume_value" in result.result.rows[0]);
+});
+
+test("get_sales_overview_brief no longer hard-caps top entities at three", async () => {
+  const runtimeContext = createWideRuntimeContext();
+  const result = await executeToolByName(TOOL_NAMES.GET_SALES_OVERVIEW_BRIEF, { limit: 6 }, runtimeContext);
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(result.result.summary.top_products.length > 3);
+  assert.ok(result.result.summary.top_hospitals.length > 3);
+});
+
+test("get_dimension_report_brief returns more than three ranked entities when limit is higher", async () => {
+  const runtimeContext = createWideRuntimeContext();
+  const result = await executeToolByName(
+    TOOL_NAMES.GET_DIMENSION_REPORT_BRIEF,
+    { dimension: "product", limit: 6 },
+    runtimeContext,
+  );
+
+  assert.equal(result.result.coverage.code, "full");
+  assert.ok(result.result.summary.top_entities.length > 3);
+  assert.ok(result.result.summary.bottom_entities.length > 3);
 });
 
 test("get_dimension_report_brief returns macro dimension report envelope", async () => {

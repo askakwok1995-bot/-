@@ -457,6 +457,8 @@ export function buildHospitalPerformanceRows(metrics, limit, options = {}) {
       sales_amount_value: normalizeNumericValue(row.amount),
       sales_share: formatPercentText(row.amount_share_ratio),
       sales_share_ratio: normalizeNumericValue(row.amount_share_ratio),
+      sales_volume: formatQuantityBoxText(row.quantity),
+      sales_volume_value: normalizeNumericValue(row.quantity),
       change_metric: changeMetric,
       change_metric_code: changeMetricCode,
       change_value: changeValue,

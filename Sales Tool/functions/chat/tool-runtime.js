@@ -352,6 +352,23 @@ function containsKeyword(text, keywords) {
   return keywords.some((keyword) => safeText.includes(trimString(keyword).toLocaleLowerCase()));
 }
 
+const QUANTITY_INTENT_KEYWORDS = ["盒数", "销量", "数量"];
+const SPEC_INTENT_KEYWORDS = ["规格", "品规", "具体产品", "分别卖了什么"];
+const DETAIL_INTENT_KEYWORDS = ["全部", "详细", "列出来", "清单", "分别是多少"];
+const DETAIL_RESULT_LIMIT = 10;
+
+function hasQuantityIntent(text) {
+  return containsKeyword(text, QUANTITY_INTENT_KEYWORDS);
+}
+
+function hasSpecIntent(text) {
+  return containsKeyword(text, SPEC_INTENT_KEYWORDS);
+}
+
+function hasDetailIntent(text) {
+  return containsKeyword(text, DETAIL_INTENT_KEYWORDS);
+}
+
 function hasNamedProductLikeQuestion(text) {
   return /[A-Za-z][A-Za-z0-9-]{2,}/.test(trimString(text));
 }
@@ -416,6 +433,9 @@ function isDimensionOverviewMacroStartCandidate(message) {
   if (!safeMessage) {
     return false;
   }
+  if (hasQuantityIntent(safeMessage) && (hasSpecIntent(safeMessage) || hasDetailIntent(safeMessage))) {
+    return false;
+  }
   if (shouldUseDimensionReportMacroFirstRound(safeMessage)) {
     return false;
   }
@@ -428,6 +448,89 @@ function isDimensionOverviewMacroStartCandidate(message) {
   const hasDimensionMention = safeMessage.includes("产品") || safeMessage.includes("医院");
   const hasPerformanceIntent = safeMessage.includes("表现");
   return hasDimensionMention && hasPerformanceIntent;
+}
+
+function normalizeScopedEntityNames(value) {
+  return Array.isArray(value) ? value.map((item) => trimString(item)).filter((item) => item) : [];
+}
+
+function normalizePlannerToolCalls(toolCalls, message, conversationState = null) {
+  const quantityIntent = hasQuantityIntent(message);
+  const specIntent = hasSpecIntent(message);
+  const detailIntent = hasDetailIntent(message);
+  const scopedHospitals = normalizeScopedEntityNames(conversationState?.entity_scope?.hospitals);
+  const normalizedCalls = Array.isArray(toolCalls)
+    ? toolCalls.map((call) => {
+        const name = trimString(call?.name);
+        const args =
+          call?.args && typeof call.args === "object" && !Array.isArray(call.args)
+            ? { ...call.args }
+            : {};
+        return { name, args };
+      })
+    : [];
+
+  return normalizedCalls.map((call) => {
+    const toolName = trimString(call?.name);
+    const nextArgs =
+      call?.args && typeof call.args === "object" && !Array.isArray(call.args)
+        ? { ...call.args }
+        : {};
+
+    if (detailIntent && !Number.isFinite(Number(nextArgs.limit))) {
+      nextArgs.limit = DETAIL_RESULT_LIMIT;
+    }
+
+    if (quantityIntent && ["get_entity_ranking", "scope_breakdown"].includes(toolName) && !trimString(nextArgs.metric)) {
+      nextArgs.metric = "sales_volume";
+    }
+
+    const shouldPromoteToHospitalProductBreakdown =
+      specIntent &&
+      scopedHospitals.length > 0 &&
+      [
+        "get_dimension_overview_brief",
+        "get_dimension_report_brief",
+        "get_hospital_summary",
+        "get_entity_ranking",
+      ].includes(toolName);
+
+    if (shouldPromoteToHospitalProductBreakdown) {
+      return {
+        name: "scope_breakdown",
+        args: {
+          scope_dimension: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+          breakdown_dimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+          target_names: scopedHospitals,
+          metric: quantityIntent ? "sales_volume" : "sales_amount",
+          limit: Number.isFinite(Number(nextArgs.limit)) ? Number(nextArgs.limit) : DETAIL_RESULT_LIMIT,
+        },
+      };
+    }
+
+    if (specIntent && toolName === "scope_breakdown") {
+      if (!trimString(nextArgs.scope_dimension)) {
+        nextArgs.scope_dimension =
+          scopedHospitals.length > 0
+            ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
+            : QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
+      }
+      if (!trimString(nextArgs.breakdown_dimension)) {
+        nextArgs.breakdown_dimension = QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
+      }
+      if (scopedHospitals.length > 0 && !Array.isArray(nextArgs.target_names)) {
+        nextArgs.target_names = scopedHospitals;
+      }
+      if (!trimString(nextArgs.metric) && quantityIntent) {
+        nextArgs.metric = "sales_volume";
+      }
+    }
+
+    return {
+      name: toolName,
+      args: nextArgs,
+    };
+  });
 }
 
 function buildDefaultDirectMacroCalls(message) {
@@ -830,7 +933,7 @@ function buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment) {
   };
 }
 
-function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
+function normalizePlannerState(plannerArgs, fallbackQuestionJudgment, message = "", conversationState = null) {
   const relevance = trimString(plannerArgs?.relevance) === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     ? QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     : QUESTION_JUDGMENT_CODES.relevance.RELEVANT;
@@ -849,31 +952,59 @@ function normalizePlannerState(plannerArgs, fallbackQuestionJudgment) {
     : [];
   const questionTypeCandidate = trimString(plannerArgs?.question_type);
   const questionType = QUESTION_TYPE_VALUES.includes(questionTypeCandidate) ? questionTypeCandidate : "overview";
+  let normalizedInitialTools = normalizePlannerToolCalls(parsePlannerInitialTools(plannerArgs?.initial_tools), message, conversationState);
+  const requestedViewsFromInitialTools = normalizedInitialTools.map((item) => trimString(item?.name)).filter((item) => item);
+  const normalizedRequestedViews = requestedViewsFromInitialTools.length > 0
+    ? Array.from(new Set(requestedViewsFromInitialTools))
+    : requestedViews;
+  const quantityIntent = hasQuantityIntent(message);
+  const specIntent = hasSpecIntent(message);
   const requiredEvidence = normalizeEvidenceTypes(plannerArgs?.required_evidence);
+  const normalizedPlannerEvidence =
+    specIntent && normalizedInitialTools.some((item) => trimString(item?.name) === "scope_breakdown")
+      ? ["breakdown", "ranking"]
+      : requiredEvidence;
   const normalizedRequiredEvidence = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     ? []
-    : requiredEvidence.length > 0
-      ? requiredEvidence
+    : normalizedPlannerEvidence.length > 0
+      ? normalizedPlannerEvidence
       : deriveRequiredEvidenceByQuestionType(questionType);
   const requiredToolCallMinRaw = Number(plannerArgs?.required_tool_call_min);
   const requiredToolCallMin = relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
     ? 0
     : Math.max(1, Number.isFinite(requiredToolCallMinRaw) ? Math.floor(requiredToolCallMinRaw) : 1);
+  const plannerQuestionJudgment = buildPlannerQuestionJudgment(
+    {
+      ...plannerArgs,
+      granularity:
+        specIntent || hasDetailIntent(message)
+          ? QUESTION_JUDGMENT_CODES.granularity.DETAIL
+          : plannerArgs?.granularity,
+    },
+    fallbackQuestionJudgment,
+  );
+  if (quantityIntent && normalizedInitialTools.some((item) => trimString(item?.name) === "get_entity_ranking")) {
+    normalizedInitialTools = normalizedInitialTools.map((item) =>
+      trimString(item?.name) === "get_entity_ranking" && !trimString(item?.args?.metric)
+        ? { ...item, args: { ...item.args, metric: "sales_volume" } }
+        : item,
+    );
+  }
   return {
     relevance,
     route_intent: routeIntent,
     question_type: questionType,
     required_evidence: normalizedRequiredEvidence,
-    requested_views: requestedViews,
+    requested_views: normalizedRequestedViews,
     refuse_reason: trimString(plannerArgs?.refuse_reason),
     bounded_reason: trimString(plannerArgs?.bounded_reason),
     synthesis_expectation: trimString(plannerArgs?.synthesis_expectation),
     required_tool_call_min: requiredToolCallMin,
     zero_tool_refuse: relevance === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT && routeIntent === ROUTE_DECISION_CODES.REFUSE,
-    initial_tools: parsePlannerInitialTools(plannerArgs?.initial_tools),
+    initial_tools: normalizedInitialTools,
     missing_evidence_types: [],
     analysis_confidence: "low",
-    questionJudgment: buildPlannerQuestionJudgment(plannerArgs, fallbackQuestionJudgment),
+    questionJudgment: plannerQuestionJudgment,
   };
 }
 
@@ -1313,7 +1444,7 @@ export async function runToolFirstChat({
           toolCallTrace,
         };
       }
-      const candidatePlannerState = normalizePlannerState(plannerCall.args, questionJudgment);
+      const candidatePlannerState = normalizePlannerState(plannerCall.args, questionJudgment, message, conversationState);
       const plannerValidation = validatePlannerState(plannerCall.args, candidatePlannerState, allowedViewNames);
 
       if (content) {
@@ -1428,7 +1559,12 @@ export async function runToolFirstChat({
     }
 
     if (plannerCall) {
-      const candidatePlannerState = normalizePlannerState(plannerCall.args, plannerState?.questionJudgment || questionJudgment);
+      const candidatePlannerState = normalizePlannerState(
+        plannerCall.args,
+        plannerState?.questionJudgment || questionJudgment,
+        message,
+        conversationState,
+      );
       const plannerValidation = validatePlannerState(plannerCall.args, candidatePlannerState, PLANNER_VIEW_NAMES);
       if (!plannerValidation.accepted) {
         if (content) {
