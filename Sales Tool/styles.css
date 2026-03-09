@@ -2668,6 +2668,7 @@ h1,
 .hero-panel-metrics .hero-panel-head,
 .hero-panel-auth .hero-panel-head {
   display: grid;
+  width: 100%;
   grid-template-columns: 128px minmax(0, 1fr);
   align-items: end;
   justify-content: stretch;
