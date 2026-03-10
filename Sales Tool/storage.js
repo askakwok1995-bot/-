@@ -143,7 +143,7 @@ export function saveReportRange(range) {
 }
 
 export function loadReportChartPalette(defaultPaletteId) {
-  const fallback = String(defaultPaletteId || "").trim() || "classic";
+  const fallback = String(defaultPaletteId || "").trim() || "harbor";
   const raw = localStorage.getItem(REPORT_CHART_PALETTE_STORAGE_KEY);
   if (!raw) return fallback;
 

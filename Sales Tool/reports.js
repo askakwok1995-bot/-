@@ -56,217 +56,99 @@ const TARGET_CHART_KEYS = Object.freeze([
   CHART_KEYS.hospitalTrend,
 ]);
 const DEFAULT_REPORT_TARGET_CHART_METRIC = "amount";
-export const DEFAULT_REPORT_CHART_PALETTE_ID = "classic";
+export const DEFAULT_REPORT_CHART_PALETTE_ID = "harbor";
 export const REPORT_CHART_PALETTES = [
   {
-    id: "classic",
-    label: "经典蓝绿",
-    canvasBg: "#ffffff",
-    axisTextColor: "#4b5563",
-    axisLineColor: "#94a3b8",
-    splitLineColor: "#e2e8f0",
-    legendTextColor: "#334155",
-    tooltipBg: "#ffffff",
-    tooltipBorder: "#cbd5e1",
-    tooltipTextColor: "#1f2937",
+    id: "harbor",
+    label: "海港玻璃",
+    canvasBg: "#f4fafc",
+    axisTextColor: "#4b6879",
+    axisLineColor: "#a7c8d7",
+    splitLineColor: "rgba(112, 154, 176, 0.20)",
+    legendTextColor: "#18384b",
+    legendMutedColor: "rgba(24, 56, 75, 0.58)",
+    tooltipBg: "rgba(248, 252, 254, 0.96)",
+    tooltipBorder: "rgba(115, 152, 171, 0.22)",
+    tooltipTextColor: "#173548",
+    tooltipShadow: "0 18px 40px rgba(17, 57, 76, 0.16)",
+    labelTextColor: "#103247",
+    labelBg: "rgba(255,255,255,0.88)",
+    labelBorder: "rgba(118, 163, 183, 0.26)",
+    subtleTextColor: "#6b8697",
+    centerTitleColor: "#507183",
+    centerValueColor: "#102b3d",
+    emphasisTextColor: "#0f5b7c",
+    trackColor: "rgba(104, 151, 173, 0.16)",
+    axisPointerColor: "rgba(44, 127, 164, 0.18)",
     series: {
-      trend4: ["#2268b5", "#7baaf2", "#2f9e44", "#f59f00"],
-      productMonthlyLines: [
-        "#2268b5",
-        "#2f9e44",
-        "#7baaf2",
-        "#f59f00",
-        "#7c3aed",
-        "#ec4899",
-        "#14b8a6",
-        "#f43f5e",
-        "#84cc16",
-        "#0ea5e9",
-      ],
-      productPie: ["#2268b5", "#2f9e44", "#7baaf2", "#f59f00", "#7c3aed", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#0ea5e9"],
-      hospitalSharePie: ["#2268b5", "#2f9e44", "#7baaf2", "#f59f00", "#7c3aed", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#0ea5e9"],
-      hospitalTopBar: ["#355e8f"],
-      hospitalTrend2: ["#355e8f", "#f59f00"],
+      trend4: ["#1a6f98", "#91cfe3", "#23978b", "#f1a65d"],
+      productMonthlyLines: ["#1a6f98", "#27a48f", "#5f9fd4", "#f1a65d", "#4dc1d8", "#7ac7a3", "#6f7fd8", "#f4c978", "#e27b69", "#8ebed2"],
+      productPie: ["#1a6f98", "#23978b", "#5f9fd4", "#f1a65d", "#4dc1d8", "#7ac7a3", "#6f7fd8", "#f4c978", "#e27b69", "#8ebed2"],
+      hospitalSharePie: ["#0f5c84", "#1f7ca0", "#2c97a1", "#f0ad63", "#5fb6d5", "#73c3b3", "#8bd4e9", "#f7c785", "#d77d6a", "#9cb0bf"],
+      hospitalTopBar: ["#0f5c84", "#2780a2", "#52a4c2", "#8cc1d7"],
+      hospitalTrend2: ["#1f7ca0", "#f0ad63"],
     },
   },
   {
-    id: "ocean",
-    label: "深海蓝",
-    canvasBg: "#f8fbff",
-    axisTextColor: "#3d4f63",
-    axisLineColor: "#8aa3bf",
-    splitLineColor: "#d9e6f3",
-    legendTextColor: "#1f3f5b",
-    tooltipBg: "#f8fbff",
-    tooltipBorder: "#b7cbe0",
-    tooltipTextColor: "#17324a",
+    id: "midnight-tide",
+    label: "深潮夜航",
+    canvasBg: "#142534",
+    axisTextColor: "rgba(221, 235, 243, 0.74)",
+    axisLineColor: "rgba(154, 187, 205, 0.26)",
+    splitLineColor: "rgba(186, 213, 227, 0.12)",
+    legendTextColor: "#edf7fb",
+    legendMutedColor: "rgba(237, 247, 251, 0.62)",
+    tooltipBg: "rgba(17, 35, 48, 0.96)",
+    tooltipBorder: "rgba(128, 171, 192, 0.24)",
+    tooltipTextColor: "#eaf7fd",
+    tooltipShadow: "0 22px 48px rgba(5, 14, 22, 0.34)",
+    labelTextColor: "#f1f8fc",
+    labelBg: "rgba(19, 44, 61, 0.84)",
+    labelBorder: "rgba(129, 169, 190, 0.24)",
+    subtleTextColor: "rgba(200, 220, 230, 0.72)",
+    centerTitleColor: "rgba(201, 224, 236, 0.72)",
+    centerValueColor: "#f7fcff",
+    emphasisTextColor: "#88d8f2",
+    trackColor: "rgba(147, 181, 198, 0.18)",
+    axisPointerColor: "rgba(117, 208, 233, 0.16)",
     series: {
-      trend4: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259"],
-      productMonthlyLines: ["#0f4c81", "#1f7a8c", "#4f86c6", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
-      productPie: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
-      hospitalSharePie: ["#0f4c81", "#4f86c6", "#1f7a8c", "#f4a259", "#2a9d8f", "#457b9d", "#006d77", "#83c5be", "#ff7f50", "#264653"],
-      hospitalTopBar: ["#0f4c81"],
-      hospitalTrend2: ["#0f4c81", "#f4a259"],
+      trend4: ["#65d4ff", "#497fa1", "#78f0cf", "#ffb768"],
+      productMonthlyLines: ["#65d4ff", "#78f0cf", "#82a6ff", "#ffb768", "#4fc1c8", "#c9dcff", "#86ffe5", "#f8d495", "#ff9f83", "#75a0b8"],
+      productPie: ["#65d4ff", "#78f0cf", "#82a6ff", "#ffb768", "#4fc1c8", "#c9dcff", "#86ffe5", "#f8d495", "#ff9f83", "#75a0b8"],
+      hospitalSharePie: ["#4eb8e8", "#6cdcc8", "#7992ff", "#ffbe76", "#58d0d4", "#8fd7ff", "#b3efff", "#ffe2a8", "#ffab89", "#8ba4b4"],
+      hospitalTopBar: ["#68d6ff", "#4ab7dd", "#2f8cae", "#5e7790"],
+      hospitalTrend2: ["#65d4ff", "#ffb768"],
     },
   },
   {
-    id: "mint",
-    label: "薄荷清新",
-    canvasBg: "#f7fffb",
-    axisTextColor: "#40585a",
-    axisLineColor: "#8fb8b2",
-    splitLineColor: "#d9efe9",
-    legendTextColor: "#21514b",
-    tooltipBg: "#f7fffb",
-    tooltipBorder: "#b7ddd4",
-    tooltipTextColor: "#173f3a",
+    id: "ember-signal",
+    label: "琥珀航标",
+    canvasBg: "#fff8f2",
+    axisTextColor: "#715445",
+    axisLineColor: "#dfc3b3",
+    splitLineColor: "rgba(171, 121, 96, 0.16)",
+    legendTextColor: "#532f22",
+    legendMutedColor: "rgba(83, 47, 34, 0.56)",
+    tooltipBg: "rgba(255, 249, 244, 0.96)",
+    tooltipBorder: "rgba(185, 138, 109, 0.22)",
+    tooltipTextColor: "#4b291d",
+    tooltipShadow: "0 18px 38px rgba(85, 42, 24, 0.14)",
+    labelTextColor: "#4b291d",
+    labelBg: "rgba(255,255,255,0.82)",
+    labelBorder: "rgba(198, 149, 121, 0.24)",
+    subtleTextColor: "#8c6a5a",
+    centerTitleColor: "#8e6958",
+    centerValueColor: "#4c261c",
+    emphasisTextColor: "#a9572f",
+    trackColor: "rgba(183, 136, 101, 0.14)",
+    axisPointerColor: "rgba(220, 144, 92, 0.14)",
     series: {
-      trend4: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b"],
-      productMonthlyLines: ["#0f766e", "#2e7d32", "#5eead4", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
-      productPie: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
-      hospitalSharePie: ["#0f766e", "#5eead4", "#2e7d32", "#f59e0b", "#0891b2", "#10b981", "#84cc16", "#14b8a6", "#f97316", "#0ea5e9"],
-      hospitalTopBar: ["#0f766e"],
-      hospitalTrend2: ["#0f766e", "#f59e0b"],
-    },
-  },
-  {
-    id: "sunset",
-    label: "日落暖调",
-    canvasBg: "#fffaf6",
-    axisTextColor: "#5d4b45",
-    axisLineColor: "#c1a79a",
-    splitLineColor: "#f0e0d5",
-    legendTextColor: "#6b3f2e",
-    tooltipBg: "#fffaf6",
-    tooltipBorder: "#e3c9b9",
-    tooltipTextColor: "#4a2d21",
-    series: {
-      trend4: ["#c2410c", "#fb923c", "#b45309", "#7c3aed"],
-      productMonthlyLines: ["#c2410c", "#b45309", "#fb923c", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
-      productPie: ["#c2410c", "#fb923c", "#b45309", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
-      hospitalSharePie: ["#c2410c", "#fb923c", "#b45309", "#7c3aed", "#ef4444", "#d97706", "#e11d48", "#f97316", "#a16207", "#9333ea"],
-      hospitalTopBar: ["#c2410c"],
-      hospitalTrend2: ["#c2410c", "#7c3aed"],
-    },
-  },
-  {
-    id: "lavender",
-    label: "薰衣草",
-    canvasBg: "#faf9ff",
-    axisTextColor: "#524d6b",
-    axisLineColor: "#b6afd3",
-    splitLineColor: "#e8e2f6",
-    legendTextColor: "#4c3f74",
-    tooltipBg: "#faf9ff",
-    tooltipBorder: "#d3c9ec",
-    tooltipTextColor: "#362b57",
-    series: {
-      trend4: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b"],
-      productMonthlyLines: ["#6d28d9", "#8b5cf6", "#a78bfa", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
-      productPie: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
-      hospitalSharePie: ["#6d28d9", "#a78bfa", "#8b5cf6", "#f59e0b", "#ec4899", "#4f46e5", "#7c3aed", "#d946ef", "#f97316", "#0ea5e9"],
-      hospitalTopBar: ["#6d28d9"],
-      hospitalTrend2: ["#6d28d9", "#f59e0b"],
-    },
-  },
-  {
-    id: "graphite",
-    label: "石墨灰",
-    canvasBg: "#f8f9fb",
-    axisTextColor: "#4b5563",
-    axisLineColor: "#9ca3af",
-    splitLineColor: "#e5e7eb",
-    legendTextColor: "#374151",
-    tooltipBg: "#f8f9fb",
-    tooltipBorder: "#d1d5db",
-    tooltipTextColor: "#1f2937",
-    series: {
-      trend4: ["#374151", "#6b7280", "#2563eb", "#f59e0b"],
-      productMonthlyLines: ["#374151", "#2563eb", "#6b7280", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
-      productPie: ["#374151", "#6b7280", "#2563eb", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
-      hospitalSharePie: ["#374151", "#6b7280", "#2563eb", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#84cc16", "#f97316"],
-      hospitalTopBar: ["#374151"],
-      hospitalTrend2: ["#374151", "#f59e0b"],
-    },
-  },
-  {
-    id: "forest",
-    label: "森林绿",
-    canvasBg: "#f6fff8",
-    axisTextColor: "#415148",
-    axisLineColor: "#99b29f",
-    splitLineColor: "#dceadf",
-    legendTextColor: "#2b4d39",
-    tooltipBg: "#f6fff8",
-    tooltipBorder: "#bdd5c4",
-    tooltipTextColor: "#1f3a2a",
-    series: {
-      trend4: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00"],
-      productMonthlyLines: ["#1b5e20", "#2e7d32", "#4caf50", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
-      productPie: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
-      hospitalSharePie: ["#1b5e20", "#4caf50", "#2e7d32", "#f59f00", "#0f766e", "#65a30d", "#15803d", "#22c55e", "#d97706", "#0ea5e9"],
-      hospitalTopBar: ["#1b5e20"],
-      hospitalTrend2: ["#1b5e20", "#f59f00"],
-    },
-  },
-  {
-    id: "coral",
-    label: "珊瑚橙",
-    canvasBg: "#fff9f8",
-    axisTextColor: "#5f4a46",
-    axisLineColor: "#c5a7a0",
-    splitLineColor: "#f1dfdc",
-    legendTextColor: "#6d3f36",
-    tooltipBg: "#fff9f8",
-    tooltipBorder: "#e4c4be",
-    tooltipTextColor: "#4a2b24",
-    series: {
-      trend4: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed"],
-      productMonthlyLines: ["#e76f51", "#2a9d8f", "#f4a261", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
-      productPie: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
-      hospitalSharePie: ["#e76f51", "#f4a261", "#2a9d8f", "#7c3aed", "#ef4444", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#6366f1"],
-      hospitalTopBar: ["#e76f51"],
-      hospitalTrend2: ["#e76f51", "#7c3aed"],
-    },
-  },
-  {
-    id: "amber",
-    label: "琥珀金",
-    canvasBg: "#fffdf7",
-    axisTextColor: "#5c5441",
-    axisLineColor: "#c2b79b",
-    splitLineColor: "#efe7d2",
-    legendTextColor: "#6a5b2a",
-    tooltipBg: "#fffdf7",
-    tooltipBorder: "#dfd2ad",
-    tooltipTextColor: "#473d1e",
-    series: {
-      trend4: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb"],
-      productMonthlyLines: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
-      productPie: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
-      hospitalSharePie: ["#b45309", "#f59e0b", "#7c2d12", "#2563eb", "#92400e", "#d97706", "#1d4ed8", "#f97316", "#84cc16", "#14b8a6"],
-      hospitalTopBar: ["#b45309"],
-      hospitalTrend2: ["#b45309", "#2563eb"],
-    },
-  },
-  {
-    id: "mono",
-    label: "黑白灰",
-    canvasBg: "#fcfcfd",
-    axisTextColor: "#4b5563",
-    axisLineColor: "#9ca3af",
-    splitLineColor: "#e5e7eb",
-    legendTextColor: "#374151",
-    tooltipBg: "#ffffff",
-    tooltipBorder: "#d1d5db",
-    tooltipTextColor: "#111827",
-    series: {
-      trend4: ["#111827", "#374151", "#6b7280", "#9ca3af"],
-      productMonthlyLines: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
-      productPie: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
-      hospitalSharePie: ["#111827", "#1f2937", "#374151", "#4b5563", "#6b7280", "#9ca3af", "#111827", "#374151", "#6b7280", "#9ca3af"],
-      hospitalTopBar: ["#1f2937"],
-      hospitalTrend2: ["#1f2937", "#6b7280"],
+      trend4: ["#c36a3f", "#f3caa6", "#1e8b88", "#d79a49"],
+      productMonthlyLines: ["#c36a3f", "#1e8b88", "#d79a49", "#6c78c8", "#f09b6c", "#5ea9b8", "#cf7458", "#e7bf6d", "#86a77b", "#9f88d6"],
+      productPie: ["#c36a3f", "#1e8b88", "#d79a49", "#6c78c8", "#f09b6c", "#5ea9b8", "#cf7458", "#e7bf6d", "#86a77b", "#9f88d6"],
+      hospitalSharePie: ["#bc5f34", "#d98c4a", "#1e8b88", "#6c78c8", "#f0a87d", "#69b7b3", "#d6735c", "#ebc56d", "#93aa7f", "#b09ad7"],
+      hospitalTopBar: ["#bc5f34", "#d27f46", "#e6ab62", "#cfae8b"],
+      hospitalTrend2: ["#c36a3f", "#1e8b88"],
     },
   },
 ];
@@ -469,21 +351,27 @@ function buildChartDataLabelStyle(palette, labelMode, position = "top") {
   return {
     show: true,
     position,
+    distance: position === "outside" ? 8 : 10,
     fontSize: isEmphasis ? 11 : 10,
-    fontWeight: isEmphasis ? 600 : 500,
-    color: "#ffffff",
-    textBorderColor: isEmphasis ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.85)",
-    textBorderWidth: isEmphasis ? 1 : 2,
-    backgroundColor: isEmphasis ? "rgba(0,0,0,0.38)" : "transparent",
-    borderRadius: isEmphasis ? 4 : 0,
-    padding: isEmphasis ? [2, 4] : 0,
+    fontWeight: isEmphasis ? 700 : 600,
+    color: palette?.labelTextColor || "#163345",
+    backgroundColor: isEmphasis ? palette?.labelBg || "rgba(255,255,255,0.88)" : "transparent",
+    borderColor: isEmphasis ? palette?.labelBorder || "rgba(118, 163, 183, 0.26)" : "transparent",
+    borderWidth: isEmphasis ? 1 : 0,
+    borderRadius: isEmphasis ? 999 : 0,
+    padding: isEmphasis ? [4, 8] : 0,
+    textBorderColor: "rgba(255,255,255,0.82)",
+    textBorderWidth: isEmphasis ? 0 : 2,
+    shadowBlur: isEmphasis ? 10 : 0,
+    shadowColor: isEmphasis ? withAlpha(palette?.axisPointerColor || "#2c7fa4", 0.16) : "transparent",
   };
 }
 
 function buildChartDataLabelLayout(labelMode) {
   if (labelMode === "none") return undefined;
   return {
-    hideOverlap: false,
+    hideOverlap: labelMode !== "emphasis",
+    moveOverlap: "shiftY",
   };
 }
 
@@ -505,24 +393,270 @@ function formatPercentLabelValue(value) {
   return formatPercentForLabel(num);
 }
 
-function buildThemedTooltipBase(palette) {
+function escapeTooltipHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function toRgbTriplet(color) {
+  const value = String(color || "").trim();
+  const shortHex = /^#([\da-f]{3})$/i.exec(value);
+  if (shortHex) {
+    return shortHex[1]
+      .split("")
+      .map((item) => parseInt(item + item, 16))
+      .join(", ");
+  }
+
+  const longHex = /^#([\da-f]{6})$/i.exec(value);
+  if (longHex) {
+    return [longHex[1].slice(0, 2), longHex[1].slice(2, 4), longHex[1].slice(4, 6)]
+      .map((item) => parseInt(item, 16))
+      .join(", ");
+  }
+
+  const rgb = /rgba?\(([^)]+)\)/i.exec(value);
+  if (rgb) {
+    return rgb[1]
+      .split(",")
+      .slice(0, 3)
+      .map((item) => String(item).trim())
+      .join(", ");
+  }
+
+  return "31, 64, 82";
+}
+
+function withAlpha(color, alpha) {
+  const normalizedAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 1;
+  return `rgba(${toRgbTriplet(color)}, ${normalizedAlpha})`;
+}
+
+function buildLinearGradient(startColor, endColor, horizontal = false) {
   return {
-    backgroundColor: palette.tooltipBg,
-    borderColor: palette.tooltipBorder,
-    textStyle: {
-      color: palette.tooltipTextColor,
+    type: "linear",
+    x: 0,
+    y: 0,
+    x2: horizontal ? 1 : 0,
+    y2: horizontal ? 0 : 1,
+    colorStops: [
+      { offset: 0, color: startColor },
+      { offset: 1, color: endColor },
+    ],
+  };
+}
+
+function getTrendPaletteColors(palette) {
+  const colors = Array.isArray(palette?.series?.trend4) ? palette.series.trend4 : [];
+  return {
+    actual: colors[0] || "#1a6f98",
+    target: colors[1] || "#91cfe3",
+    achievement: colors[2] || "#23978b",
+    growth: colors[3] || "#f1a65d",
+  };
+}
+
+function formatSignedPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  if (num > 0) return `+${num.toFixed(2)}%`;
+  return `${num.toFixed(2)}%`;
+}
+
+function buildTooltipCardHtml(title, groups, palette) {
+  const safeTitle = escapeTooltipHtml(title || "");
+  const sections = (Array.isArray(groups) ? groups : [])
+    .filter((group) => Array.isArray(group?.items) && group.items.length)
+    .map((group) => {
+      const items = group.items
+        .map((item) => {
+          const marker = String(item.marker || "")
+            .replace(/display:\s*inline-block;?/g, "display:inline-flex;")
+            .replace(/margin-right:\s*5px;?/g, "margin-right:8px;");
+          return `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+              <span style="display:inline-flex;align-items:center;gap:8px;color:${palette.tooltipTextColor};">
+                ${marker}
+                <span>${escapeTooltipHtml(item.name || "")}</span>
+              </span>
+              <strong style="font-weight:700;color:${palette.tooltipTextColor};">${escapeTooltipHtml(item.value || "--")}</strong>
+            </div>
+          `;
+        })
+        .join("");
+
+      const header = group.title
+        ? `<div style="margin-bottom:6px;color:${palette.legendMutedColor || palette.subtleTextColor || palette.legendTextColor};font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">${escapeTooltipHtml(group.title)}</div>`
+        : "";
+
+      return `
+        <div style="padding-top:10px;border-top:1px solid ${withAlpha(palette.tooltipBorder, 0.82)};">
+          ${header}
+          <div style="display:flex;flex-direction:column;gap:6px;">${items}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div style="display:flex;flex-direction:column;gap:10px;min-width:200px;">
+      <div style="padding-bottom:2px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${palette.legendMutedColor || palette.subtleTextColor || palette.legendTextColor};">分析切片</div>
+        <div style="margin-top:4px;font-size:14px;font-weight:700;color:${palette.tooltipTextColor};">${safeTitle || "--"}</div>
+      </div>
+      ${sections}
+    </div>
+  `;
+}
+
+function buildCenterTextGraphic({ kicker = "", value = "", detail = "", palette, top = "44%" }) {
+  const kickerTop = top === "44%" ? "35%" : top;
+  const detailTop = top === "44%" ? "54%" : "58%";
+  return [
+    {
+      type: "text",
+      left: "center",
+      top: kickerTop,
+      silent: true,
+      style: {
+        text: kicker,
+        fill: palette.centerTitleColor,
+        fontSize: 11,
+        fontWeight: 600,
+      },
+    },
+    {
+      type: "text",
+      left: "center",
+      top,
+      silent: true,
+      style: {
+        text: value,
+        fill: palette.centerValueColor,
+        fontSize: 24,
+        fontWeight: 700,
+      },
+    },
+    {
+      type: "text",
+      left: "center",
+      top: detailTop,
+      silent: true,
+      style: {
+        text: detail,
+        fill: palette.subtleTextColor,
+        fontSize: 11,
+        fontWeight: 500,
+      },
+    },
+  ];
+}
+
+function buildRankAxisLabel(index, name) {
+  const safeRank = String(index + 1).padStart(2, "0");
+  return `{rank${Math.min(index + 1, 4)}|${safeRank}}  {name|${String(name || "").trim()}}`;
+}
+
+function buildRankAxisRich(palette) {
+  return {
+    rank1: {
+      color: palette.centerValueColor,
+      fontWeight: 700,
+      backgroundColor: withAlpha(palette.series?.hospitalTopBar?.[0] || palette.centerValueColor, 0.16),
+      borderRadius: 999,
+      padding: [4, 8],
+    },
+    rank2: {
+      color: palette.emphasisTextColor,
+      fontWeight: 700,
+      backgroundColor: withAlpha(palette.series?.hospitalTopBar?.[1] || palette.emphasisTextColor, 0.14),
+      borderRadius: 999,
+      padding: [4, 8],
+    },
+    rank3: {
+      color: palette.axisTextColor,
+      fontWeight: 700,
+      backgroundColor: withAlpha(palette.series?.hospitalTopBar?.[2] || palette.axisTextColor, 0.14),
+      borderRadius: 999,
+      padding: [4, 8],
+    },
+    rank4: {
+      color: palette.subtleTextColor,
+      fontWeight: 600,
+      backgroundColor: withAlpha(palette.axisTextColor, 0.08),
+      borderRadius: 999,
+      padding: [4, 8],
+    },
+    name: {
+      color: palette.legendTextColor,
+      fontWeight: 600,
+      width: 110,
+      overflow: "truncate",
     },
   };
 }
 
-function getChartCanvasBackground() {
-  return CHART_CANVAS_BG;
+function buildCapsuleBarItemStyle(startColor, endColor, horizontal = false, shadowAlpha = 0.22) {
+  return {
+    color: buildLinearGradient(startColor, endColor, horizontal),
+    borderRadius: horizontal ? [999, 999, 999, 999] : [999, 999, 14, 14],
+    shadowBlur: 18,
+    shadowOffsetY: horizontal ? 0 : 8,
+    shadowColor: withAlpha(endColor, shadowAlpha),
+  };
+}
+
+function buildGlassTrackBarStyle(color, horizontal = false) {
+  return {
+    color: buildLinearGradient(withAlpha(color, 0.12), withAlpha(color, 0.28), horizontal),
+    borderRadius: horizontal ? [999, 999, 999, 999] : [999, 999, 14, 14],
+    borderColor: withAlpha(color, 0.24),
+    borderWidth: 1,
+  };
+}
+
+function pickRankBarColor(palette, index) {
+  const colors = Array.isArray(palette?.series?.hospitalTopBar) ? palette.series.hospitalTopBar : [];
+  if (index === 0) return colors[0] || palette.centerValueColor;
+  if (index === 1) return colors[1] || colors[0] || palette.emphasisTextColor;
+  if (index === 2) return colors[2] || colors[1] || palette.axisTextColor;
+  return colors[3] || palette.axisTextColor;
+}
+
+function shouldShowDonutOutsideLabel(labelMode, index) {
+  if (labelMode === "none") return index < 4;
+  if (labelMode === "emphasis") return index < 5;
+  return index < 3;
+}
+
+function buildThemedTooltipBase(palette) {
+  return {
+    backgroundColor: palette.tooltipBg,
+    borderColor: palette.tooltipBorder,
+    borderWidth: 1,
+    padding: [12, 14],
+    extraCssText: `border-radius:18px;box-shadow:${palette.tooltipShadow};backdrop-filter:blur(12px);`,
+    textStyle: {
+      color: palette.tooltipTextColor,
+      fontSize: 12,
+    },
+  };
+}
+
+function getChartCanvasBackground(palette = null) {
+  const background = String(palette?.canvasBg || "").trim();
+  return background || CHART_CANVAS_BG;
 }
 
 function buildAxisLineTheme(palette) {
   return {
     lineStyle: {
       color: palette.axisLineColor,
+      width: 1,
     },
   };
 }
@@ -531,6 +665,8 @@ function buildSplitLineTheme(palette) {
   return {
     lineStyle: {
       color: palette.splitLineColor,
+      type: "dashed",
+      width: 1,
     },
   };
 }
@@ -1091,10 +1227,7 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
     startYm: range.startYm,
     endYm: range.endYm,
   };
-  const palette = {
-    ...getActiveReportChartPalette(state),
-    canvasBg: getChartCanvasBackground(),
-  };
+  const palette = getActiveReportChartPalette(state);
   const activeAmountUnit = amountUnit || getActiveReportAmountUnit(state);
   const labelMode = normalizeReportChartDataLabelMode(state.reportChartDataLabelMode);
   state.reportChartDataLabelMode = labelMode;
@@ -1448,27 +1581,58 @@ function ensureChartInstance(key, element) {
   return instance;
 }
 
-function renderEmptyChart(instance, message) {
+function renderEmptyChart(instance, message, palette = REPORT_CHART_PALETTES[0]) {
   if (!instance || typeof instance.setOption !== "function") return;
 
   instance.setOption(
     {
       animation: false,
-      backgroundColor: getChartCanvasBackground(),
+      backgroundColor: getChartCanvasBackground(palette),
       grid: { left: 20, right: 20, top: 20, bottom: 20 },
       xAxis: { type: "value", show: false },
       yAxis: { type: "category", show: false, data: [] },
       series: [],
       graphic: [
         {
-          type: "text",
+          type: "rect",
           left: "center",
           top: "middle",
+          shape: {
+            x: -110,
+            y: -56,
+            width: 220,
+            height: 112,
+            r: 24,
+          },
+          style: {
+            fill: withAlpha(palette.axisPointerColor || palette.trackColor || "#2c7fa4", 0.08),
+            stroke: withAlpha(palette.axisLineColor || "#9dc3d6", 0.2),
+            lineWidth: 1,
+          },
+          silent: true,
+        },
+        {
+          type: "text",
+          left: "center",
+          top: "45%",
+          style: {
+            text: "图表暂不可展示",
+            fill: palette.centerTitleColor || "#6b7280",
+            fontSize: 12,
+            fontWeight: 600,
+          },
+          silent: true,
+        },
+        {
+          type: "text",
+          left: "center",
+          top: "54%",
           style: {
             text: message || CHART_EMPTY_TEXT,
-            fill: "#6b7280",
+            fill: palette.subtleTextColor || "#6b7280",
             fontSize: 13,
           },
+          silent: true,
         },
       ],
     },
@@ -1482,7 +1646,7 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
 
   const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
   if (!labels.length) {
-    renderEmptyChart(instance, CHART_EMPTY_TEXT);
+    renderEmptyChart(instance, CHART_EMPTY_TEXT, palette);
     return;
   }
   const chartMetric = buildTargetChartMetricPayload(snapshot.monthRows, metric, deps, amountUnit, {
@@ -1491,13 +1655,35 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
     amountGrowthSeriesName: "金额同比增长率",
     quantityGrowthSeriesName: "数量同比增长率",
   });
+  const trendColors = getTrendPaletteColors(palette);
   const series = [
+    chartMetric.hasTargetSeries
+      ? {
+          name: chartMetric.targetSeriesName,
+          type: "bar",
+          barMaxWidth: 18,
+          barGap: "24%",
+          yAxisIndex: 0,
+          data: chartMetric.targetData,
+          itemStyle: buildGlassTrackBarStyle(trendColors.target),
+          emphasis: { focus: "series" },
+          label: labelEnabled && labelMode === "emphasis"
+            ? {
+                ...buildChartDataLabelStyle(palette, labelMode, "top"),
+                formatter: (params) => chartMetric.formatLabelValue(params.value),
+              }
+            : { show: false },
+        }
+      : null,
     {
       name: chartMetric.actualSeriesName,
       type: "bar",
       barMaxWidth: 22,
+      barGap: "24%",
       yAxisIndex: 0,
       data: chartMetric.actualData,
+      itemStyle: buildCapsuleBarItemStyle(trendColors.actual, withAlpha(trendColors.actual, 0.64)),
+      emphasis: { focus: "series" },
       label: labelEnabled
         ? {
             ...buildChartDataLabelStyle(palette, labelMode, "top"),
@@ -1505,21 +1691,8 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
           }
         : { show: false },
     },
-  ];
+  ].filter(Boolean);
   if (chartMetric.hasTargetSeries) {
-    series.push({
-      name: chartMetric.targetSeriesName,
-      type: "bar",
-      barMaxWidth: 22,
-      yAxisIndex: 0,
-      data: chartMetric.targetData,
-      label: labelEnabled
-        ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => chartMetric.formatLabelValue(params.value),
-          }
-        : { show: false },
-    });
     series.push({
       name: chartMetric.achievementSeriesName,
       type: "line",
@@ -1527,8 +1700,18 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
       connectNulls: false,
       yAxisIndex: 1,
       data: chartMetric.achievementData,
+      symbol: "circle",
+      symbolSize: labelMode === "emphasis" ? 8 : 6,
       lineStyle: {
-        width: 2,
+        width: 3,
+        color: trendColors.achievement,
+        shadowBlur: 14,
+        shadowColor: withAlpha(trendColors.achievement, 0.24),
+      },
+      itemStyle: {
+        color: trendColors.achievement,
+        borderWidth: 2,
+        borderColor: withAlpha("#ffffff", 0.9),
       },
       label: labelEnabled
         ? {
@@ -1546,9 +1729,17 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
     connectNulls: false,
     yAxisIndex: 1,
     data: chartMetric.growthData,
+    symbol: "circle",
+    symbolSize: labelMode === "emphasis" ? 7 : 5,
     lineStyle: {
       type: "dashed",
       width: 2,
+      color: trendColors.growth,
+    },
+    itemStyle: {
+      color: trendColors.growth,
+      borderWidth: 2,
+      borderColor: withAlpha("#ffffff", 0.9),
     },
     label: labelEnabled
       ? {
@@ -1561,47 +1752,79 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
-      color: palette.series.trend4,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
         formatter: (params) => {
-          const lines = params.map((item) => {
+          const valueItems = [];
+          const rateItems = [];
+          params.forEach((item) => {
             const value = Number(item.value);
             if (!Number.isFinite(value)) {
-              return `${item.marker}${item.seriesName}：--`;
+              return;
             }
 
             const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
             if (isPercent) {
-              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+              rateItems.push({
+                marker: item.marker,
+                name: item.seriesName,
+                value: formatSignedPercent(value),
+              });
+              return;
             }
 
-            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
+            valueItems.push({
+              marker: item.marker,
+              name: item.seriesName,
+              value: chartMetric.formatValue(value),
+            });
           });
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
-          return [title, ...lines].join("<br/>");
+          return buildTooltipCardHtml(
+            title,
+            [
+              { title: "经营数据", items: valueItems },
+              { title: "比率表现", items: rateItems },
+            ],
+            palette,
+          );
+        },
+        axisPointer: {
+          type: "shadow",
+          shadowStyle: {
+            color: palette.axisPointerColor,
+          },
         },
       },
       legend: {
+        icon: "roundRect",
+        itemWidth: 10,
+        itemHeight: 10,
         top: 0,
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
       grid: {
         left: 56,
         right: 60,
-        top: 44,
-        bottom: 36,
+        top: 52,
+        bottom: 42,
       },
       xAxis: {
         type: "category",
         data: labels,
+        axisTick: {
+          show: false,
+        },
         axisLabel: {
           color: palette.axisTextColor,
+          margin: 12,
         },
         axisLine: buildAxisLineTheme(palette),
       },
@@ -1632,7 +1855,9 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
             formatter: (value) => `${Number(value).toFixed(2)}%`,
           },
           axisLine: buildAxisLineTheme(palette),
-          splitLine: buildSplitLineTheme(palette),
+          splitLine: {
+            show: false,
+          },
         },
       ],
       series,
@@ -1647,7 +1872,7 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
 
   const labels = snapshot.quarterRows.map((row) => String(row.label || "").trim());
   if (!labels.length) {
-    renderEmptyChart(instance, CHART_EMPTY_TEXT);
+    renderEmptyChart(instance, CHART_EMPTY_TEXT, palette);
     return;
   }
   const chartMetric = buildTargetChartMetricPayload(snapshot.quarterRows, metric, deps, amountUnit, {
@@ -1656,13 +1881,35 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
     amountGrowthSeriesName: "金额同比增长率",
     quantityGrowthSeriesName: "数量同比增长率",
   });
+  const trendColors = getTrendPaletteColors(palette);
   const series = [
+    chartMetric.hasTargetSeries
+      ? {
+          name: chartMetric.targetSeriesName,
+          type: "bar",
+          barMaxWidth: 24,
+          barGap: "26%",
+          yAxisIndex: 0,
+          data: chartMetric.targetData,
+          itemStyle: buildGlassTrackBarStyle(trendColors.target),
+          emphasis: { focus: "series" },
+          label: labelEnabled && labelMode === "emphasis"
+            ? {
+                ...buildChartDataLabelStyle(palette, labelMode, "top"),
+                formatter: (params) => chartMetric.formatLabelValue(params.value),
+              }
+            : { show: false },
+        }
+      : null,
     {
       name: chartMetric.actualSeriesName,
       type: "bar",
-      barMaxWidth: 22,
+      barMaxWidth: 26,
+      barGap: "26%",
       yAxisIndex: 0,
       data: chartMetric.actualData,
+      itemStyle: buildCapsuleBarItemStyle(trendColors.actual, withAlpha(trendColors.actual, 0.66)),
+      emphasis: { focus: "series" },
       label: labelEnabled
         ? {
             ...buildChartDataLabelStyle(palette, labelMode, "top"),
@@ -1670,21 +1917,8 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
           }
         : { show: false },
     },
-  ];
+  ].filter(Boolean);
   if (chartMetric.hasTargetSeries) {
-    series.push({
-      name: chartMetric.targetSeriesName,
-      type: "bar",
-      barMaxWidth: 22,
-      yAxisIndex: 0,
-      data: chartMetric.targetData,
-      label: labelEnabled
-        ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => chartMetric.formatLabelValue(params.value),
-          }
-        : { show: false },
-    });
     series.push({
       name: chartMetric.achievementSeriesName,
       type: "line",
@@ -1692,8 +1926,18 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
       connectNulls: false,
       yAxisIndex: 1,
       data: chartMetric.achievementData,
+      symbol: "circle",
+      symbolSize: labelMode === "emphasis" ? 8 : 6,
       lineStyle: {
-        width: 2,
+        width: 3,
+        color: trendColors.achievement,
+        shadowBlur: 14,
+        shadowColor: withAlpha(trendColors.achievement, 0.24),
+      },
+      itemStyle: {
+        color: trendColors.achievement,
+        borderWidth: 2,
+        borderColor: withAlpha("#ffffff", 0.9),
       },
       label: labelEnabled
         ? {
@@ -1711,9 +1955,17 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
     connectNulls: false,
     yAxisIndex: 1,
     data: chartMetric.growthData,
+    symbol: "circle",
+    symbolSize: labelMode === "emphasis" ? 7 : 5,
     lineStyle: {
       type: "dashed",
       width: 2,
+      color: trendColors.growth,
+    },
+    itemStyle: {
+      color: trendColors.growth,
+      borderWidth: 2,
+      borderColor: withAlpha("#ffffff", 0.9),
     },
     label: labelEnabled
       ? {
@@ -1726,47 +1978,79 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
-      color: palette.series.trend4,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
         formatter: (params) => {
-          const lines = params.map((item) => {
+          const valueItems = [];
+          const rateItems = [];
+          params.forEach((item) => {
             const value = Number(item.value);
             if (!Number.isFinite(value)) {
-              return `${item.marker}${item.seriesName}：--`;
+              return;
             }
 
             const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
             if (isPercent) {
-              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+              rateItems.push({
+                marker: item.marker,
+                name: item.seriesName,
+                value: formatSignedPercent(value),
+              });
+              return;
             }
 
-            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
+            valueItems.push({
+              marker: item.marker,
+              name: item.seriesName,
+              value: chartMetric.formatValue(value),
+            });
           });
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
-          return [title, ...lines].join("<br/>");
+          return buildTooltipCardHtml(
+            title,
+            [
+              { title: "经营数据", items: valueItems },
+              { title: "比率表现", items: rateItems },
+            ],
+            palette,
+          );
+        },
+        axisPointer: {
+          type: "shadow",
+          shadowStyle: {
+            color: palette.axisPointerColor,
+          },
         },
       },
       legend: {
+        icon: "roundRect",
+        itemWidth: 10,
+        itemHeight: 10,
         top: 0,
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
       grid: {
         left: 56,
         right: 60,
-        top: 44,
-        bottom: 36,
+        top: 52,
+        bottom: 42,
       },
       xAxis: {
         type: "category",
         data: labels,
+        axisTick: {
+          show: false,
+        },
         axisLabel: {
           color: palette.axisTextColor,
+          margin: 12,
         },
         axisLine: buildAxisLineTheme(palette),
       },
@@ -1797,7 +2081,9 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
             formatter: (value) => `${Number(value).toFixed(2)}%`,
           },
           axisLine: buildAxisLineTheme(palette),
-          splitLine: buildSplitLineTheme(palette),
+          splitLine: {
+            show: false,
+          },
         },
       ],
       series,
@@ -1808,169 +2094,166 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
 
 function updateProductPerformanceChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
-  const labelEnabled = labelMode !== "none";
-
-  const rows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+  const rows = filterChartRowsByMetricValue(getSortedProductChartRows(snapshot, metric, PRODUCT_CHART_TOP_LIMIT), metric);
   if (!rows.length) {
-    renderEmptyChart(instance, "当前范围无产品销售数据");
+    renderEmptyChart(instance, "当前范围无产品销售数据", palette);
     return;
   }
-
-  const labels = rows.map((row) => row.productName);
   const chartMetric = buildTargetChartMetricPayload(rows, metric, deps, amountUnit, {
     amountActualSeriesName: "实际金额",
     quantityActualSeriesName: "实际数量",
     amountGrowthSeriesName: "金额同比增长率",
     quantityGrowthSeriesName: "数量同比增长率",
   });
-  const series = [
-    {
-      name: chartMetric.actualSeriesName,
-      type: "bar",
-      barMaxWidth: 20,
-      yAxisIndex: 0,
-      data: chartMetric.actualData,
-      label: labelEnabled
-        ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => chartMetric.formatLabelValue(params.value),
-          }
-        : { show: false },
+  const trendColors = getTrendPaletteColors(palette);
+  const labels = rows.map((row, index) => buildRankAxisLabel(index, row.productName));
+  const actualLabelStyle = {
+    show: true,
+    position: "right",
+    distance: 12,
+    color: palette.labelTextColor,
+    fontSize: 11,
+    fontWeight: 700,
+    formatter: (params) => {
+      const index = params.dataIndex;
+      const actualText = chartMetric.formatLabelValue(params.value);
+      const growthText = Number.isFinite(chartMetric.growthData[index]) ? formatSignedPercent(chartMetric.growthData[index]) : "--";
+      if (!chartMetric.hasTargetSeries) {
+        return `${actualText}  ·  同比 ${growthText}`;
+      }
+      const achievementText = Number.isFinite(chartMetric.achievementData[index]) ? `${chartMetric.achievementData[index].toFixed(2)}%` : "--";
+      return `${actualText}  ·  达成 ${achievementText}  ·  同比 ${growthText}`;
     },
-  ];
-  if (chartMetric.hasTargetSeries) {
-    series.push({
-      name: chartMetric.targetSeriesName,
-      type: "bar",
-      barMaxWidth: 20,
-      yAxisIndex: 0,
-      data: chartMetric.targetData,
-      label: labelEnabled
-        ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => chartMetric.formatLabelValue(params.value),
-          }
-        : { show: false },
-    });
-    series.push({
-      name: chartMetric.achievementSeriesName,
-      type: "line",
-      smooth: true,
-      connectNulls: false,
-      yAxisIndex: 1,
-      data: chartMetric.achievementData,
-      lineStyle: {
-        width: 2,
-      },
-      label: labelEnabled
-        ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => formatPercentLabelValue(params.value),
-          }
-        : { show: false },
-      labelLayout: buildChartDataLabelLayout(labelMode),
-    });
-  }
-  series.push({
-    name: chartMetric.growthSeriesName,
-    type: "line",
-    smooth: true,
-    connectNulls: false,
-    yAxisIndex: 1,
-    data: chartMetric.growthData,
-    lineStyle: {
-      type: "dashed",
-      width: 2,
-    },
-    label: labelEnabled
-      ? {
-          ...buildChartDataLabelStyle(palette, labelMode, "top"),
-          formatter: (params) => formatPercentLabelValue(params.value),
-        }
-      : { show: false },
-    labelLayout: buildChartDataLabelLayout(labelMode),
-  });
+  };
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
-      color: palette.series.trend4,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
+        axisPointer: {
+          type: "shadow",
+          shadowStyle: {
+            color: palette.axisPointerColor,
+          },
+        },
         formatter: (params) => {
-          const lines = params.map((item) => {
+          const valueItems = [];
+          const rateItems = [];
+          const dataIndex = params.length ? Number(params[0].dataIndex) : -1;
+          params.forEach((item) => {
             const value = Number(item.value);
             if (!Number.isFinite(value)) {
-              return `${item.marker}${item.seriesName}：--`;
+              return;
             }
-
-            const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
-            if (isPercent) {
-              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
-            }
-            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
+            valueItems.push({
+              marker: item.marker,
+              name: item.seriesName,
+              value: chartMetric.formatValue(value),
+            });
           });
+          if (chartMetric.hasTargetSeries && Number.isFinite(chartMetric.achievementData[dataIndex])) {
+            rateItems.push({
+              marker: `<span style="display:inline-flex;width:8px;height:8px;border-radius:999px;background:${trendColors.achievement};"></span>`,
+              name: chartMetric.achievementSeriesName,
+              value: `${chartMetric.achievementData[dataIndex].toFixed(2)}%`,
+            });
+          }
+          if (Number.isFinite(chartMetric.growthData[dataIndex])) {
+            rateItems.push({
+              marker: `<span style="display:inline-flex;width:8px;height:8px;border-radius:999px;background:${trendColors.growth};"></span>`,
+              name: chartMetric.growthSeriesName,
+              value: formatSignedPercent(chartMetric.growthData[dataIndex]),
+            });
+          }
 
-          const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
-          return [title, ...lines].join("<br/>");
+          const title = Number.isInteger(dataIndex) && dataIndex >= 0 && rows[dataIndex] ? rows[dataIndex].productName : "";
+          return buildTooltipCardHtml(
+            title,
+            [
+              { title: "经营值", items: valueItems },
+              { title: "经营结果", items: rateItems },
+            ],
+            palette,
+          );
         },
       },
       legend: {
-        type: "scroll",
+        icon: "roundRect",
         top: 0,
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
       grid: {
-        left: 56,
-        right: 60,
-        top: 52,
-        bottom: 52,
+        left: 156,
+        right: 190,
+        top: 40,
+        bottom: 24,
       },
       xAxis: {
-        type: "category",
-        data: labels,
+        type: "value",
+        max: chartMetric.hasTargetSeries
+          ? (value) => Math.max(value.max || 0, ...chartMetric.targetData.filter((item) => Number.isFinite(item))) * 1.12
+          : undefined,
         axisLabel: {
           color: palette.axisTextColor,
-          interval: 0,
-          rotate: labels.length > 5 ? 20 : 0,
+          formatter: (value) => chartMetric.formatAxisValue(value),
         },
+        splitLine: buildSplitLineTheme(palette),
         axisLine: buildAxisLineTheme(palette),
       },
-      yAxis: [
-        {
-          type: "value",
-          name: chartMetric.valueAxisName,
-          nameTextStyle: {
-            color: palette.axisTextColor,
-          },
-          axisLabel: {
-            color: palette.axisTextColor,
-            formatter: (value) => chartMetric.formatAxisValue(value),
-          },
-          axisLine: buildAxisLineTheme(palette),
-          splitLine: buildSplitLineTheme(palette),
+      yAxis: {
+        type: "category",
+        inverse: true,
+        data: labels,
+        axisTick: {
+          show: false,
         },
-        {
-          type: "value",
-          name: "比率（%）",
-          min: chartMetric.negativeFloor,
-          max: chartMetric.positiveCeil,
-          nameTextStyle: {
-            color: palette.axisTextColor,
-          },
-          axisLabel: {
-            color: palette.axisTextColor,
-            formatter: (value) => `${Number(value).toFixed(2)}%`,
-          },
-          axisLine: buildAxisLineTheme(palette),
-          splitLine: buildSplitLineTheme(palette),
+        axisLine: {
+          show: false,
         },
-      ],
-      series,
+        axisLabel: {
+          color: palette.axisTextColor,
+          margin: 18,
+          rich: buildRankAxisRich(palette),
+        },
+      },
+      series: [
+        chartMetric.hasTargetSeries
+          ? {
+              name: chartMetric.targetSeriesName,
+              type: "bar",
+              barWidth: 10,
+              xAxisIndex: 0,
+              data: chartMetric.targetData,
+              itemStyle: buildGlassTrackBarStyle(trendColors.target, true),
+              z: 1,
+              emphasis: { focus: "series" },
+            }
+          : null,
+        {
+          name: chartMetric.actualSeriesName,
+          type: "bar",
+          barWidth: 18,
+          data: chartMetric.actualData.map((value, index) => ({
+            value,
+            itemStyle: buildCapsuleBarItemStyle(
+              index < 3 ? trendColors.actual : withAlpha(trendColors.actual, 0.86),
+              index < 3 ? withAlpha(trendColors.actual, 0.58) : withAlpha(trendColors.actual, 0.44),
+              true,
+              index < 3 ? 0.26 : 0.14,
+            ),
+          })),
+          label: actualLabelStyle,
+          z: 3,
+          emphasis: { focus: "series" },
+        },
+      ].filter(Boolean),
     },
     true,
   );
@@ -1992,7 +2275,7 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
   );
 
   if (!labels.length || !topRows.length) {
-    renderEmptyChart(instance, "当前范围无产品销售数据");
+    renderEmptyChart(instance, "当前范围无产品销售数据", palette);
     return;
   }
 
@@ -2000,7 +2283,7 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
     ? snapshot.productMonthlySeries
     : {};
 
-  const series = topRows.map((row) => {
+  const series = topRows.map((row, index) => {
     const safeProductKey = String(row.productKey || "").trim();
     const monthlySeriesEntry = safeProductKey ? productMonthlySeries[safeProductKey] : null;
     const monthlyMap =
@@ -2011,18 +2294,44 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
       if (!Number.isFinite(value)) return 0;
       return chartMetric.scaleValue(value) ?? 0;
     });
+    const baseColor =
+      palette?.series?.productMonthlyLines?.[index] || palette?.series?.productMonthlyLines?.[index % palette.series.productMonthlyLines.length] || "#1a6f98";
+    const isPrimary = index === 0;
+    const isSecondary = index > 0 && index < 3;
 
     return {
       name: row.productName,
       type: "line",
       smooth: true,
-      showSymbol: labelEnabled,
-      symbolSize: labelEnabled ? 4 : 0,
+      showSymbol: isPrimary || (labelEnabled && isSecondary),
+      symbolSize: isPrimary ? 7 : isSecondary ? 5 : 0,
       connectNulls: false,
       data,
+      lineStyle: {
+        width: isPrimary ? 4 : isSecondary ? 3 : 2,
+        color: baseColor,
+        opacity: isPrimary ? 1 : isSecondary ? 0.86 : 0.32,
+        shadowBlur: isPrimary ? 18 : 0,
+        shadowColor: isPrimary ? withAlpha(baseColor, 0.28) : "transparent",
+      },
+      itemStyle: {
+        color: baseColor,
+        borderColor: withAlpha("#ffffff", 0.9),
+        borderWidth: isPrimary ? 2 : 1,
+        opacity: isPrimary ? 1 : isSecondary ? 0.92 : 0.55,
+      },
+      areaStyle: isPrimary
+        ? {
+            color: buildLinearGradient(withAlpha(baseColor, 0.26), withAlpha(baseColor, 0.02)),
+          }
+        : undefined,
+      emphasis: {
+        focus: "series",
+      },
       label: labelEnabled
         ? {
-            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            ...buildChartDataLabelStyle(palette, labelMode, isPrimary ? "top" : "right"),
+            show: isPrimary || (labelMode === "emphasis" && isSecondary),
             formatter: (params) => chartMetric.formatLabelValue(params.value),
           }
         : { show: false },
@@ -2032,29 +2341,45 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       color: palette.series.productMonthlyLines,
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
         formatter: (params) => {
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
-          const lines = params.map((item) => {
-            const value = Number(item.value);
-            if (!Number.isFinite(value)) {
-              return `${item.marker}${item.seriesName}：--`;
-            }
-            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
-          });
-          return [title, ...lines].join("<br/>");
+          const visibleItems = params
+            .map((item) => {
+              const value = Number(item.value);
+              if (!Number.isFinite(value)) {
+                return null;
+              }
+              return {
+                marker: item.marker,
+                name: item.seriesName,
+                value: chartMetric.formatValue(value),
+              };
+            })
+            .filter(Boolean);
+          return buildTooltipCardHtml(title, [{ title: "产品走势", items: visibleItems }], palette);
+        },
+        axisPointer: {
+          type: "line",
+          lineStyle: {
+            color: withAlpha(palette.axisTextColor, 0.28),
+            type: "dashed",
+          },
         },
       },
       legend: {
         type: "scroll",
+        icon: "roundRect",
         top: 0,
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
       grid: {
@@ -2066,8 +2391,12 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
       xAxis: {
         type: "category",
         data: labels,
+        axisTick: {
+          show: false,
+        },
         axisLabel: {
           color: palette.axisTextColor,
+          margin: 12,
         },
         axisLine: buildAxisLineTheme(palette),
       },
@@ -2092,8 +2421,6 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
 
 function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
-  const isNameOnlyMode = labelMode === "none";
-  const labelEnabled = labelMode !== "none";
   const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
     amountSeriesName: "产品金额占比",
     quantitySeriesName: "产品数量占比",
@@ -2107,14 +2434,38 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
     chartMetric.metric,
   );
   if (!rows.length) {
-    renderEmptyChart(instance, "当前范围无可展示占比数据");
+    renderEmptyChart(instance, "当前范围无可展示占比数据", palette);
     return;
   }
+  const totalValue = rows.reduce((sum, row) => {
+    const value = chartMetric.scaleValue(row[metricKey]);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+  const topRow = rows[0];
+  const topValue = chartMetric.scaleValue(topRow[metricKey]) ?? 0;
+  const topShare = totalValue > 0 ? `${((topValue / totalValue) * 100).toFixed(2)}%` : "--";
+  const data = rows.map((row, index) => {
+    const scaledValue = chartMetric.scaleValue(row[metricKey]);
+    return {
+      name: row.productName,
+      value: scaledValue,
+      itemStyle: {
+        borderColor: getChartCanvasBackground(palette),
+        borderWidth: 4,
+      },
+      labelLine: {
+        show: shouldShowDonutOutsideLabel(labelMode, index),
+        length: 12,
+        length2: 8,
+      },
+    };
+  });
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       color: palette.series.productPie,
       tooltip: {
         trigger: "item",
@@ -2122,49 +2473,83 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
         formatter: (params) => {
           const value = Number(params.value);
           const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-          return `${params.name}<br/>${chartMetric.metricLabel}：${chartMetric.formatValue(value)}<br/>占比：${percent}`;
+          return buildTooltipCardHtml(
+            params.name,
+            [
+              {
+                title: "占比拆分",
+                items: [
+                  {
+                    marker: params.marker,
+                    name: chartMetric.metricLabel,
+                    value: chartMetric.formatValue(value),
+                  },
+                  {
+                    marker: `<span style="display:inline-flex;width:8px;height:8px;border-radius:999px;background:${palette.emphasisTextColor};"></span>`,
+                    name: chartMetric.shareSeriesName,
+                    value: percent,
+                  },
+                ],
+              },
+            ],
+            palette,
+          );
         },
       },
       legend: {
         type: "scroll",
         bottom: 0,
+        icon: "roundRect",
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
+      graphic: buildCenterTextGraphic({
+        kicker: `TOP10 产品总${chartMetric.metricLabel}`,
+        value: chartMetric.formatLabelValue(totalValue),
+        detail: `TOP1 ${topRow.productName} · ${topShare}`,
+        palette,
+      }),
       series: [
         {
           name: chartMetric.seriesName,
           type: "pie",
-          radius: ["48%", "72%"],
+          radius: ["58%", "76%"],
           center: ["50%", "46%"],
-          label: isNameOnlyMode
-            ? {
-                show: true,
-                position: "outside",
-                color: palette.axisTextColor,
-                formatter: (params) => params.name,
-              }
-            : labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "outside"),
-                formatter: (params) => {
-                  const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-                  if (labelMode === "compact") {
-                    return `${params.name}\n${percent}`;
-                  }
-                  const valueText = chartMetric.formatLabelValue(params.value);
-                  return `${params.name}\n${percent}｜${valueText || "--"}`;
-                },
-              }
-            : { show: false },
-          labelLine: {
-            show: labelEnabled || isNameOnlyMode,
+          startAngle: 110,
+          minAngle: 3,
+          padAngle: 1,
+          avoidLabelOverlap: true,
+          itemStyle: {
+            borderColor: getChartCanvasBackground(palette),
+            borderWidth: 4,
+            shadowBlur: 18,
+            shadowColor: withAlpha(palette.axisPointerColor, 0.18),
           },
-          data: rows.map((row) => ({
-            name: row.productName,
-            value: chartMetric.scaleValue(row[metricKey]),
-          })),
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+          },
+          label: {
+            show: true,
+            position: "outside",
+            color: palette.labelTextColor,
+            fontSize: labelMode === "emphasis" ? 11 : 10,
+            fontWeight: 600,
+            formatter: (params) => {
+              if (!shouldShowDonutOutsideLabel(labelMode, params.dataIndex)) return "";
+              const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(1)}%` : "--";
+              if (labelMode === "none") return params.name;
+              if (labelMode === "compact") return `${params.name}\n${percent}`;
+              const valueText = chartMetric.formatLabelValue(params.value);
+              return `${params.name}\n${percent} · ${valueText || "--"}`;
+            },
+          },
+          labelLine: {
+            smooth: 0.18,
+          },
+          data,
         },
       ],
     },
@@ -2186,11 +2571,11 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
     chartMetric.metric,
   );
   if (!rows.length) {
-    renderEmptyChart(instance, "当前范围无医院销售数据");
+    renderEmptyChart(instance, "当前范围无医院销售数据", palette);
     return;
   }
 
-  const labels = rows.map((row) => row.hospitalName);
+  const labels = rows.map((row, index) => buildRankAxisLabel(index, row.hospitalName));
   const values = rows.map((row) => {
     const scaled = chartMetric.scaleValue(row[metricKey]);
     return Number.isFinite(scaled) ? scaled : 0;
@@ -2198,20 +2583,44 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
-      color: palette.series.hospitalTopBar,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
-        axisPointer: { type: "shadow" },
-        valueFormatter: (value) => (Number.isFinite(value) ? chartMetric.formatValue(value) : "--"),
+        axisPointer: {
+          type: "shadow",
+          shadowStyle: {
+            color: palette.axisPointerColor,
+          },
+        },
+        formatter: (params) => {
+          const item = Array.isArray(params) ? params[0] : null;
+          const value = Number(item?.value);
+          return buildTooltipCardHtml(
+            Number.isInteger(item?.dataIndex) && rows[item.dataIndex] ? rows[item.dataIndex].hospitalName : "",
+            [
+              {
+                title: "医院排名",
+                items: [
+                  {
+                    marker: item?.marker,
+                    name: chartMetric.seriesName,
+                    value: Number.isFinite(value) ? chartMetric.formatValue(value) : "--",
+                  },
+                ],
+              },
+            ],
+            palette,
+          );
+        },
       },
       grid: {
         left: 140,
         right: 24,
-        top: 20,
-        bottom: 20,
+        top: 24,
+        bottom: 24,
       },
       xAxis: {
         type: "value",
@@ -2230,20 +2639,42 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
         type: "category",
         data: labels,
         inverse: true,
+        axisTick: {
+          show: false,
+        },
         axisLabel: {
           color: palette.axisTextColor,
+          rich: buildRankAxisRich(palette),
+          margin: 16,
         },
-        axisLine: buildAxisLineTheme(palette),
+        axisLine: {
+          show: false,
+        },
       },
       series: [
         {
           name: chartMetric.seriesName,
           type: "bar",
-          barMaxWidth: 22,
-          data: values,
+          barMaxWidth: 18,
+          showBackground: true,
+          backgroundStyle: {
+            color: palette.trackColor,
+            borderRadius: 999,
+          },
+          itemStyle: {
+            borderRadius: [999, 999, 999, 999],
+          },
+          data: values.map((value, index) => {
+            const baseColor = pickRankBarColor(palette, index);
+            return {
+              value,
+              itemStyle: buildCapsuleBarItemStyle(baseColor, withAlpha(baseColor, index < 3 ? 0.56 : 0.42), true, index < 3 ? 0.22 : 0.12),
+            };
+          }),
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "right"),
+                show: true,
                 formatter: (params) => chartMetric.formatLabelValue(params.value),
               }
             : { show: false },
@@ -2256,8 +2687,6 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
 
 function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
-  const isNameOnlyMode = labelMode === "none";
-  const labelEnabled = labelMode !== "none";
   const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
     amountSeriesName: "医院金额占比",
     quantitySeriesName: "医院数量占比",
@@ -2268,16 +2697,23 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
   const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
   const topRows = getSortedHospitalChartRows(snapshot, chartMetric.metric, HOSPITAL_CHART_TOP_LIMIT);
   if (!topRows.length) {
-    renderEmptyChart(instance, "当前范围无医院销售数据");
+    renderEmptyChart(instance, "当前范围无医院销售数据", palette);
     return;
   }
 
   const rows = filterChartRowsByMetricValue(topRows, chartMetric.metric);
 
   if (!rows.length) {
-    renderEmptyChart(instance, "当前范围无可展示占比数据");
+    renderEmptyChart(instance, "当前范围无可展示占比数据", palette);
     return;
   }
+  const totalValue = rows.reduce((sum, row) => {
+    const value = chartMetric.scaleValue(row[metricKey]);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+  const topRow = rows[0];
+  const topValue = chartMetric.scaleValue(topRow[metricKey]) ?? 0;
+  const topShare = totalValue > 0 ? `${((topValue / totalValue) * 100).toFixed(2)}%` : "--";
 
   const pieColors =
     palette && palette.series && Array.isArray(palette.series.hospitalSharePie) && palette.series.hospitalSharePie.length
@@ -2285,11 +2721,25 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
       : palette && palette.series && Array.isArray(palette.series.productPie)
         ? palette.series.productPie
         : undefined;
+  const data = rows.map((row, index) => ({
+    name: row.hospitalName,
+    value: chartMetric.scaleValue(row[metricKey]),
+    itemStyle: {
+      borderColor: getChartCanvasBackground(palette),
+      borderWidth: 4,
+    },
+    labelLine: {
+      show: shouldShowDonutOutsideLabel(labelMode, index),
+      length: 12,
+      length2: 8,
+    },
+  }));
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       color: pieColors,
       tooltip: {
         trigger: "item",
@@ -2297,49 +2747,83 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
         formatter: (params) => {
           const value = Number(params.value);
           const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-          return `${params.name}<br/>${chartMetric.metricLabel}：${chartMetric.formatValue(value)}<br/>占比：${percent}`;
+          return buildTooltipCardHtml(
+            params.name,
+            [
+              {
+                title: "医院占比",
+                items: [
+                  {
+                    marker: params.marker,
+                    name: chartMetric.metricLabel,
+                    value: chartMetric.formatValue(value),
+                  },
+                  {
+                    marker: `<span style="display:inline-flex;width:8px;height:8px;border-radius:999px;background:${palette.emphasisTextColor};"></span>`,
+                    name: chartMetric.shareSeriesName,
+                    value: percent,
+                  },
+                ],
+              },
+            ],
+            palette,
+          );
         },
       },
       legend: {
         type: "scroll",
         bottom: 0,
+        icon: "roundRect",
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
+      graphic: buildCenterTextGraphic({
+        kicker: `TOP10 医院总${chartMetric.metricLabel}`,
+        value: chartMetric.formatLabelValue(totalValue),
+        detail: `TOP1 ${topRow.hospitalName} · ${topShare}`,
+        palette,
+      }),
       series: [
         {
           name: chartMetric.seriesName,
           type: "pie",
-          radius: ["48%", "72%"],
+          radius: ["58%", "76%"],
           center: ["50%", "46%"],
-          label: isNameOnlyMode
-            ? {
-                show: true,
-                position: "outside",
-                color: palette.axisTextColor,
-                formatter: (params) => params.name,
-              }
-            : labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "outside"),
-                formatter: (params) => {
-                  const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-                  if (labelMode === "compact") {
-                    return `${params.name}\n${percent}`;
-                  }
-                  const valueText = chartMetric.formatLabelValue(params.value);
-                  return `${params.name}\n${percent}｜${valueText || "--"}`;
-                },
-              }
-            : { show: false },
-          labelLine: {
-            show: labelEnabled || isNameOnlyMode,
+          startAngle: 110,
+          minAngle: 3,
+          padAngle: 1,
+          avoidLabelOverlap: true,
+          itemStyle: {
+            borderColor: getChartCanvasBackground(palette),
+            borderWidth: 4,
+            shadowBlur: 18,
+            shadowColor: withAlpha(palette.axisPointerColor, 0.18),
           },
-          data: rows.map((row) => ({
-            name: row.hospitalName,
-            value: chartMetric.scaleValue(row[metricKey]),
-          })),
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+          },
+          label: {
+            show: true,
+            position: "outside",
+            color: palette.labelTextColor,
+            fontSize: labelMode === "emphasis" ? 11 : 10,
+            fontWeight: 600,
+            formatter: (params) => {
+              if (!shouldShowDonutOutsideLabel(labelMode, params.dataIndex)) return "";
+              const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(1)}%` : "--";
+              if (labelMode === "none") return params.name;
+              if (labelMode === "compact") return `${params.name}\n${percent}`;
+              const valueText = chartMetric.formatLabelValue(params.value);
+              return `${params.name}\n${percent} · ${valueText || "--"}`;
+            },
+          },
+          labelLine: {
+            smooth: 0.18,
+          },
+          data,
         },
       ],
     },
@@ -2361,13 +2845,13 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
   const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
   const monthKeys = snapshot.monthRows.map((row) => row.ym);
   if (!rows.length || !labels.length) {
-    renderEmptyChart(instance, "当前范围无医院销售数据");
+    renderEmptyChart(instance, "当前范围无医院销售数据", palette);
     return;
   }
 
   const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot, chartMetric.metric);
   if (!activeHospitalKey) {
-    renderEmptyChart(instance, "当前范围无医院销售数据");
+    renderEmptyChart(instance, "当前范围无医院销售数据", palette);
     return;
   }
 
@@ -2400,49 +2884,81 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
   const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
   const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
   const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
+  const trendColors = Array.isArray(palette?.series?.hospitalTrend2) ? palette.series.hospitalTrend2 : ["#1f7ca0", "#f0ad63"];
 
   instance.setOption(
     {
-      animationDuration: 300,
-      backgroundColor: palette.canvasBg,
-      color: palette.series.hospitalTrend2,
+      animationDuration: 420,
+      animationEasing: "cubicOut",
+      backgroundColor: getChartCanvasBackground(palette),
       tooltip: {
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
         formatter: (params) => {
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
-          const lines = params.map((item) => {
+          const valueItems = [];
+          const rateItems = [];
+          params.forEach((item) => {
             const value = Number(item.value);
             if (!Number.isFinite(value)) {
-              return `${item.marker}${item.seriesName}：--`;
+              return;
             }
 
             if (item.seriesName === chartMetric.growthSeriesName) {
-              return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
+              rateItems.push({
+                marker: item.marker,
+                name: item.seriesName,
+                value: formatSignedPercent(value),
+              });
+              return;
             }
 
-            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
+            valueItems.push({
+              marker: item.marker,
+              name: item.seriesName,
+              value: chartMetric.formatValue(value),
+            });
           });
-          return [title, ...lines].join("<br/>");
+          return buildTooltipCardHtml(
+            title,
+            [
+              { title: selectedRow?.hospitalName || "医院走势", items: valueItems },
+              { title: "同比变化", items: rateItems },
+            ],
+            palette,
+          );
+        },
+        axisPointer: {
+          type: "line",
+          lineStyle: {
+            color: withAlpha(palette.axisTextColor, 0.28),
+            type: "dashed",
+          },
         },
       },
       legend: {
+        icon: "roundRect",
         top: 0,
         textStyle: {
           color: palette.legendTextColor,
+          fontSize: 12,
         },
       },
       grid: {
         left: 56,
         right: 60,
-        top: 48,
+        top: 58,
         bottom: 36,
       },
       xAxis: {
         type: "category",
         data: labels,
+        axisTick: {
+          show: false,
+        },
         axisLabel: {
           color: palette.axisTextColor,
+          margin: 12,
         },
         axisLine: buildAxisLineTheme(palette),
       },
@@ -2473,16 +2989,35 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
             formatter: (value) => `${Number(value).toFixed(2)}%`,
           },
           axisLine: buildAxisLineTheme(palette),
-          splitLine: buildSplitLineTheme(palette),
+          splitLine: {
+            show: false,
+          },
         },
       ],
       series: [
         {
           name: chartMetric.seriesName,
-          type: "bar",
-          barMaxWidth: 24,
+          type: "line",
+          smooth: true,
+          showSymbol: labelEnabled,
+          symbol: "circle",
+          symbolSize: labelMode === "emphasis" ? 7 : 5,
           yAxisIndex: 0,
           data: metricData,
+          lineStyle: {
+            width: 4,
+            color: trendColors[0],
+            shadowBlur: 18,
+            shadowColor: withAlpha(trendColors[0], 0.24),
+          },
+          itemStyle: {
+            color: trendColors[0],
+            borderWidth: 2,
+            borderColor: withAlpha("#ffffff", 0.9),
+          },
+          areaStyle: {
+            color: buildLinearGradient(withAlpha(trendColors[0], 0.24), withAlpha(trendColors[0], 0.02)),
+          },
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "top"),
@@ -2497,8 +3032,17 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
           connectNulls: false,
           yAxisIndex: 1,
           data: metricYoyData,
+          symbol: "circle",
+          symbolSize: labelMode === "emphasis" ? 7 : 5,
           lineStyle: {
             width: 2,
+            type: "dashed",
+            color: trendColors[1],
+          },
+          itemStyle: {
+            color: trendColors[1],
+            borderWidth: 2,
+            borderColor: withAlpha("#ffffff", 0.9),
           },
           label: labelEnabled
             ? {
@@ -2512,10 +3056,15 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       title: {
         text: selectedRow ? `${selectedRow.hospitalName}` : "",
         left: "center",
-        top: 22,
+        top: 18,
+        subtext: chartMetric.metric === "quantity" ? "医院采购数量走势与同比" : "医院销售金额走势与同比",
+        subtextStyle: {
+          fontSize: 11,
+          color: palette.subtleTextColor,
+        },
         textStyle: {
-          fontSize: 12,
-          fontWeight: 500,
+          fontSize: 14,
+          fontWeight: 700,
           color: palette.legendTextColor,
         },
       },
@@ -2654,7 +3203,7 @@ function exportChartAsPng(state, dom, deps, chartKey, fileKey) {
     const dataUrl = chart.getDataURL({
       type: "png",
       pixelRatio: 2,
-      backgroundColor: getChartCanvasBackground(),
+      backgroundColor: getChartCanvasBackground(getActiveReportChartPalette(state)),
     });
     triggerChartDownload(dataUrl, fileName);
     if (dom.reportChartsHintEl instanceof HTMLElement) {
