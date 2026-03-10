@@ -364,6 +364,34 @@ test("renderReportSection 会为坐标轴图保留完整标签空间且仅压缩
     assert.equal(env.charts.get("chart-hospital-top")?.option?.yAxis?.axisLabel?.rich, undefined);
     assert.equal(typeof env.charts.get("chart-hospital-top")?.option?.xAxis?.max, "function");
     assert.equal(env.charts.get("chart-hospital-top")?.option?.series?.[0]?.data?.[0]?.label?.position, "insideRight");
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.series?.[0]?.data?.[0]?.label?.color, "#103247");
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.series?.[0]?.data?.[0]?.label?.textBorderWidth, 0);
+  } finally {
+    env.restore();
+  }
+});
+
+test("renderReportSection 在只读演示态仍禁用图表导出按钮", () => {
+  const env = installFakeBrowserEnv();
+  try {
+    const dom = createReportDom();
+    const deps = createDeps();
+    const state = {
+      reportStartYm: "2025-01",
+      reportEndYm: "2025-03",
+      reportChartPaletteId: "harbor",
+      reportChartDataLabelMode: "compact",
+      reportAmountUnitId: "yuan",
+      activeHospitalChartKey: "",
+      isWorkspaceReadOnly: true,
+      records: createRecords(),
+    };
+
+    const summary = renderReportSection(state, dom, deps);
+    assert.equal(summary.reason, "");
+    assert.equal(dom.exportChartMonthlyTrendBtn.disabled, true);
+    assert.equal(dom.exportChartHospitalTopBtn.disabled, true);
+    assert.equal(dom.exportChartHospitalTrendXlsxBtn.disabled, true);
   } finally {
     env.restore();
   }

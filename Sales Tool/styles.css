@@ -3267,21 +3267,18 @@ body.workspace-readonly .workspace-grid {
 body.workspace-readonly .workspace-grid input,
 body.workspace-readonly .workspace-grid select,
 body.workspace-readonly .workspace-grid textarea,
-body.workspace-readonly .workspace-grid button {
+body.workspace-readonly .workspace-grid button:disabled {
   cursor: not-allowed;
 }
 
-body.workspace-readonly .workspace-grid input:not([type="hidden"]),
-body.workspace-readonly .workspace-grid select,
-body.workspace-readonly .workspace-grid textarea {
+body.workspace-readonly .workspace-grid input:not([type="hidden"]):disabled,
+body.workspace-readonly .workspace-grid select:disabled,
+body.workspace-readonly .workspace-grid textarea:disabled {
   background: linear-gradient(180deg, rgb(245 249 252 / 96%) 0%, rgb(236 243 247 / 96%) 100%);
   color: #6e8494;
 }
 
-body.workspace-readonly .report-chart-canvas,
-body.workspace-readonly .report-chart-card-tools,
-body.workspace-readonly .report-chart-export-group,
-body.workspace-readonly .report-charts-toolbar {
+body.workspace-readonly .report-chart-export-group {
   pointer-events: none;
 }
 

@@ -107,7 +107,11 @@ export function renderWorkspaceModeBanner(dom, state) {
 
 export function applyWorkspaceReadOnlyState(dom, state) {
   const readOnly = Boolean(state?.isWorkspaceReadOnly);
-  const controls = Array.isArray(dom?.workspaceControls) ? dom.workspaceControls : [];
+  const controls = Array.isArray(dom?.workspaceLockedControls)
+    ? dom.workspaceLockedControls
+    : Array.isArray(dom?.workspaceControls)
+      ? dom.workspaceControls
+      : [];
   const details = Array.isArray(dom?.workspaceDetails) ? dom.workspaceDetails : [];
 
   document.body.classList.toggle("workspace-readonly", readOnly);

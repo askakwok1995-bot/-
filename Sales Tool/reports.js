@@ -1344,7 +1344,7 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
       getReportTargetChartMetric(state, CHART_KEYS.hospitalTrend),
     );
 
-    setChartButtonsDisabled(dom, false);
+    setChartButtonsDisabled(dom, Boolean(state?.isWorkspaceReadOnly));
 
     if (dom.reportChartsHintEl instanceof HTMLElement) {
       if (snapshot.hasTargetGap) {
@@ -2682,12 +2682,14 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
             return {
               value,
               itemStyle: buildCapsuleBarItemStyle(baseColor, withAlpha(baseColor, index < 3 ? 0.56 : 0.42), true, index < 3 ? 0.22 : 0.12),
-              label: labelEnabled
+                  label: labelEnabled
                 ? {
                     ...buildChartDataLabelStyle(palette, labelMode, useInsideLabel ? "insideRight" : "right"),
                     show: true,
                     distance: useInsideLabel ? 10 : 8,
-                    color: useInsideLabel ? withAlpha("#ffffff", 0.96) : palette.labelTextColor,
+                    color: palette.labelTextColor,
+                    textBorderWidth: useInsideLabel ? 0 : undefined,
+                    textBorderColor: useInsideLabel ? "transparent" : undefined,
                     formatter: () => chartMetric.formatLabelValue(value),
                   }
                 : { show: false },

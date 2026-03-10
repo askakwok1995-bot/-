@@ -292,6 +292,15 @@ async function initializeApp(initialUser = null) {
     dom.workspaceGrid instanceof HTMLElement
       ? Array.from(dom.workspaceGrid.querySelectorAll("input, select, button, textarea"))
       : [];
+  dom.workspaceInteractiveControls = [
+    dom.reportChartPaletteSelect,
+    dom.reportChartDataLabelModeSelect,
+    dom.hospitalTrendSelect,
+    ...(typeof document !== "undefined"
+      ? Array.from(document.querySelectorAll('[data-report-chart-metric-btn="true"]'))
+      : []),
+  ].filter((item, index, list) => item instanceof HTMLElement && list.indexOf(item) === index);
+  dom.workspaceLockedControls = dom.workspaceControls.filter((control) => !dom.workspaceInteractiveControls.includes(control));
 
   const state = {
     products: [],
