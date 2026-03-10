@@ -1,60 +1,32 @@
 import { createDefaultTargetYear, createDefaultTargetsPayload, roundMoney } from "./storage.js";
 
 const DEMO_PRODUCTS = Object.freeze([
-  { id: "demo-product-1", productName: "瑞舒伐他汀 10mg*28片", unitPrice: 168 },
-  { id: "demo-product-2", productName: "恩格列净 10mg*30片", unitPrice: 236 },
-  { id: "demo-product-3", productName: "阿奇霉素 0.25g*6片", unitPrice: 92 },
-  { id: "demo-product-4", productName: "注射用头孢唑肟 1.0g", unitPrice: 148 },
+  { id: "demo-product-1", productName: "匿名产品 A", unitPrice: 168 },
+  { id: "demo-product-2", productName: "匿名产品 B", unitPrice: 236 },
+  { id: "demo-product-3", productName: "匿名产品 C", unitPrice: 92 },
+  { id: "demo-product-4", productName: "匿名产品 D", unitPrice: 148 },
+  { id: "demo-product-5", productName: "匿名产品 E", unitPrice: 214 },
+  { id: "demo-product-6", productName: "匿名产品 F", unitPrice: 126 },
 ]);
 
 const DEMO_HOSPITALS = Object.freeze([
-  "上海瑞金医院",
-  "上海中山医院",
-  "苏州大学附属第一医院",
-  "杭州邵逸夫医院",
-  "宁波市第一医院",
-  "无锡市人民医院",
+  "示例医院 01",
+  "示例医院 02",
+  "示例医院 03",
+  "示例医院 04",
+  "示例医院 05",
+  "示例医院 06",
+  "示例医院 07",
+  "示例医院 08",
+  "示例医院 09",
+  "示例医院 10",
+  "示例医院 11",
+  "示例医院 12",
 ]);
 
 const DEMO_DELIVERIES = Object.freeze(["国控", "上药", "华润", "九州通"]);
 
-const MONTH_DAY_SERIES = Object.freeze([5, 9, 12, 18, 21, 26]);
-
-const RANGE_BLUEPRINTS = Object.freeze([
-  {
-    monthIndex: 0,
-    items: [
-      { productIndex: 0, hospitalIndex: 0, quantity: 26, deliveryIndex: 0 },
-      { productIndex: 1, hospitalIndex: 1, quantity: 18, deliveryIndex: 1 },
-      { productIndex: 2, hospitalIndex: 2, quantity: 24, deliveryIndex: 2 },
-      { productIndex: 3, hospitalIndex: 3, quantity: 16, deliveryIndex: 3 },
-      { productIndex: 0, hospitalIndex: 4, quantity: 14, deliveryIndex: 0 },
-      { productIndex: 1, hospitalIndex: 5, quantity: 11, deliveryIndex: 2 },
-    ],
-  },
-  {
-    monthIndex: 1,
-    items: [
-      { productIndex: 0, hospitalIndex: 1, quantity: 31, deliveryIndex: 1 },
-      { productIndex: 1, hospitalIndex: 0, quantity: 21, deliveryIndex: 0 },
-      { productIndex: 2, hospitalIndex: 3, quantity: 27, deliveryIndex: 3 },
-      { productIndex: 3, hospitalIndex: 2, quantity: 19, deliveryIndex: 2 },
-      { productIndex: 0, hospitalIndex: 5, quantity: 16, deliveryIndex: 0 },
-      { productIndex: 2, hospitalIndex: 4, quantity: 12, deliveryIndex: 1 },
-    ],
-  },
-  {
-    monthIndex: 2,
-    items: [
-      { productIndex: 0, hospitalIndex: 2, quantity: 34, deliveryIndex: 0 },
-      { productIndex: 1, hospitalIndex: 3, quantity: 23, deliveryIndex: 3 },
-      { productIndex: 2, hospitalIndex: 1, quantity: 29, deliveryIndex: 1 },
-      { productIndex: 3, hospitalIndex: 4, quantity: 21, deliveryIndex: 2 },
-      { productIndex: 1, hospitalIndex: 5, quantity: 17, deliveryIndex: 0 },
-      { productIndex: 0, hospitalIndex: 0, quantity: 15, deliveryIndex: 1 },
-    ],
-  },
-]);
+const MONTH_DAY_SERIES = Object.freeze([3, 5, 8, 10, 13, 15, 18, 20, 23, 25, 27, 29]);
 
 const AMOUNT_QUARTER_TARGETS = Object.freeze([138000, 149000, 161000, 173000]);
 const QUANTITY_QUARTER_TARGETS = Object.freeze([810, 875, 940, 995]);
@@ -96,30 +68,31 @@ function getQuarterRange(date = new Date()) {
 function buildQuarterRecords({ year, months, products, quantityScale = 1, idPrefix }) {
   const records = [];
 
-  RANGE_BLUEPRINTS.forEach((monthConfig) => {
-    const month = months[monthConfig.monthIndex];
+  months.forEach((month, monthIndex) => {
     if (!Number.isInteger(month)) {
       return;
     }
 
-    monthConfig.items.forEach((item, itemIndex) => {
-      const product = products[item.productIndex];
-      if (!product) {
-        return;
-      }
+    products.forEach((product, productIndex) => {
+      for (let visitIndex = 0; visitIndex < 2; visitIndex += 1) {
+        const recordIndex = productIndex * 2 + visitIndex;
+        const hospitalIndex = (monthIndex * 4 + productIndex * 2 + visitIndex) % DEMO_HOSPITALS.length;
+        const quantitySeed = 8 + monthIndex * 3 + productIndex * 4 + visitIndex * 2;
+        const seasonalBoost = monthIndex === 2 ? 3 : monthIndex === 1 ? 1 : 0;
+        const quantity = Math.max(1, Math.round((quantitySeed + seasonalBoost) * quantityScale));
 
-      const quantity = Math.max(1, Math.round(item.quantity * quantityScale));
-      records.push({
-        id: `${idPrefix}-${monthConfig.monthIndex}-${itemIndex}`,
-        date: buildIsoDate(year, month, MONTH_DAY_SERIES[itemIndex] || 8),
-        productId: product.id,
-        productName: product.productName,
-        unitPriceSnapshot: product.unitPrice,
-        hospital: DEMO_HOSPITALS[item.hospitalIndex] || DEMO_HOSPITALS[0],
-        quantity,
-        amount: roundMoney(quantity * product.unitPrice),
-        delivery: DEMO_DELIVERIES[item.deliveryIndex] || DEMO_DELIVERIES[0],
-      });
+        records.push({
+          id: `${idPrefix}-${monthIndex}-${productIndex}-${visitIndex}`,
+          date: buildIsoDate(year, month, MONTH_DAY_SERIES[recordIndex] || 8),
+          productId: product.id,
+          productName: product.productName,
+          unitPriceSnapshot: product.unitPrice,
+          hospital: DEMO_HOSPITALS[hospitalIndex] || DEMO_HOSPITALS[0],
+          quantity,
+          amount: roundMoney(quantity * product.unitPrice),
+          delivery: DEMO_DELIVERIES[(productIndex + monthIndex + visitIndex) % DEMO_DELIVERIES.length],
+        });
+      }
     });
   });
 
@@ -254,7 +227,7 @@ export function createDemoWorkspaceSnapshot(date = new Date()) {
     activeTargetMetric: "amount",
     salesDraft: buildSalesDraft(range, products),
     productDraft: {
-      productName: "替格瑞洛 90mg*14片",
+      productName: "匿名产品 G",
       unitPrice: "198",
     },
     banner: {
