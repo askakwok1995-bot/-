@@ -11,6 +11,10 @@ const CHAT_FAILURE_COOLDOWN_LONG_SEC = 5;
 const CHAT_SYSTEM_INTRO_ATTR = "data-chat-system-intro";
 const REPORT_START_MONTH_INPUT_ID = "report-start-month";
 const REPORT_END_MONTH_INPUT_ID = "report-end-month";
+const AI_CHAT_WORKSPACE_MODES = Object.freeze({
+  LIVE: "live",
+  DEMO: "demo",
+});
 
 let initialized = false;
 
@@ -20,6 +24,43 @@ function isValidState(value) {
 
 function toText(value) {
   return String(value || "").trim();
+}
+
+export function normalizeAiChatWorkspaceMode(value) {
+  return toText(value).toLowerCase() === AI_CHAT_WORKSPACE_MODES.DEMO
+    ? AI_CHAT_WORKSPACE_MODES.DEMO
+    : AI_CHAT_WORKSPACE_MODES.LIVE;
+}
+
+export function buildAiChatHeadDescription(workspaceMode) {
+  if (normalizeAiChatWorkspaceMode(workspaceMode) === AI_CHAT_WORKSPACE_MODES.DEMO) {
+    return "当前为演示数据分析，可直接问趋势、产品、医院、目标达成或异常变化；回答只基于模拟报表和当前分析区间。";
+  }
+  return "可直接问趋势、产品、医院、目标达成或异常变化，回答只基于当前账号和当前分析区间。";
+}
+
+export function buildAiChatSystemIntroText({ workspaceMode, startYm, endYm } = {}) {
+  const normalizedMode = normalizeAiChatWorkspaceMode(workspaceMode);
+  const safeStartYm = toText(startYm);
+  const safeEndYm = toText(endYm);
+  const periodText =
+    safeStartYm && safeEndYm
+      ? `当前分析时间范围：${safeStartYm} ~ ${safeEndYm}。`
+      : "当前分析时间范围：尚未设置，请先在报表区选择起始月和结束月。";
+
+  if (normalizedMode === AI_CHAT_WORKSPACE_MODES.DEMO) {
+    return [
+      "我是销售分析助手，当前为演示数据分析，仅基于模拟报表回答，不读取真实账号数据。",
+      periodText,
+      "可继续提问趋势、产品、医院、目标达成和下一步动作建议。",
+    ].join("");
+  }
+
+  return [
+    "我是销售分析助手，仅基于当前账号已录入的销售记录、产品主数据和目标配置进行分析。",
+    periodText,
+    "可在报表区调整起止月后继续提问。",
+  ].join("");
 }
 
 function appendInlineMarkdown(container, content) {
@@ -313,6 +354,7 @@ export function initAiChatUi(options = {}) {
     backdrop: document.getElementById("ai-chat-backdrop"),
     sheet: document.getElementById("ai-chat-sheet"),
     closeBtn: document.getElementById("ai-chat-close-btn"),
+    headDesc: document.getElementById("ai-chat-head-desc"),
     messages: document.getElementById("ai-chat-messages"),
     promptPanel: document.getElementById("ai-chat-quick-prompt-panel"),
     promptToggleBtn: document.getElementById("ai-chat-prompt-toggle-btn"),
@@ -328,6 +370,7 @@ export function initAiChatUi(options = {}) {
     backdrop: dom.backdrop,
     sheet: dom.sheet,
     closeBtn: dom.closeBtn,
+    headDesc: dom.headDesc,
     messages: dom.messages,
     promptPanel: dom.promptPanel,
     promptToggleBtn: dom.promptToggleBtn,
@@ -351,6 +394,7 @@ export function initAiChatUi(options = {}) {
   let consecutiveFailureCount = 0;
   let cooldownUntilMs = 0;
   let cooldownTimerId = 0;
+  let sessionVersion = 0;
 
   const serviceUnavailableStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
@@ -578,9 +622,17 @@ export function initAiChatUi(options = {}) {
   }
 
   function clearSessionHistory() {
+    sessionVersion += 1;
     sessionHistory = [];
     sessionConversationState = null;
+    isSending = false;
+    resetFailureState();
+    dom.messages.textContent = "";
+    dom.input.value = "";
     clearStatus();
+    refreshSystemIntro();
+    setPromptPanelOpen(true);
+    updateComposerState();
   }
 
   function getCurrentReportRange() {
@@ -591,17 +643,26 @@ export function initAiChatUi(options = {}) {
     return { startYm, endYm };
   }
 
+  function getCurrentWorkspaceMode() {
+    return normalizeAiChatWorkspaceMode(
+      document.body?.classList.contains("workspace-demo-mode") ? AI_CHAT_WORKSPACE_MODES.DEMO : AI_CHAT_WORKSPACE_MODES.LIVE,
+    );
+  }
+
   function buildSystemIntroText() {
     const { startYm, endYm } = getCurrentReportRange();
-    const periodText =
-      startYm && endYm
-        ? `当前分析时间范围：${startYm} ~ ${endYm}。`
-        : "当前分析时间范围：尚未设置，请先在报表区选择起始月和结束月。";
-    return [
-      "我是销售分析助手，仅基于当前账号已录入的销售记录、产品主数据和目标配置进行分析。",
-      periodText,
-      "可在报表区调整起止月后继续提问。",
-    ].join("");
+    return buildAiChatSystemIntroText({
+      workspaceMode: getCurrentWorkspaceMode(),
+      startYm,
+      endYm,
+    });
+  }
+
+  function refreshChatHeadDescription() {
+    if (!(dom.headDesc instanceof HTMLElement)) {
+      return;
+    }
+    dom.headDesc.textContent = buildAiChatHeadDescription(getCurrentWorkspaceMode());
   }
 
   function upsertSystemIntro(text) {
@@ -618,6 +679,7 @@ export function initAiChatUi(options = {}) {
   }
 
   function refreshSystemIntro() {
+    refreshChatHeadDescription();
     upsertSystemIntro(buildSystemIntroText());
   }
 
@@ -743,6 +805,7 @@ export function initAiChatUi(options = {}) {
 
   async function submitText(rawText) {
     const text = toText(rawText);
+    const submitSessionVersion = sessionVersion;
 
     if (isInCooldown()) {
       renderCooldownStatus();
@@ -772,13 +835,23 @@ export function initAiChatUi(options = {}) {
           history: getSessionHistory(),
           conversationState: getConversationState(),
           onThinking: (message) => {
+            if (submitSessionVersion !== sessionVersion) {
+              return;
+            }
             updateThinkingLabel(liveMessage, message);
           },
           onDelta: (chunk) => {
+            if (submitSessionVersion !== sessionVersion) {
+              return;
+            }
             appendLiveMessageDelta(liveMessage, chunk);
           },
         }),
       );
+      if (submitSessionVersion !== sessionVersion) {
+        removeLiveMessage(liveMessage);
+        return false;
+      }
       const normalized = normalizeReplyPayload(result);
       let hasRendered = false;
 
@@ -801,6 +874,10 @@ export function initAiChatUi(options = {}) {
       resetFailureState();
       clearStatus();
     } catch (error) {
+      if (submitSessionVersion !== sessionVersion) {
+        removeLiveMessage(liveMessage);
+        return false;
+      }
       rollbackPendingUserHistory(text);
       const message = error instanceof Error && error.message ? error.message : "请稍后重试";
       const userErrorMessage =
@@ -819,13 +896,15 @@ export function initAiChatUi(options = {}) {
         startFailureCooldown(CHAT_FAILURE_COOLDOWN_SHORT_SEC);
       }
     } finally {
-      isSending = false;
-      dom.sendBtn.disabled = typeof sendHandler !== "function" || isInCooldown();
-      dom.input.disabled = false;
-      if (isInCooldown()) {
-        renderCooldownStatus();
+      if (submitSessionVersion === sessionVersion) {
+        isSending = false;
+        dom.sendBtn.disabled = typeof sendHandler !== "function" || isInCooldown();
+        dom.input.disabled = false;
+        if (isInCooldown()) {
+          renderCooldownStatus();
+        }
+        dom.input.focus();
       }
-      dom.input.focus();
     }
 
     return true;

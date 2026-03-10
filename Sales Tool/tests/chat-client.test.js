@@ -3,9 +3,10 @@ import test from "node:test";
 
 import { buildBusinessSnapshotPayload, createChatReplyRequester } from "../app/chat-client.js";
 
-function createRequester(fetchImpl) {
+function createRequester(fetchImpl, options = {}) {
   return createChatReplyRequester({
-    getAccessToken: async () => "token",
+    getAccessToken: options.getAccessToken || (async () => "token"),
+    getWorkspaceMode: options.getWorkspaceMode,
     getBusinessSnapshot: () => ({
       analysis_range: { start_month: "2025-01", end_month: "2025-03", period: "2025-01~2025-03" },
     }),
@@ -115,6 +116,67 @@ test("createChatReplyRequester returns minimal current payload", async () => {
     model: "tool-model",
     requestId: "req-chat-client-success",
   });
+});
+
+test("createChatReplyRequester allows demo mode request without access token", async () => {
+  let capturedHeaders = null;
+  let capturedBody = null;
+  const requester = createRequester(
+    async (_url, options = {}) => {
+      capturedHeaders = options.headers || null;
+      capturedBody = JSON.parse(String(options.body || "{}"));
+      return new Response(
+        JSON.stringify({
+          reply: "当前演示报表显示整体销售平稳增长。",
+          answer: {
+            summary: "当前演示报表显示整体销售平稳增长。",
+          },
+          model: "demo-model",
+          requestId: "req-demo-chat-client",
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+    {
+      getAccessToken: async () => "",
+      getWorkspaceMode: async () => "demo",
+    },
+  );
+
+  const payload = await requester("看看当前演示数据", {
+    history: [{ role: "user", content: "上一轮问题" }],
+  });
+
+  assert.equal(capturedHeaders?.authorization, undefined);
+  assert.equal(capturedBody?.workspace_mode, "demo");
+  assert.deepEqual(capturedBody?.history, [{ role: "user", content: "上一轮问题" }]);
+  assert.equal(payload.model, "demo-model");
+});
+
+test("createChatReplyRequester still requires token in live mode", async () => {
+  const requester = createRequester(
+    async () => {
+      throw new Error("live mode should stop before fetch");
+    },
+    {
+      getAccessToken: async () => "",
+      getWorkspaceMode: async () => "live",
+    },
+  );
+
+  await assert.rejects(
+    requester("看真实数据"),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "登录状态已失效，请重新登录后再试。");
+      return true;
+    },
+  );
 });
 
 test("buildBusinessSnapshotPayload falls back to quantity achievement when amount target is unavailable", () => {

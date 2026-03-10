@@ -320,7 +320,7 @@ npm run analyze:chat-runtime -- \
 当前已恢复最小可用聊天链路（Cloudflare Pages Functions）：
 - 前端聊天 UI 可发送消息。
 - 后端 `POST /api/chat` 调用 Gemini 返回自然文本回答。
-- 聊天请求要求登录态（`Authorization: Bearer <SUPABASE_ACCESS_TOKEN>`）。
+- `live` 模式要求登录态（`Authorization: Bearer <SUPABASE_ACCESS_TOKEN>`）；`demo` 模式允许匿名请求，但只基于当前页面传入的模拟快照回答。
 
 ### 11.1 Cloudflare 配置
 
@@ -412,29 +412,35 @@ npm run analyze:chat-runtime -- \
 
 ### 11.4 当前聊天主链
 
-当前聊天后端只保留一条主链：
+当前聊天后端包含两条模式分支：
 
-`鉴权与请求校验 -> planner-enhanced tool-first -> Gemini 基于工具结果生成文本 -> 返回 reply + answer`
+- `live`：`鉴权与请求校验 -> planner-enhanced tool-first -> Gemini 基于工具结果生成文本 -> 返回 reply + answer`
+- `demo`：`匿名限流与请求校验 -> snapshot-only Gemini -> 返回 reply + answer`
 
-这里的 `planner-enhanced tool-first` 指：
+其中 `live` 分支里的 `planner-enhanced tool-first` 指：
 
 - 模型先提交一份分析计划
 - 运行时校验这份计划是否合法
 - 合法后再按计划调用受控工具
 - 工具返回结构化事实后，再由模型综合生成自然语言回答
 
-所有分析都只基于当前 `business_snapshot.analysis_range`，也就是当前页面选中的报表区间。
+两种模式都只基于当前 `business_snapshot.analysis_range`，也就是当前页面选中的报表区间；`demo` 分支不会访问 Supabase 或任何真实账号数据。
 
 ### 11.5 请求输入
 
-`POST /api/chat` 当前只使用这四类输入：
+`POST /api/chat` 当前使用以下输入：
 
 - `message`
 - `history`
 - `business_snapshot`
 - `conversation_state`
+- `workspace_mode`（可选，`live | demo`；缺省按 `live` 处理）
 
-当前不再使用任何模式切换字段。
+模式约束：
+
+- `workspace_mode=live`：沿用当前登录态校验和 tool-first 主链。
+- `workspace_mode=demo`：允许无 `Authorization`，仅基于 `business_snapshot` 做自然语言回答，不访问真实数据。
+- `workspace_mode=demo` 额外带有匿名限流：同一匿名指纹 10 分钟内最多 6 次请求，超限返回 `429` 与 `RATE_LIMITED`。
 
 `conversation_state` 当前主要保留：
 

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAssistantHistoryText, rollbackFailedUserHistory } from "../ai-chat-ui.js";
+import {
+  buildAiChatHeadDescription,
+  buildAiChatSystemIntroText,
+  buildAssistantHistoryText,
+  rollbackFailedUserHistory,
+} from "../ai-chat-ui.js";
 
 test("buildAssistantHistoryText appends missing anchor terms from reply", () => {
   const text = buildAssistantHistoryText(
@@ -41,4 +46,22 @@ test("rollbackFailedUserHistory removes last failed user message only", () => {
     { role: "user", content: "分析医院表现并指出问题" },
     { role: "assistant", content: "医院端整体销售表现积极。术语：月度覆盖率。" },
   ]);
+});
+
+test("buildAiChatSystemIntroText returns demo intro copy", () => {
+  const text = buildAiChatSystemIntroText({
+    workspaceMode: "demo",
+    startYm: "2026-01",
+    endYm: "2026-03",
+  });
+
+  assert.match(text, /演示数据分析/u);
+  assert.match(text, /模拟报表/u);
+  assert.doesNotMatch(text, /当前账号/u);
+});
+
+test("buildAiChatHeadDescription switches between demo and live", () => {
+  assert.match(buildAiChatHeadDescription("demo"), /演示数据分析/u);
+  assert.match(buildAiChatHeadDescription("demo"), /模拟报表/u);
+  assert.match(buildAiChatHeadDescription("live"), /当前账号/u);
 });

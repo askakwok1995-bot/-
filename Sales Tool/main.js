@@ -706,6 +706,7 @@ async function initializeApp(initialUser = null) {
 
   const requestAiChatReply = createChatReplyRequester({
     getAccessToken: () => getSupabaseSessionAccessToken({ getSupabaseClient }),
+    getWorkspaceMode: () => (state.isDemoMode ? "demo" : "live"),
     getBusinessSnapshot: () =>
       buildBusinessSnapshotPayload(state, {
         formatMoney,
@@ -723,6 +724,12 @@ async function initializeApp(initialUser = null) {
     aiChatApi.setSendHandler((message, options) => requestAiChatReply(message, options));
   } else {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象。");
+  }
+
+  function resetAiChatSession() {
+    if (aiChatApi && typeof aiChatApi.clearSessionHistory === "function") {
+      aiChatApi.clearSessionHistory();
+    }
   }
 
   function resetWorkspaceEphemeralState() {
@@ -914,6 +921,7 @@ async function initializeApp(initialUser = null) {
       isDemoMode: true,
       isWorkspaceReadOnly: true,
     });
+    resetAiChatSession();
     showSalesTip("当前为演示工作台，登录后才能新增或修改数据。");
   }
 
@@ -1003,6 +1011,7 @@ async function initializeApp(initialUser = null) {
         isWorkspaceReadOnly: false,
       },
     );
+    resetAiChatSession();
 
     state.recordsInitialLoadDone = true;
     state.targetSyncError = targetLoadError;

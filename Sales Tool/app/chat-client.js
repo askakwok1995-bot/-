@@ -4,6 +4,10 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeWorkspaceMode(value) {
+  return trimString(value).toLowerCase() === "demo" ? "demo" : "live";
+}
+
 function createEmptyBusinessSnapshot() {
   return {
     analysis_range: {
@@ -365,15 +369,23 @@ function normalizeChatApiError(response, payload) {
   return "聊天请求失败，请稍后重试。";
 }
 
-export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, fetchImpl = globalThis.fetch } = {}) {
+export function createChatReplyRequester({
+  getAccessToken,
+  getBusinessSnapshot,
+  getWorkspaceMode,
+  fetchImpl = globalThis.fetch,
+} = {}) {
   return async function requestAiChatReply(message, options = {}) {
     const safeMessage = trimString(message);
     if (!safeMessage) {
       throw new Error("消息不能为空。");
     }
 
-    const accessToken = typeof getAccessToken === "function" ? await getAccessToken() : "";
-    if (!accessToken) {
+    const workspaceMode =
+      typeof getWorkspaceMode === "function" ? normalizeWorkspaceMode(await getWorkspaceMode()) : "live";
+    const accessToken =
+      workspaceMode !== "demo" && typeof getAccessToken === "function" ? await getAccessToken() : "";
+    if (workspaceMode !== "demo" && !accessToken) {
       throw new Error("登录状态已失效，请重新登录后再试。");
     }
 
@@ -383,16 +395,20 @@ export function createChatReplyRequester({ getAccessToken, getBusinessSnapshot, 
       business_snapshot: typeof getBusinessSnapshot === "function" ? getBusinessSnapshot() : createEmptyBusinessSnapshot(),
       conversation_state:
         options?.conversationState && typeof options.conversationState === "object" ? options.conversationState : null,
+      workspace_mode: workspaceMode,
     };
+    const headers = {
+      "content-type": "application/json",
+    };
+    if (workspaceMode !== "demo" && accessToken) {
+      headers.authorization = `Bearer ${accessToken}`;
+    }
 
     let response;
     try {
       response = await fetchImpl("/api/chat", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${accessToken}`,
-        },
+        headers,
         body: JSON.stringify(requestBody),
       });
     } catch (error) {

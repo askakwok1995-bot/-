@@ -4,17 +4,21 @@ import test from "node:test";
 import { handleChatRequest } from "../functions/api/chat.js";
 import { CHAT_ERROR_CODES, QUESTION_JUDGMENT_CODES, ROUTE_DECISION_CODES } from "../functions/chat/shared.js";
 
-function buildContext(body) {
+function buildContext(body, options = {}) {
+  const headers = {
+    "content-type": "application/json",
+    ...(options.headers && typeof options.headers === "object" ? options.headers : {}),
+  };
+  if (options.includeAuthorization !== false && !("authorization" in headers)) {
+    headers.authorization = "Bearer test-token";
+  }
   return {
     request: new Request("https://example.com/api/chat", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: "Bearer test-token",
-      },
+      headers,
       body: JSON.stringify(body),
     }),
-    env: {},
+    env: options.env && typeof options.env === "object" ? options.env : {},
   };
 }
 
@@ -390,4 +394,204 @@ test("handleChatRequest forwards narrow referential follow-up context into tool-
   const payload = await response.json();
   assert.equal(response.status, 200);
   assert.match(payload.reply, /具体产品规格和数量/u);
+});
+
+test("handleChatRequest supports demo mode without authorization and skips tool-first", async () => {
+  let verifyCalled = false;
+  let toolCalled = false;
+  let demoCalled = false;
+  const response = await handleChatRequest(
+    buildContext(
+      {
+        message: "根据当前分析区间，生成详细销售分析报告",
+        workspace_mode: "demo",
+        conversation_state: {
+          primary_dimension_code: "overall",
+          entity_scope: { products: [], hospitals: [] },
+          source_period: "2026-01~2026-03",
+        },
+        business_snapshot: {
+          analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+          performance_overview: {
+            sales_amount: "15.00万元",
+            amount_achievement: "92.00%",
+          },
+          key_business_signals: ["最近月金额环比上升。"],
+          recent_trends: [{ period: "2026-03", sales_amount: "5.20万元", amount_mom: "+8.00%" }],
+        },
+      },
+      {
+        includeAuthorization: false,
+        headers: {
+          "x-forwarded-for": "203.0.113.11",
+        },
+      },
+    ),
+    "req-demo-success",
+    {
+      verifySupabaseAccessToken: async () => {
+        verifyCalled = true;
+        throw new Error("demo mode should not verify auth");
+      },
+      runToolFirstChat: async () => {
+        toolCalled = true;
+        throw new Error("demo mode should not call tool-first");
+      },
+      requestDemoSnapshotChat: async ({ businessSnapshot, conversationState }) => {
+        demoCalled = true;
+        assert.equal(businessSnapshot?.analysis_range?.period, "2026-01~2026-03");
+        assert.equal(conversationState?.source_period, "2026-01~2026-03");
+        return {
+          ok: true,
+          replyText: "基于当前演示报表，整体销售维持增长，最近月表现继续向上。",
+          model: "demo-model",
+          evidenceBundle: {
+            source_period: "2026-01~2026-03",
+            question_type: "report",
+            evidence_types: ["aggregate", "timeseries"],
+            missing_evidence_types: [],
+            analysis_confidence: "high",
+            evidence: [{ label: "销售额", value: "15.00万元", insight: "2026-01~2026-03" }],
+            actions: [],
+          },
+          conversationState: {
+            primary_dimension_code: "overall",
+            entity_scope: { products: [], hospitals: [] },
+            source_period: "2026-01~2026-03",
+          },
+        };
+      },
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "demo-model");
+  assert.equal(payload.answer.conversation_state?.source_period, "2026-01~2026-03");
+  assert.equal(verifyCalled, false);
+  assert.equal(toolCalled, false);
+  assert.equal(demoCalled, true);
+});
+
+test("handleChatRequest supports demo term explain without authorization", async () => {
+  const response = await handleChatRequest(
+    buildContext(
+      {
+        message: "月度覆盖率是什么意思？",
+        workspace_mode: "demo",
+        history: [
+          {
+            role: "assistant",
+            content: "在2026-01~2026-03的医院分析中，部分医院月度覆盖率不足。术语：月度覆盖率。",
+          },
+        ],
+        conversation_state: {
+          primary_dimension_code: "hospital",
+          entity_scope: { products: [], hospitals: [] },
+          source_period: "2026-01~2026-03",
+        },
+        business_snapshot: {
+          analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+        },
+      },
+      {
+        includeAuthorization: false,
+        headers: {
+          "x-forwarded-for": "203.0.113.12",
+        },
+      },
+    ),
+    "req-demo-term",
+    {
+      verifySupabaseAccessToken: async () => {
+        throw new Error("demo term explain should not verify auth");
+      },
+      runToolFirstChat: async () => {
+        throw new Error("demo term explain should not call tool-first");
+      },
+      requestDemoSnapshotChat: async () => {
+        throw new Error("demo term explain should not call gemini branch");
+      },
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.model, "term_explainer");
+  assert.match(payload.reply, /月度覆盖率/u);
+  assert.match(payload.reply, /2026-01~2026-03/u);
+});
+
+test("handleChatRequest rate limits anonymous demo requests on the seventh call", async () => {
+  const headers = {
+    "x-forwarded-for": "203.0.113.19",
+  };
+
+  for (let index = 0; index < 6; index += 1) {
+    const response = await handleChatRequest(
+      buildContext(
+        {
+          message: `分析第 ${index + 1} 次`,
+          workspace_mode: "demo",
+          business_snapshot: {
+            analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+          },
+        },
+        {
+          includeAuthorization: false,
+          headers,
+        },
+      ),
+      `req-demo-limit-${index}`,
+      {
+        requestDemoSnapshotChat: async () => ({
+          ok: true,
+          replyText: "演示回答正常返回。",
+          model: "demo-model",
+          evidenceBundle: {
+            source_period: "2026-01~2026-03",
+            question_type: "overview",
+            evidence_types: ["aggregate"],
+            missing_evidence_types: [],
+            analysis_confidence: "medium",
+            evidence: [],
+            actions: [],
+          },
+          conversationState: {
+            primary_dimension_code: "",
+            entity_scope: { products: [], hospitals: [] },
+            source_period: "2026-01~2026-03",
+          },
+        }),
+      },
+    );
+    assert.equal(response.status, 200);
+  }
+
+  const limitedResponse = await handleChatRequest(
+    buildContext(
+      {
+        message: "第七次请求",
+        workspace_mode: "demo",
+        business_snapshot: {
+          analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+        },
+      },
+      {
+        includeAuthorization: false,
+        headers,
+      },
+    ),
+    "req-demo-limit-7",
+    {
+      requestDemoSnapshotChat: async () => {
+        throw new Error("limited request should not reach gemini");
+      },
+    },
+  );
+
+  const payload = await limitedResponse.json();
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(payload.error?.code, CHAT_ERROR_CODES.RATE_LIMITED);
+  assert.match(payload.error?.message || "", /演示 AI 请求过于频繁/u);
 });

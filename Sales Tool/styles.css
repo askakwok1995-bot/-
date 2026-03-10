@@ -3751,6 +3751,7 @@ body.auth-gated .ai-chat-fab {
   transform: translateY(10px);
 }
 
+body.auth-gated.workspace-demo-mode .ai-chat-fab,
 body.auth-signed-in .ai-chat-fab {
   opacity: 1;
   pointer-events: auto;
