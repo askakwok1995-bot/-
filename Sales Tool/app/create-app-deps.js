@@ -2,10 +2,16 @@ export function createAppDeps({ state, dom, repos, ui, shared, feedback }) {
   const deps = {
     ...shared,
     saveProducts: async (targetState = state) => {
+      if (state.isWorkspaceReadOnly) {
+        return;
+      }
       await repos.persistProductsSnapshotToCloud(targetState.products);
     },
     saveRecords: () => {},
     saveTargets: (targetState = state) => {
+      if (state.isWorkspaceReadOnly) {
+        return;
+      }
       void repos
         .persistTargetsToCloud(targetState)
         .then(() => {

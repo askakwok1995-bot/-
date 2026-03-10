@@ -60,6 +60,8 @@ import { getSupabaseAuthContext, getSupabaseSessionAccessToken } from "./infra/s
 import { createProductsRepository } from "./infra/products-repository.js";
 import { createRecordsRepository } from "./infra/records-repository.js";
 import { createTargetsRepository } from "./infra/targets-repository.js";
+import { createDemoWorkspaceSnapshot } from "./demo-workspace.js";
+import { applyWorkspaceReadOnlyState, bindWorkspaceReadOnlyGuards } from "./workspace-ui.js";
 
 window.__SALES_TOOL_MODULE_BOOTED__ = false;
 window.__SALES_TOOL_MODULE_BOOT_ERROR__ = false;
@@ -131,18 +133,42 @@ function bindHeroCardNavigation() {
   document.body.dataset.heroCardNavigationBound = "true";
 }
 
-async function initializeApp() {
+async function initializeApp(initialUser = null) {
+  const defaultRecordFilters = () => ({
+    startDate: "",
+    endDate: "",
+    productKeyword: "",
+    hospitalKeyword: "",
+  });
+
   const defaultReportRange = getDefaultReportRange();
-  const loadedReportRange = loadReportRange(defaultReportRange);
-  const initialReportRange =
-    loadedReportRange && typeof loadedReportRange === "object"
-      ? loadedReportRange
-      : defaultReportRange;
   const initialReportChartPaletteId = loadReportChartPalette(DEFAULT_REPORT_CHART_PALETTE_ID);
   const initialReportChartDataLabelMode = loadReportChartDataLabelMode(DEFAULT_REPORT_CHART_DATA_LABEL_MODE);
   const initialReportAmountUnitId = loadReportAmountUnit(DEFAULT_REPORT_AMOUNT_UNIT_ID);
 
+  function getLiveWorkspacePreferences() {
+    const loadedReportRange = loadReportRange(defaultReportRange);
+    const safeReportRange =
+      loadedReportRange && typeof loadedReportRange === "object"
+        ? loadedReportRange
+        : defaultReportRange;
+
+    return {
+      reportRange: safeReportRange,
+      reportChartPaletteId: loadReportChartPalette(DEFAULT_REPORT_CHART_PALETTE_ID),
+      reportChartDataLabelMode: loadReportChartDataLabelMode(DEFAULT_REPORT_CHART_DATA_LABEL_MODE),
+      reportAmountUnitId: loadReportAmountUnit(DEFAULT_REPORT_AMOUNT_UNIT_ID),
+    };
+  }
+
+  const initialLivePreferences = getLiveWorkspacePreferences();
+
   const dom = {
+    workspaceGrid: document.querySelector(".workspace-grid"),
+    workspaceModeBannerEl: document.getElementById("workspace-mode-banner"),
+    workspaceModeBannerTitleEl: document.getElementById("workspace-mode-banner-title"),
+    workspaceModeBannerDescEl: document.getElementById("workspace-mode-banner-desc"),
+
     productForm: document.getElementById("product-form"),
     productNameInput: document.getElementById("product-name"),
     unitPriceInput: document.getElementById("unit-price"),
@@ -254,6 +280,19 @@ async function initializeApp() {
     heroStatusLineEl: document.getElementById("hero-status-line"),
   };
 
+  dom.workspaceDetails = [
+    document.getElementById("report-analysis-card"),
+    document.getElementById("report-visual-board"),
+    document.getElementById("sales-entry-card"),
+    document.getElementById("product-config-card"),
+    document.getElementById("target-entry-card"),
+    document.getElementById("records-list-card"),
+  ].filter((item) => item instanceof HTMLDetailsElement);
+  dom.workspaceControls =
+    dom.workspaceGrid instanceof HTMLElement
+      ? Array.from(dom.workspaceGrid.querySelectorAll("input, select, button, textarea"))
+      : [];
+
   const state = {
     products: [],
     records: [],
@@ -269,12 +308,8 @@ async function initializeApp() {
     currentPage: 1,
     recordListTotal: 0,
     recordsInitialLoadDone: false,
-    recordFilters: {
-      startDate: "",
-      endDate: "",
-      productKeyword: "",
-      hospitalKeyword: "",
-    },
+    deferInitialCloudLoad: true,
+    recordFilters: defaultRecordFilters(),
     isMultiSelectMode: false,
     selectedRecordIds: new Set(),
     sortField: "",
@@ -287,8 +322,8 @@ async function initializeApp() {
     targetProductAllocationFormatError: "",
     targetSyncError: "",
 
-    reportStartYm: initialReportRange.startYm,
-    reportEndYm: initialReportRange.endYm,
+    reportStartYm: initialLivePreferences.reportRange.startYm,
+    reportEndYm: initialLivePreferences.reportRange.endYm,
     reportRangeError: "",
     reportChartPaletteId: initialReportChartPaletteId,
     reportChartDataLabelMode: initialReportChartDataLabelMode,
@@ -299,9 +334,14 @@ async function initializeApp() {
       "product-performance": "amount",
     },
     activeHospitalChartKey: "",
+    isDemoMode: false,
+    isWorkspaceReadOnly: false,
+    workspaceBanner: null,
   };
+
   let listStatusTimer = null;
   let currentReportSummary = null;
+  let workspaceLoadToken = 0;
 
   function populateSelectOptions(selectEl, options, placeholder) {
     if (!(selectEl instanceof HTMLSelectElement)) {
@@ -413,7 +453,9 @@ async function initializeApp() {
       if (!state.reportStartYm || !state.reportEndYm || reason === "invalid-range") {
         dom.heroAchievementCaptionEl.textContent = "设置有效的报表区间后，这里会显示当前区间达成率";
       } else if (reason === "no-records") {
-        dom.heroAchievementCaptionEl.textContent = "当前区间暂无销售记录，达成率将在录入后自动计算";
+        dom.heroAchievementCaptionEl.textContent = state.isDemoMode
+          ? "演示区间已预置模拟记录，登录后会切换成你的真实达成率"
+          : "当前区间暂无销售记录，达成率将在录入后自动计算";
       } else if (!Number.isFinite(achievementRatio)) {
         dom.heroAchievementCaptionEl.textContent = "当前区间缺少有效金额/数量指标，暂无法计算达成率";
       } else {
@@ -442,7 +484,9 @@ async function initializeApp() {
       }
 
       if (reason === "no-records") {
-        dom.heroStatusLineEl.textContent = "当前区间暂无销售记录，可先到录入区补录后再看达成进度。";
+        dom.heroStatusLineEl.textContent = state.isDemoMode
+          ? "当前为演示模式，登录后可在录入区写入并查看你自己的经营数据。"
+          : "当前区间暂无销售记录，可先到录入区补录后再看达成进度。";
         return;
       }
 
@@ -672,12 +716,312 @@ async function initializeApp() {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象。");
   }
 
+  function resetWorkspaceEphemeralState() {
+    if (state.targetSaveTimer) {
+      clearTimeout(state.targetSaveTimer);
+      state.targetSaveTimer = null;
+    }
+
+    state.editingProductId = "";
+    state.editingRowId = "";
+    state.importResult = null;
+    state.currentPage = 1;
+    state.pageSize = DEFAULT_PAGE_SIZE;
+    state.recordListTotal = 0;
+    state.recordsInitialLoadDone = false;
+    state.recordFilters = defaultRecordFilters();
+    state.isMultiSelectMode = false;
+    state.selectedRecordIds.clear();
+    state.sortField = "";
+    state.sortDirection = "";
+    state.targetInputFormatError = "";
+    state.targetProductAllocationFormatError = "";
+    state.targetSyncError = "";
+    state.reportRangeError = "";
+    state.activeHospitalChartKey = "";
+    currentReportSummary = null;
+
+    clearProductError();
+    clearSalesError();
+    clearSalesTip();
+    clearListError();
+    clearListStatus();
+    clearImportResult(state, dom, deps);
+
+    if (dom.recordFilterStartDateInput instanceof HTMLInputElement) {
+      dom.recordFilterStartDateInput.value = "";
+    }
+    if (dom.recordFilterEndDateInput instanceof HTMLInputElement) {
+      dom.recordFilterEndDateInput.value = "";
+    }
+    if (dom.recordFilterProductKeywordInput instanceof HTMLInputElement) {
+      dom.recordFilterProductKeywordInput.value = "";
+    }
+    if (dom.recordFilterHospitalKeywordInput instanceof HTMLInputElement) {
+      dom.recordFilterHospitalKeywordInput.value = "";
+    }
+    if (dom.pageSizeSelect instanceof HTMLSelectElement) {
+      dom.pageSizeSelect.value = String(state.pageSize);
+    }
+  }
+
+  function applyLiveWorkspacePreferences() {
+    const preferences = getLiveWorkspacePreferences();
+    state.reportStartYm = preferences.reportRange.startYm;
+    state.reportEndYm = preferences.reportRange.endYm;
+    state.reportChartPaletteId = preferences.reportChartPaletteId;
+    state.reportChartDataLabelMode = preferences.reportChartDataLabelMode;
+    state.reportAmountUnitId = preferences.reportAmountUnitId;
+  }
+
+  function applySalesDraftToDom(draft) {
+    const safeDraft = draft && typeof draft === "object" ? draft : {};
+    if (dom.dateInput instanceof HTMLInputElement) {
+      dom.dateInput.value = String(safeDraft.date || "");
+    }
+    if (dom.productSelect instanceof HTMLSelectElement) {
+      dom.productSelect.value = String(safeDraft.productId || "");
+    }
+    if (dom.hospitalInput instanceof HTMLInputElement) {
+      dom.hospitalInput.value = String(safeDraft.hospital || "");
+    }
+    if (dom.quantityInput instanceof HTMLInputElement) {
+      dom.quantityInput.value = String(safeDraft.quantity || "");
+    }
+    if (dom.deliveryInput instanceof HTMLInputElement) {
+      dom.deliveryInput.value = String(safeDraft.delivery || "");
+    }
+    deps.updateComputedAmount();
+  }
+
+  function applyProductDraftToDom(draft) {
+    const safeDraft = draft && typeof draft === "object" ? draft : {};
+    if (dom.productNameInput instanceof HTMLInputElement) {
+      dom.productNameInput.value = String(safeDraft.productName || "");
+    }
+    if (dom.unitPriceInput instanceof HTMLInputElement) {
+      dom.unitPriceInput.value = String(safeDraft.unitPrice || "");
+    }
+  }
+
+  function renderWorkspace({ salesDraft = null, productDraft = null } = {}) {
+    if (dom.pageSizeSelect instanceof HTMLSelectElement) {
+      dom.pageSizeSelect.value = String(state.pageSize);
+    }
+
+    hydrateReportRangeInputs(dom, state);
+    deps.renderProductMaster();
+    deps.renderProductSelectOptions();
+    deps.updateSalesFormAvailability();
+    applySalesDraftToDom(salesDraft);
+    applyProductDraftToDom(productDraft);
+    clearImportResult(state, dom, deps);
+    ensureYearTargets(state, state.activeTargetYear, deps);
+    deps.renderTargets();
+    deps.renderReports();
+    deps.renderRecords();
+    updateHeroOverview();
+  }
+
+  async function fetchLiveRecordPage() {
+    let result = await recordsRepository.fetchRecordsPageFromCloud({
+      page: state.currentPage,
+      pageSize: state.pageSize,
+      sortField: state.sortField,
+      sortDirection: state.sortDirection,
+      filters: state.recordFilters,
+    });
+
+    let items = Array.isArray(result?.items) ? result.items : [];
+    let total = Number(result?.total);
+    total = Number.isInteger(total) && total >= 0 ? total : items.length;
+
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (total > 0 && state.currentPage > totalPages) {
+      state.currentPage = totalPages;
+      result = await recordsRepository.fetchRecordsPageFromCloud({
+        page: state.currentPage,
+        pageSize: state.pageSize,
+        sortField: state.sortField,
+        sortDirection: state.sortDirection,
+        filters: state.recordFilters,
+      });
+      items = Array.isArray(result?.items) ? result.items : [];
+      total = Number(result?.total);
+      total = Number.isInteger(total) && total >= 0 ? total : items.length;
+    }
+
+    return { items, total };
+  }
+
+  function applyWorkspaceSnapshot(snapshot, { isDemoMode, isWorkspaceReadOnly }) {
+    resetWorkspaceEphemeralState();
+
+    state.products = Array.isArray(snapshot?.products) ? snapshot.products.map((item) => ({ ...item })) : [];
+    state.targets = snapshot?.targets && typeof snapshot.targets === "object" ? snapshot.targets : createDefaultTargetsPayload();
+    state.records = Array.isArray(snapshot?.records) ? snapshot.records.map((item) => ({ ...item })) : [];
+    state.reportRecords = Array.isArray(snapshot?.reportRecords)
+      ? snapshot.reportRecords.map((item) => ({ ...item }))
+      : state.records.map((item) => ({ ...item }));
+    state.recordListItems = Array.isArray(snapshot?.recordListItems)
+      ? snapshot.recordListItems.map((item) => ({ ...item }))
+      : state.records.map((item) => ({ ...item }));
+    state.recordListTotal = Number.isInteger(Number(snapshot?.recordListTotal))
+      ? Number(snapshot.recordListTotal)
+      : state.recordListItems.length;
+    state.recordsInitialLoadDone = !isDemoMode;
+    state.activeTargetYear = Number.isInteger(Number(snapshot?.activeTargetYear))
+      ? Number(snapshot.activeTargetYear)
+      : getCurrentTargetYear();
+    state.activeTargetMetric = String(snapshot?.activeTargetMetric || "amount").trim() === "quantity" ? "quantity" : "amount";
+    state.workspaceBanner = snapshot?.banner && typeof snapshot.banner === "object" ? snapshot.banner : null;
+    state.isDemoMode = isDemoMode;
+    state.isWorkspaceReadOnly = isWorkspaceReadOnly;
+
+    if (snapshot?.reportRange && typeof snapshot.reportRange === "object") {
+      state.reportStartYm = String(snapshot.reportRange.startYm || "").trim();
+      state.reportEndYm = String(snapshot.reportRange.endYm || "").trim();
+    }
+
+    if (!isWorkspaceReadOnly) {
+      applyWorkspaceReadOnlyState(dom, state);
+    }
+
+    renderWorkspace({
+      salesDraft: snapshot?.salesDraft || (isDemoMode ? null : loadSalesDraft()),
+      productDraft: snapshot?.productDraft || null,
+    });
+
+    if (isWorkspaceReadOnly) {
+      applyWorkspaceReadOnlyState(dom, state);
+    }
+  }
+
+  async function loadDemoWorkspace() {
+    workspaceLoadToken += 1;
+    const demoSnapshot = createDemoWorkspaceSnapshot(new Date());
+    state.deferInitialCloudLoad = true;
+    applyWorkspaceSnapshot(demoSnapshot, {
+      isDemoMode: true,
+      isWorkspaceReadOnly: true,
+    });
+    showSalesTip("当前为演示工作台，登录后才能新增或修改数据。");
+  }
+
+  async function loadLiveWorkspace({ showStatus = true } = {}) {
+    const currentToken = workspaceLoadToken + 1;
+    workspaceLoadToken = currentToken;
+    state.deferInitialCloudLoad = true;
+
+    resetWorkspaceEphemeralState();
+    applyLiveWorkspacePreferences();
+    state.isDemoMode = false;
+    state.isWorkspaceReadOnly = false;
+    state.workspaceBanner = null;
+    applyWorkspaceReadOnlyState(dom, state);
+
+    if (showStatus) {
+      showListStatus("正在同步云端数据...", "syncing");
+    }
+
+    let nextProducts = [];
+    let nextTargets = createDefaultTargetsPayload();
+    let nextRecordPage = { items: [], total: 0 };
+    let nextReportRecords = [];
+    let productLoadError = "";
+    let targetLoadError = "";
+    let hasListFailure = false;
+    let hasReportFailure = false;
+
+    try {
+      nextProducts = await productsRepository.fetchProductsFromCloud();
+      clearProductError();
+    } catch (error) {
+      productLoadError = `产品加载失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+      console.error("[Sales Tool] 云端产品读取失败。", error);
+    }
+
+    try {
+      nextTargets = await targetsRepository.fetchTargetsFromCloud();
+      state.targetSyncError = "";
+    } catch (error) {
+      nextTargets = createDefaultTargetsPayload();
+      targetLoadError = `指标加载失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+      console.error("[Sales Tool] 指标加载失败。", error);
+    }
+
+    state.products = nextProducts;
+
+    try {
+      nextRecordPage = await fetchLiveRecordPage();
+      clearListError();
+    } catch (error) {
+      hasListFailure = true;
+      showListError("列表加载失败，请稍后重试。");
+      console.error("[Sales Tool] 列表加载失败。", error);
+    }
+
+    try {
+      const cloudRecords = await recordsRepository.fetchAllRecordsFromCloud();
+      nextReportRecords = Array.isArray(cloudRecords) ? cloudRecords : [];
+    } catch (error) {
+      hasReportFailure = true;
+      nextReportRecords = [];
+      console.error("[Sales Tool] 报表记录同步失败。", error);
+    }
+
+    if (currentToken !== workspaceLoadToken) {
+      return;
+    }
+
+    applyWorkspaceSnapshot(
+      {
+        products: nextProducts,
+        targets: nextTargets,
+        records: nextReportRecords,
+        reportRecords: nextReportRecords,
+        recordListItems: nextRecordPage.items,
+        recordListTotal: nextRecordPage.total,
+        activeTargetYear: state.activeTargetYear,
+        activeTargetMetric: state.activeTargetMetric,
+        reportRange: {
+          startYm: state.reportStartYm,
+          endYm: state.reportEndYm,
+        },
+      },
+      {
+        isDemoMode: false,
+        isWorkspaceReadOnly: false,
+      },
+    );
+
+    state.recordsInitialLoadDone = true;
+    state.targetSyncError = targetLoadError;
+    if (targetLoadError) {
+      deps.renderTargets();
+    }
+    if (productLoadError) {
+      showProductError(productLoadError);
+    }
+
+    if (showStatus) {
+      if (!hasListFailure && !hasReportFailure) {
+        showListStatus(`同步完成，当前共 ${state.recordListTotal} 条记录。`, "success");
+      } else if (hasListFailure) {
+        showListError("列表加载失败，请稍后重试。");
+      } else {
+        showListStatus("列表已同步，报表稍后可重试刷新。", "muted");
+      }
+    }
+  }
+
   if (dom.pageSizeSelect instanceof HTMLSelectElement) {
     dom.pageSizeSelect.value = String(state.pageSize);
   }
   hydrateReportRangeInputs(dom, state);
   updateHeroOverview();
   bindHeroCardNavigation();
+  bindWorkspaceReadOnlyGuards(dom.workspaceDetails, () => state.isWorkspaceReadOnly);
 
   const syncHeroOverviewFromReportControls = () => {
     updateHeroOverview();
@@ -731,36 +1075,25 @@ async function initializeApp() {
     dom.reportEndMonthSelect.addEventListener("change", syncReportRangeFromEndSelects);
   }
 
-  try {
-    state.products = await productsRepository.fetchProductsFromCloud();
-    clearProductError();
-  } catch (error) {
-    showProductError(`产品加载失败：${error instanceof Error ? error.message : "请稍后重试"}`);
-    console.error("[Sales Tool] 云端产品读取失败。", error);
-  }
-
-  try {
-    state.targets = await targetsRepository.fetchTargetsFromCloud();
-    state.targetSyncError = "";
-  } catch (error) {
-    state.targets = createDefaultTargetsPayload();
-    state.targetSyncError = `指标加载失败：${error instanceof Error ? error.message : "请稍后重试"}`;
-    console.error("[Sales Tool] 指标加载失败。", error);
-  }
-
-  deps.renderProductMaster();
-  deps.renderProductSelectOptions();
-  deps.updateSalesFormAvailability();
-  deps.updateComputedAmount();
-  clearImportResult(state, dom, deps);
-  ensureYearTargets(state, state.activeTargetYear, deps);
-  renderTargetInputSection(state, dom, deps);
-  deps.renderReports();
   bindTargetInputEvents(state, dom, deps);
   bindReportEvents(state, dom, deps);
   bindProductEvents(state, dom, deps);
   bindRecordEvents(state, dom, deps);
-  deps.renderRecords();
+
+  if (initialUser?.id) {
+    await loadLiveWorkspace({ showStatus: true });
+  } else {
+    await loadDemoWorkspace();
+  }
+
+  return {
+    async handleSignedIn() {
+      await loadLiveWorkspace({ showStatus: true });
+    },
+    async handleSignedOut() {
+      await loadDemoWorkspace();
+    },
+  };
 }
 
 function showInitError(error) {
@@ -785,13 +1118,31 @@ async function bootstrap() {
     });
     bindHeroCardNavigation();
 
-    await bootstrapAuthGate({
+    let appRuntime = null;
+    const initialUser = await bootstrapAuthGate({
       appRoot: document.querySelector(".workspace-grid"),
+      callbacks: {
+        onSignedIn(user) {
+          if (!appRuntime) {
+            return;
+          }
+          void runReadOnlyRecordsCountCheck({ getAuthContext });
+          void appRuntime.handleSignedIn(user);
+        },
+        onSignedOut() {
+          if (!appRuntime) {
+            return;
+          }
+          void appRuntime.handleSignedOut();
+        },
+      },
     });
 
-    await runReadOnlyRecordsCountCheck({ getAuthContext });
     attachSmokeWriteTool({ getAuthContext });
-    await initializeApp();
+    appRuntime = await initializeApp(initialUser);
+    if (initialUser?.id) {
+      await runReadOnlyRecordsCountCheck({ getAuthContext });
+    }
     window.__SALES_TOOL_MODULE_BOOTED__ = true;
   } catch (error) {
     showInitError(error);

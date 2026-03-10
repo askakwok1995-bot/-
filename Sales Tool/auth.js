@@ -5,6 +5,7 @@ let currentUser = null;
 let lastSignedInUserId = "";
 let authDom = null;
 let authReadyResolved = false;
+let authCallbacks = {};
 
 function setAuthBootstrapStateVisible(visible) {
   if (authDom?.bootstrapStateEl instanceof HTMLElement) {
@@ -108,10 +109,6 @@ function setAuthActionsEnabled(enabled) {
 
 function setGateLocked(locked, options = {}) {
   const showModal = locked && options.showModal !== false;
-
-  if (authDom?.appRoot instanceof HTMLElement) {
-    authDom.appRoot.classList.toggle("runtime-blocked", locked);
-  }
 
   document.body.classList.toggle("auth-gated", locked);
 
@@ -313,6 +310,9 @@ function resolveAuthReady(user, resolver) {
   }
 
   authReadyResolved = true;
+  if (typeof authCallbacks.onAuthResolved === "function") {
+    authCallbacks.onAuthResolved(user || null);
+  }
   resolver(user);
 }
 
@@ -387,6 +387,7 @@ export async function signOutAuth() {
 
 export async function bootstrapAuthGate(domRefs = {}) {
   authReadyResolved = false;
+  authCallbacks = domRefs?.callbacks && typeof domRefs.callbacks === "object" ? domRefs.callbacks : {};
   authDom = cacheDomRefs(domRefs);
   validateRequiredDom();
   bindAuthEvents();
@@ -399,7 +400,7 @@ export async function bootstrapAuthGate(domRefs = {}) {
   const client = ensureSupabaseClient();
   if (!client) {
     setGateLocked(true, { showModal: true });
-    return new Promise(() => {});
+    return Promise.resolve(null);
   }
 
   return new Promise((resolve) => {
@@ -411,6 +412,10 @@ export async function bootstrapAuthGate(domRefs = {}) {
         setAuthFormStateForLoggedOut();
         setGateLocked(true);
         showAuthStatus("已退出登录，请重新登录。");
+        if (typeof authCallbacks.onSignedOut === "function") {
+          authCallbacks.onSignedOut();
+        }
+        resolveAuthReady(null, resolve);
         return;
       }
 
@@ -433,6 +438,9 @@ export async function bootstrapAuthGate(domRefs = {}) {
           setAuthBootstrapStateVisible(false);
           clearAuthError();
           setGateLocked(false);
+          if (typeof authCallbacks.onSignedIn === "function") {
+            authCallbacks.onSignedIn(currentUser);
+          }
           resolveAuthReady(currentUser, resolve);
         }
       }
@@ -460,10 +468,12 @@ export async function bootstrapAuthGate(domRefs = {}) {
           resolveAuthReady(currentUser, resolve);
         } else {
           setGateLocked(true, { showModal: true });
+          resolveAuthReady(null, resolve);
         }
       } catch (error) {
         setGateLocked(true, { showModal: true });
         showAuthError(`读取会话失败：${error instanceof Error ? error.message : "请重新登录"}`);
+        resolveAuthReady(null, resolve);
       }
     };
 

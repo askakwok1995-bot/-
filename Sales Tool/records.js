@@ -410,7 +410,9 @@ export function bindRecordEvents(nextState, nextDom, nextDeps) {
     applySalesDraftToDom(deps.loadSalesDraft());
   }
   bindSalesDraftEvents();
-  void refreshRecordListAndReports({ resetPage: true, showStatus: true, markInitialLoadDone: true });
+  if (!state.deferInitialCloudLoad) {
+    void refreshRecordListAndReports({ resetPage: true, showStatus: true, markInitialLoadDone: true });
+  }
 
   if (dom.recordFilterApplyBtn instanceof HTMLButtonElement) {
     dom.recordFilterApplyBtn.addEventListener("click", () => {
