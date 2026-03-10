@@ -1060,9 +1060,9 @@ tbody tr:hover td {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: nowrap;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid rgb(132 169 188 / 16%);
   border-radius: 24px;
   background:
@@ -1081,13 +1081,13 @@ tbody tr:hover td {
   display: inline-flex;
   flex-wrap: nowrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .report-chart-card-product-pie .report-chart-export-group .secondary-btn {
-  min-width: 78px;
+  min-width: 0;
   min-height: 34px;
-  padding: 0 14px;
+  padding: 0 12px;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
