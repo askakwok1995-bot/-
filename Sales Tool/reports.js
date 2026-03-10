@@ -561,7 +561,7 @@ function buildRankAxisLabel(index, name) {
   return `{rank${Math.min(index + 1, 4)}|${safeRank}}  {name|${String(name || "").trim()}}`;
 }
 
-function buildRankAxisRich(palette) {
+function buildRankAxisRich(palette, nameWidth = 110) {
   return {
     rank1: {
       color: palette.centerValueColor,
@@ -594,7 +594,7 @@ function buildRankAxisRich(palette) {
     name: {
       color: palette.legendTextColor,
       fontWeight: 600,
-      width: 110,
+      width: nameWidth,
       overflow: "truncate",
     },
   };
@@ -1406,8 +1406,7 @@ function resolveCompactLevel(pointCount) {
 function computeCompactWidthPercent(chartSize, compactLevel) {
   if (compactLevel === "full") return 100;
   if (chartSize === "pie") return compactLevel === "tight" ? 92 : 98;
-  if (chartSize === "wide") return compactLevel === "tight" ? 62 : 82;
-  return compactLevel === "tight" ? 74 : 88;
+  return 100;
 }
 
 function getChartLayoutTargets(dom) {
@@ -1811,10 +1810,11 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
         },
       },
       grid: {
-        left: 56,
-        right: 60,
+        left: 24,
+        right: 24,
         top: 52,
-        bottom: 42,
+        bottom: 28,
+        containLabel: true,
       },
       xAxis: {
         type: "category",
@@ -2037,10 +2037,11 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
         },
       },
       grid: {
-        left: 56,
-        right: 60,
+        left: 24,
+        right: 24,
         top: 52,
-        bottom: 42,
+        bottom: 28,
+        containLabel: true,
       },
       xAxis: {
         type: "category",
@@ -2190,10 +2191,11 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
         },
       },
       grid: {
-        left: 156,
+        left: 24,
         right: 190,
         top: 40,
         bottom: 24,
+        containLabel: true,
       },
       xAxis: {
         type: "value",
@@ -2220,7 +2222,7 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
         axisLabel: {
           color: palette.axisTextColor,
           margin: 18,
-          rich: buildRankAxisRich(palette),
+          rich: buildRankAxisRich(palette, 132),
         },
       },
       series: [
@@ -2383,10 +2385,11 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
         },
       },
       grid: {
-        left: 56,
+        left: 24,
         right: 24,
         top: 52,
-        bottom: 36,
+        bottom: 24,
+        containLabel: true,
       },
       xAxis: {
         type: "category",
@@ -2617,10 +2620,11 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
         },
       },
       grid: {
-        left: 140,
+        left: 24,
         right: 24,
         top: 24,
         bottom: 24,
+        containLabel: true,
       },
       xAxis: {
         type: "value",
@@ -2644,7 +2648,7 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
         },
         axisLabel: {
           color: palette.axisTextColor,
-          rich: buildRankAxisRich(palette),
+          rich: buildRankAxisRich(palette, 188),
           margin: 16,
         },
         axisLine: {
@@ -2945,10 +2949,11 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
         },
       },
       grid: {
-        left: 56,
-        right: 60,
+        left: 24,
+        right: 24,
         top: 58,
-        bottom: 36,
+        bottom: 24,
+        containLabel: true,
       },
       xAxis: {
         type: "category",

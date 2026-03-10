@@ -331,3 +331,37 @@ test("renderReportSection 在缺少指标且切换到数量口径时仍能完成
     env.restore();
   }
 });
+
+test("renderReportSection 会为坐标轴图保留完整标签空间且仅压缩环形图", () => {
+  const env = installFakeBrowserEnv();
+  try {
+    const dom = createReportDom();
+    const deps = createDeps();
+    const state = {
+      reportStartYm: "2025-01",
+      reportEndYm: "2025-03",
+      reportChartPaletteId: "harbor",
+      reportChartDataLabelMode: "compact",
+      reportAmountUnitId: "yuan",
+      activeHospitalChartKey: "",
+      records: createRecords(),
+    };
+
+    const summary = renderReportSection(state, dom, deps);
+    assert.equal(summary.reason, "");
+
+    assert.equal(dom.chartMonthlyTrendEl.style.width, undefined);
+    assert.equal(dom.chartQuarterlyTrendEl.style.width, undefined);
+    assert.equal(dom.chartProductPerformanceEl.style.width, undefined);
+    assert.equal(dom.chartHospitalTopEl.style.width, undefined);
+    assert.equal(dom.chartProductTopEl.style.width, "92%");
+    assert.equal(dom.chartHospitalShareEl.style.width, "92%");
+
+    assert.equal(env.charts.get("chart-monthly-trend")?.option?.grid?.containLabel, true);
+    assert.equal(env.charts.get("chart-product-performance")?.option?.grid?.containLabel, true);
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.grid?.containLabel, true);
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.yAxis?.axisLabel?.rich?.name?.width, 188);
+  } finally {
+    env.restore();
+  }
+});
