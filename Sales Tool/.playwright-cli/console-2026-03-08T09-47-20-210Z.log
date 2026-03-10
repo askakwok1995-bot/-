@@ -1,2 +1,0 @@
-[     310ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:5173/favicon.ico:0
-[  137688ms] [ERROR] Failed to load resource: the server responded with a status of 501 (Unsupported method ('POST')) @ http://localhost:5173/api/chat:0
