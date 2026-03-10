@@ -219,6 +219,81 @@ window.__APP_CONFIG__ = {
 
 用途：插入一条测试记录并回读（可选自动清理），快速验证 Supabase 写链路。
 
+## 8.1 AI 真实日志采样
+
+当前对话助手已经有两类可直接复用的线上日志：
+
+- `chat.tool.trace`
+  - 关注字段：
+    - `requestId`
+    - `planner_question_type`
+    - `planner_requested_views`
+    - `tool_call_count`
+    - `evidence_types_requested`
+    - `evidence_types_completed`
+    - `missing_evidence_types`
+    - `fallback_reason`
+- `chat.error`
+  - 关注字段：
+    - `requestId`
+    - `stage`
+    - `error_name`
+    - `error_message`
+
+如果线上日志里没有原始问题文本，建议同步做一份最小手工样本记录，模板见：
+
+```text
+scripts/fixtures/chat-runtime-manual-samples.csv
+```
+
+建议记录字段：
+
+- `requestId`
+- `category`
+- `question`
+- `analysisRange`
+- `uiResult`
+- `notes`
+
+### 采样命令
+
+```bash
+npm run analyze:chat-runtime -- \
+  --tool-log /path/to/chat-tool.log \
+  --error-log /path/to/chat-error.log \
+  --samples /path/to/chat-runtime-manual-samples.csv \
+  --out /path/to/chat-runtime-report.md
+```
+
+说明：
+
+- `--tool-log` 必填，支持包含 `[chat.tool.trace]` 的混合文本日志或纯 JSONL。
+- `--error-log` 可选，支持包含 `[chat.error]` 的混合文本日志或纯 JSONL。
+- `--samples` 可选，支持手工采样 CSV 或 JSON。
+- `--out` 可选；不传时，脚本会直接把 Markdown 报告输出到终端。
+
+### 报告内容
+
+脚本会按 `requestId` 串联样本和日志，输出固定结构：
+
+- 样本总量
+- 五类问题成功率
+- 失败原因分布
+- 失败样本（最多 10 条）
+- 成功样本（最多 5 条）
+- 下一轮修复优先级建议
+
+若失败主要集中在以下原因，可按下面优先级判断：
+
+- `planner_call_missing`
+  - 优先修首轮入口或 planner 协议
+- `empty_final_reply`
+  - 优先修最终总结生成
+- `tool_loop_limit_exceeded`
+  - 优先修宏工具覆盖或 planner-取数匹配
+- `tool_execution_failed`
+  - 优先修具体工具字段、参数和执行器
+
 ## 9. 下一功能开发前手工验收清单
 
 1. 未登录时业务区不可操作；登录后解除锁定。
