@@ -360,7 +360,10 @@ test("renderReportSection 会为坐标轴图保留完整标签空间且仅压缩
     assert.equal(env.charts.get("chart-monthly-trend")?.option?.grid?.containLabel, true);
     assert.equal(env.charts.get("chart-product-performance")?.option?.grid?.containLabel, true);
     assert.equal(env.charts.get("chart-hospital-top")?.option?.grid?.containLabel, true);
-    assert.equal(env.charts.get("chart-hospital-top")?.option?.yAxis?.axisLabel?.rich?.name?.width, 188);
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.yAxis?.data?.[0], "南山医院");
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.yAxis?.axisLabel?.rich, undefined);
+    assert.equal(typeof env.charts.get("chart-hospital-top")?.option?.xAxis?.max, "function");
+    assert.equal(env.charts.get("chart-hospital-top")?.option?.series?.[0]?.data?.[0]?.label?.position, "insideRight");
   } finally {
     env.restore();
   }
@@ -391,6 +394,39 @@ test("renderReportSection 不会在环形图中心摘要里塞入完整医院或
     assert.match(hospitalDetail, /^TOP1 占比 · /);
     assert.doesNotMatch(productDetail, /诺和盈|德谷门冬/);
     assert.doesNotMatch(hospitalDetail, /南山医院|天河医院|海珠医院/);
+  } finally {
+    env.restore();
+  }
+});
+
+test("renderReportSection 会为医院趋势图分离标题与图例并收敛顶部标签", () => {
+  const env = installFakeBrowserEnv();
+  try {
+    const dom = createReportDom();
+    const deps = createDeps();
+    const state = {
+      reportStartYm: "2025-01",
+      reportEndYm: "2025-03",
+      reportChartPaletteId: "harbor",
+      reportChartDataLabelMode: "compact",
+      reportAmountUnitId: "yuan",
+      activeHospitalChartKey: "",
+      records: createRecords(),
+    };
+
+    const summary = renderReportSection(state, dom, deps);
+    assert.equal(summary.reason, "");
+
+    const hospitalTrendOption = env.charts.get("chart-hospital-trend")?.option;
+    assert.equal(hospitalTrendOption?.title?.left, 24);
+    assert.equal(hospitalTrendOption?.title?.right, 220);
+    assert.equal(hospitalTrendOption?.legend?.right, 24);
+    assert.equal(hospitalTrendOption?.legend?.top, 14);
+    assert.equal(hospitalTrendOption?.grid?.top, 112);
+    assert.equal(hospitalTrendOption?.series?.[0]?.label?.formatter({ value: 120, dataIndex: 0 }), "");
+    assert.notEqual(hospitalTrendOption?.series?.[0]?.label?.formatter({ value: 150, dataIndex: 1 }), "");
+    assert.equal(hospitalTrendOption?.series?.[1]?.label?.formatter({ value: 50, dataIndex: 0 }), "");
+    assert.notEqual(hospitalTrendOption?.series?.[1]?.label?.formatter({ value: 66.67, dataIndex: 1 }), "");
   } finally {
     env.restore();
   }

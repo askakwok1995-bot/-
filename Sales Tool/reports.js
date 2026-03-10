@@ -2583,11 +2583,12 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
     return;
   }
 
-  const labels = rows.map((row, index) => buildRankAxisLabel(index, row.hospitalName));
+  const labels = rows.map((row) => String(row.hospitalName || "").trim());
   const values = rows.map((row) => {
     const scaled = chartMetric.scaleValue(row[metricKey]);
     return Number.isFinite(scaled) ? scaled : 0;
   });
+  const maxValue = values.length ? Math.max(...values, 0) : 0;
 
   instance.setOption(
     {
@@ -2634,6 +2635,7 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
       xAxis: {
         type: "value",
         name: chartMetric.valueAxisName,
+        max: (extent) => Math.max(Number(extent?.max) || 0, maxValue) * 1.14,
         axisLabel: {
           color: palette.axisTextColor,
           formatter: (value) => chartMetric.formatAxisValue(value),
@@ -2653,8 +2655,9 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
         },
         axisLabel: {
           color: palette.axisTextColor,
-          rich: buildRankAxisRich(palette, 188),
-          margin: 16,
+          width: 220,
+          overflow: "truncate",
+          margin: 12,
         },
         axisLine: {
           show: false,
@@ -2675,18 +2678,21 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
           },
           data: values.map((value, index) => {
             const baseColor = pickRankBarColor(palette, index);
+            const useInsideLabel = maxValue > 0 && value / maxValue >= 0.86;
             return {
               value,
               itemStyle: buildCapsuleBarItemStyle(baseColor, withAlpha(baseColor, index < 3 ? 0.56 : 0.42), true, index < 3 ? 0.22 : 0.12),
+              label: labelEnabled
+                ? {
+                    ...buildChartDataLabelStyle(palette, labelMode, useInsideLabel ? "insideRight" : "right"),
+                    show: true,
+                    distance: useInsideLabel ? 10 : 8,
+                    color: useInsideLabel ? withAlpha("#ffffff", 0.96) : palette.labelTextColor,
+                    formatter: () => chartMetric.formatLabelValue(value),
+                  }
+                : { show: false },
             };
           }),
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "right"),
-                show: true,
-                formatter: (params) => chartMetric.formatLabelValue(params.value),
-              }
-            : { show: false },
         },
       ],
     },
@@ -2894,6 +2900,16 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
   const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
   const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
   const trendColors = Array.isArray(palette?.series?.hospitalTrend2) ? palette.series.hospitalTrend2 : ["#1f7ca0", "#f0ad63"];
+  const lastMetricLabelIndex = metricData.reduce((lastIndex, value, index) => {
+    if (!Number.isFinite(value) || value === 0) return lastIndex;
+    return index;
+  }, -1);
+  const lastGrowthLabelIndex = metricYoyData.reduce((lastIndex, value, index) => {
+    if (!Number.isFinite(value)) return lastIndex;
+    return index;
+  }, -1);
+  const shouldShowHospitalMetricLabel = (dataIndex) => labelMode === "emphasis" || Number(dataIndex) === lastMetricLabelIndex;
+  const shouldShowHospitalGrowthLabel = (dataIndex) => labelMode === "emphasis" || Number(dataIndex) === lastGrowthLabelIndex;
 
   instance.setOption(
     {
@@ -2947,7 +2963,9 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       },
       legend: {
         icon: "roundRect",
-        top: 0,
+        top: 14,
+        right: 24,
+        itemGap: 16,
         textStyle: {
           color: palette.legendTextColor,
           fontSize: 12,
@@ -2956,7 +2974,7 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       grid: {
         left: 24,
         right: 24,
-        top: 58,
+        top: 112,
         bottom: 24,
         containLabel: true,
       },
@@ -3031,9 +3049,13 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => chartMetric.formatLabelValue(params.value),
+                formatter: (params) => {
+                  if (!shouldShowHospitalMetricLabel(params.dataIndex)) return "";
+                  return chartMetric.formatLabelValue(params.value);
+                },
               }
             : { show: false },
+          labelLayout: buildChartDataLabelLayout(labelMode),
         },
         {
           name: chartMetric.growthSeriesName,
@@ -3057,7 +3079,10 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
+                formatter: (params) => {
+                  if (!shouldShowHospitalGrowthLabel(params.dataIndex)) return "";
+                  return formatPercentLabelValue(params.value);
+                },
               }
             : { show: false },
           labelLayout: buildChartDataLabelLayout(labelMode),
@@ -3065,17 +3090,21 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       ],
       title: {
         text: selectedRow ? `${selectedRow.hospitalName}` : "",
-        left: "center",
-        top: 18,
+        left: 24,
+        right: 220,
+        top: 16,
         subtext: chartMetric.metric === "quantity" ? "医院采购数量走势与同比" : "医院销售金额走势与同比",
+        itemGap: 6,
         subtextStyle: {
           fontSize: 11,
           color: palette.subtleTextColor,
+          lineHeight: 16,
         },
         textStyle: {
           fontSize: 14,
           fontWeight: 700,
           color: palette.legendTextColor,
+          lineHeight: 20,
         },
       },
     },
