@@ -3090,9 +3090,9 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       ],
       title: {
         text: selectedRow ? `${selectedRow.hospitalName}` : "",
-        left: 24,
-        right: 220,
+        left: "center",
         top: 16,
+        textAlign: "center",
         subtext: chartMetric.metric === "quantity" ? "医院采购数量走势与同比" : "医院销售金额走势与同比",
         itemGap: 6,
         subtextStyle: {

@@ -418,8 +418,8 @@ test("renderReportSection 会为医院趋势图分离标题与图例并收敛顶
     assert.equal(summary.reason, "");
 
     const hospitalTrendOption = env.charts.get("chart-hospital-trend")?.option;
-    assert.equal(hospitalTrendOption?.title?.left, 24);
-    assert.equal(hospitalTrendOption?.title?.right, 220);
+    assert.equal(hospitalTrendOption?.title?.left, "center");
+    assert.equal(hospitalTrendOption?.title?.textAlign, "center");
     assert.equal(hospitalTrendOption?.legend?.right, 24);
     assert.equal(hospitalTrendOption?.legend?.top, 14);
     assert.equal(hospitalTrendOption?.grid?.top, 112);
