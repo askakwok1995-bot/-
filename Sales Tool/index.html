@@ -200,17 +200,19 @@
                         <th>月份</th>
                         <th>指标金额</th>
                         <th>实际金额</th>
-                        <th>达成率</th>
+                        <th>金额达成率</th>
                         <th>金额同比</th>
                         <th>金额环比</th>
+                        <th>指标数量</th>
                         <th>实际数量</th>
+                        <th>数量达成率</th>
                         <th>数量同比</th>
                         <th>数量环比</th>
                       </tr>
                     </thead>
                     <tbody id="report-month-body">
                       <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
+                        <td colspan="11" class="empty">报表加载中...</td>
                       </tr>
                     </tbody>
                   </table>
@@ -226,17 +228,19 @@
                         <th>季度</th>
                         <th>指标金额</th>
                         <th>实际金额</th>
-                        <th>达成率</th>
+                        <th>金额达成率</th>
                         <th>金额同比</th>
                         <th>金额环比</th>
+                        <th>指标数量</th>
                         <th>实际数量</th>
+                        <th>数量达成率</th>
                         <th>数量同比</th>
                         <th>数量环比</th>
                       </tr>
                     </thead>
                     <tbody id="report-quarter-body">
                       <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
+                        <td colspan="11" class="empty">报表加载中...</td>
                       </tr>
                     </tbody>
                   </table>
@@ -252,17 +256,19 @@
                         <th>产品/规格</th>
                         <th>实际金额</th>
                         <th>指标金额</th>
-                        <th>达成率</th>
+                        <th>金额达成率</th>
                         <th>金额占比</th>
                         <th>金额同比</th>
                         <th>实际数量</th>
+                        <th>指标数量</th>
+                        <th>数量达成率</th>
                         <th>数量占比</th>
                         <th>数量同比</th>
                       </tr>
                     </thead>
                     <tbody id="report-product-body">
                       <tr>
-                        <td colspan="9" class="empty">报表加载中...</td>
+                        <td colspan="11" class="empty">报表加载中...</td>
                       </tr>
                     </tbody>
                   </table>
@@ -325,9 +331,15 @@
                 <section class="report-chart-card report-chart-card-wide">
                   <header class="report-chart-card-head">
                     <h4 class="report-chart-card-title">月度趋势</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换月度趋势口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="monthly-trend" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="monthly-trend" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
                     </div>
                   </header>
                   <div id="chart-monthly-trend" class="report-chart-canvas" aria-label="月度趋势图"></div>
@@ -336,9 +348,15 @@
                 <section class="report-chart-card report-chart-card-wide">
                   <header class="report-chart-card-head">
                     <h4 class="report-chart-card-title">季度趋势</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-quarterly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-quarterly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换季度趋势口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="quarterly-trend" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="quarterly-trend" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-quarterly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-quarterly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
                     </div>
                   </header>
                   <div id="chart-quarterly-trend" class="report-chart-canvas" aria-label="季度趋势图"></div>
@@ -359,9 +377,15 @@
                   <section class="report-chart-card report-chart-card-product-performance">
                     <header class="report-chart-card-head">
                       <h4 class="report-chart-card-title">产品达成与增长（Top10）</h4>
-                      <div class="report-chart-export-group">
-                        <button id="export-chart-product-performance-btn" class="secondary-btn" type="button">导出 PNG</button>
-                        <button id="export-chart-product-performance-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      <div class="report-chart-card-tools">
+                        <div class="report-chart-metric-switch" role="group" aria-label="切换产品达成图口径">
+                          <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="product-performance" data-chart-metric="amount" aria-pressed="true">金额</button>
+                          <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="product-performance" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                        </div>
+                        <div class="report-chart-export-group">
+                          <button id="export-chart-product-performance-btn" class="secondary-btn" type="button">导出 PNG</button>
+                          <button id="export-chart-product-performance-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                        </div>
                       </div>
                     </header>
                     <div id="chart-product-performance" class="report-chart-canvas" aria-label="产品达成与增长图"></div>
@@ -579,9 +603,17 @@
                   指标年份
                   <select id="target-year-select" aria-label="选择指标年份"></select>
                 </label>
-                <span class="target-metric-tip">口径：考核金额（元）</span>
+                <div class="target-metric-switch" role="group" aria-label="切换目标口径">
+                  <button id="target-metric-amount-btn" class="target-metric-btn is-active" type="button" data-metric="amount" aria-pressed="true">
+                    金额目标
+                  </button>
+                  <button id="target-metric-quantity-btn" class="target-metric-btn" type="button" data-metric="quantity" aria-pressed="false">
+                    数量目标
+                  </button>
+                </div>
+                <span id="target-metric-tip" class="target-metric-tip">当前口径：金额目标（元）</span>
                 <span id="target-status" class="target-status" aria-live="polite"></span>
-                <button id="target-clear-page-btn" class="secondary-btn target-clear-btn" type="button">清空本页数据</button>
+                <button id="target-clear-page-btn" class="secondary-btn target-clear-btn" type="button">清空金额目标</button>
               </div>
               <p id="target-error" class="error" role="alert" aria-live="polite"></p>
               <div class="table-wrap target-table-wrap">
@@ -589,11 +621,11 @@
                   <thead>
                     <tr>
                       <th>季度</th>
-                      <th>季度指标（元）</th>
+                      <th id="target-quarter-header">季度金额目标（元）</th>
                       <th>月度指标 1</th>
                       <th>月度指标 2</th>
                       <th>月度指标 3</th>
-                      <th>月度合计（元）</th>
+                      <th id="target-month-sum-header">月度合计（元）</th>
                       <th>校验</th>
                     </tr>
                   </thead>
@@ -607,21 +639,17 @@
 
               <section class="target-product-allocation" aria-label="按产品分配指标">
                 <div class="target-product-allocation-head">
-                  <h4 class="target-product-allocation-title">按产品分配指标（非必填项）</h4>
+                  <h4 id="target-product-alloc-title" class="target-product-allocation-title">按产品分配金额目标（独立规划）</h4>
                 </div>
                 <div class="target-product-allocation-body">
                   <div class="target-product-allocation-toolbar">
-                    <label class="inline-field target-product-allocation-quarter-field" for="target-product-alloc-quarter">
-                      选择季度
-                      <select id="target-product-alloc-quarter" aria-label="选择产品分配季度"></select>
-                    </label>
                     <span id="target-product-alloc-summary" class="target-product-allocation-summary" aria-live="polite"></span>
                     <button
                       id="target-product-alloc-clear-page-btn"
                       class="secondary-btn target-clear-btn"
                       type="button"
                     >
-                      清空本页数据
+                      清空金额分配
                     </button>
                   </div>
                   <p id="target-product-alloc-hint" class="hint target-product-allocation-hint" aria-live="polite"></p>
@@ -630,16 +658,25 @@
                       <thead>
                         <tr>
                           <th>产品/规格</th>
-                          <th id="target-product-alloc-month-col-1">分配金额（1月）</th>
-                          <th id="target-product-alloc-month-col-2">分配金额（2月）</th>
-                          <th id="target-product-alloc-month-col-3">分配金额（3月）</th>
+                          <th>1月</th>
+                          <th>2月</th>
+                          <th>3月</th>
+                          <th>4月</th>
+                          <th>5月</th>
+                          <th>6月</th>
+                          <th>7月</th>
+                          <th>8月</th>
+                          <th>9月</th>
+                          <th>10月</th>
+                          <th>11月</th>
+                          <th>12月</th>
                           <th>状态</th>
                           <th>操作</th>
                         </tr>
                       </thead>
                       <tbody id="target-product-alloc-body">
                         <tr>
-                          <td colspan="6" class="empty">产品分配区加载中...</td>
+                          <td colspan="15" class="empty">产品分配区加载中...</td>
                         </tr>
                       </tbody>
                     </table>

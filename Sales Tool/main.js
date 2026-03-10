@@ -187,15 +187,17 @@ async function initializeApp() {
     pageInfoEl: document.getElementById("page-info"),
 
     targetYearSelect: document.getElementById("target-year-select"),
+    targetMetricAmountBtn: document.getElementById("target-metric-amount-btn"),
+    targetMetricQuantityBtn: document.getElementById("target-metric-quantity-btn"),
+    targetMetricTipEl: document.getElementById("target-metric-tip"),
     targetStatusEl: document.getElementById("target-status"),
     targetErrorEl: document.getElementById("target-error"),
     targetClearPageBtn: document.getElementById("target-clear-page-btn"),
+    targetQuarterHeaderEl: document.getElementById("target-quarter-header"),
+    targetMonthSumHeaderEl: document.getElementById("target-month-sum-header"),
     targetInputBody: document.getElementById("target-input-body"),
-    targetProductAllocQuarterSelect: document.getElementById("target-product-alloc-quarter"),
+    targetProductAllocTitleEl: document.getElementById("target-product-alloc-title"),
     targetProductAllocClearPageBtn: document.getElementById("target-product-alloc-clear-page-btn"),
-    targetProductAllocMonthCol1: document.getElementById("target-product-alloc-month-col-1"),
-    targetProductAllocMonthCol2: document.getElementById("target-product-alloc-month-col-2"),
-    targetProductAllocMonthCol3: document.getElementById("target-product-alloc-month-col-3"),
     targetProductAllocSummaryEl: document.getElementById("target-product-alloc-summary"),
     targetProductAllocHintEl: document.getElementById("target-product-alloc-hint"),
     targetProductAllocBody: document.getElementById("target-product-alloc-body"),
@@ -279,7 +281,7 @@ async function initializeApp() {
     sortDirection: "",
 
     activeTargetYear: getCurrentTargetYear(),
-    activeTargetAllocationQuarter: `Q${Math.floor(new Date().getMonth() / 3) + 1}`,
+    activeTargetMetric: "amount",
     targetSaveTimer: null,
     targetInputFormatError: "",
     targetProductAllocationFormatError: "",
@@ -291,6 +293,11 @@ async function initializeApp() {
     reportChartPaletteId: initialReportChartPaletteId,
     reportChartDataLabelMode: initialReportChartDataLabelMode,
     reportAmountUnitId: initialReportAmountUnitId,
+    reportTargetChartMetrics: {
+      "monthly-trend": "amount",
+      "quarterly-trend": "amount",
+      "product-performance": "amount",
+    },
     activeHospitalChartKey: "",
   };
   let listStatusTimer = null;
@@ -353,14 +360,40 @@ async function initializeApp() {
     return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
   }
 
+  function resolveHeroAchievementMeta(snapshot) {
+    const amountAchievementRatio = Number.isFinite(snapshot?.rangeAmountAchievement) ? snapshot.rangeAmountAchievement : null;
+    if (amountAchievementRatio !== null) {
+      return {
+        ratio: amountAchievementRatio,
+        metric: "amount",
+        metricLabel: "金额",
+      };
+    }
+
+    const quantityAchievementRatio = Number.isFinite(snapshot?.rangeQuantityAchievement) ? snapshot.rangeQuantityAchievement : null;
+    if (quantityAchievementRatio !== null) {
+      return {
+        ratio: quantityAchievementRatio,
+        metric: "quantity",
+        metricLabel: "数量",
+      };
+    }
+
+    return {
+      ratio: null,
+      metric: "none",
+      metricLabel: "",
+    };
+  }
+
   function updateHeroOverview(reportSummary = currentReportSummary) {
     const reportRange =
       state.reportStartYm && state.reportEndYm ? `${state.reportStartYm} - ${state.reportEndYm}` : "未设置分析区间";
     const snapshot = reportSummary && typeof reportSummary === "object" ? reportSummary.snapshot : null;
     const reason = reportSummary && typeof reportSummary === "object" ? String(reportSummary.reason || "") : "";
     const recordsCount = Number.isFinite(snapshot?.rangeRecordCount) ? snapshot.rangeRecordCount : 0;
-    const achievementRatio = Number.isFinite(snapshot?.rangeAmountAchievement) ? snapshot.rangeAmountAchievement : null;
-    const hasTargetGap = Boolean(snapshot?.rangeTargetAmountTotal === null);
+    const achievementMeta = resolveHeroAchievementMeta(snapshot);
+    const achievementRatio = achievementMeta.ratio;
     const isOverTarget = Number.isFinite(achievementRatio) && achievementRatio > 1;
     const progressPercent = Number.isFinite(achievementRatio) ? Math.max(0, Math.min(achievementRatio * 100, 100)) : 0;
 
@@ -381,10 +414,10 @@ async function initializeApp() {
         dom.heroAchievementCaptionEl.textContent = "设置有效的报表区间后，这里会显示当前区间达成率";
       } else if (reason === "no-records") {
         dom.heroAchievementCaptionEl.textContent = "当前区间暂无销售记录，达成率将在录入后自动计算";
-      } else if (hasTargetGap) {
-        dom.heroAchievementCaptionEl.textContent = "当前区间缺少有效指标，暂无法计算达成率";
+      } else if (!Number.isFinite(achievementRatio)) {
+        dom.heroAchievementCaptionEl.textContent = "当前区间缺少有效金额/数量指标，暂无法计算达成率";
       } else {
-        dom.heroAchievementCaptionEl.textContent = "按当前报表区间的销售金额 / 指标金额计算";
+        dom.heroAchievementCaptionEl.textContent = `按当前报表区间的销售${achievementMeta.metricLabel} / 指标${achievementMeta.metricLabel}计算`;
       }
     }
 
@@ -413,18 +446,18 @@ async function initializeApp() {
         return;
       }
 
-      if (hasTargetGap) {
-        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，但缺少有效指标，暂不显示达成率。`;
+      if (!Number.isFinite(achievementRatio)) {
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，但缺少有效金额/数量指标，暂不显示达成率。`;
         return;
       }
 
       if (Number.isFinite(achievementRatio) && isOverTarget) {
-        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，达成率 ${formatHeroAchievementValue(achievementRatio)}，进度条按 100% 封顶显示。`;
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，${achievementMeta.metricLabel}达成率 ${formatHeroAchievementValue(achievementRatio)}，进度条按 100% 封顶显示。`;
         return;
       }
 
       if (Number.isFinite(achievementRatio)) {
-        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，当前达成 ${formatHeroAchievementValue(achievementRatio)}。`;
+        dom.heroStatusLineEl.textContent = `当前区间已同步 ${recordsCount} 条记录，当前${achievementMeta.metricLabel}达成 ${formatHeroAchievementValue(achievementRatio)}。`;
         return;
       }
 
@@ -626,6 +659,8 @@ async function initializeApp() {
         isValidDateParts,
         normalizeText,
         roundMoney,
+        getEffectiveMonthlyTargetMap: (year, metric) => deps.getEffectiveMonthlyTargetMap(year, metric),
+        getProductMonthlyAllocationMap: (year, metric) => deps.getProductMonthlyAllocationMap(year, metric),
       }),
     fetchImpl: (...args) => fetch(...args),
   });

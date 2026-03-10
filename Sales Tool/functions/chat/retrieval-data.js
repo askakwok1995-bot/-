@@ -15,6 +15,11 @@ import {
   trimString,
 } from "./shared.js";
 import { normalizeTextForLookup } from "../../domain/entity-matchers.js";
+import {
+  buildMonthlyTargetMap,
+  buildProductAllocationMap,
+  normalizeTargetYearData,
+} from "../../domain/targets-model.js";
 
 export function createInitialRetrievalState() {
   return {
@@ -191,4 +196,157 @@ export function buildProductsNameMap(catalog) {
     map.set(lookupKey, productId);
   });
   return map;
+}
+
+function createTargetsBundle({ years = [], monthlyTargetMaps = null, productAllocationMaps = null } = {}) {
+  const safeYears = Array.from(
+    new Set((Array.isArray(years) ? years : []).map((year) => Number(year)).filter((year) => Number.isInteger(year))),
+  ).sort((left, right) => left - right);
+
+  const safeMonthlyTargetMaps = monthlyTargetMaps || {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+  const safeProductAllocationMaps = productAllocationMaps || {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+
+  safeYears.forEach((year) => {
+    if (!safeMonthlyTargetMaps.amount.has(year)) safeMonthlyTargetMaps.amount.set(year, null);
+    if (!safeMonthlyTargetMaps.quantity.has(year)) safeMonthlyTargetMaps.quantity.set(year, null);
+    if (!safeProductAllocationMaps.amount.has(year)) safeProductAllocationMaps.amount.set(year, null);
+    if (!safeProductAllocationMaps.quantity.has(year)) safeProductAllocationMaps.quantity.set(year, null);
+  });
+
+  return {
+    years: safeYears,
+    getMonthlyTargetMap(year, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      return safeMonthlyTargetMaps[safeMetric].get(Number(year)) || null;
+    },
+    getProductAllocationMap(year, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      return safeProductAllocationMaps[safeMetric].get(Number(year)) || null;
+    },
+    getMonthTarget(ym, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      const matched = trimString(ym).match(/^(\d{4})-(\d{2})$/);
+      if (!matched) {
+        return null;
+      }
+      const year = Number(matched[1]);
+      const monthMap = safeMonthlyTargetMaps[safeMetric].get(year);
+      if (!monthMap || typeof monthMap !== "object") {
+        return null;
+      }
+      const value = normalizeNumericValue(monthMap[trimString(ym)]);
+      return value === null ? null : value;
+    },
+    getProductTarget(ym, productId, metric = "amount") {
+      const safeProductId = trimString(productId);
+      if (!safeProductId) {
+        return null;
+      }
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      const matched = trimString(ym).match(/^(\d{4})-(\d{2})$/);
+      if (!matched) {
+        return null;
+      }
+      const year = Number(matched[1]);
+      const allocationMap = safeProductAllocationMaps[safeMetric].get(year);
+      if (!allocationMap || typeof allocationMap !== "object") {
+        return null;
+      }
+      const monthMap = allocationMap[trimString(ym)];
+      if (!monthMap || typeof monthMap !== "object") {
+        return null;
+      }
+      const value = normalizeNumericValue(monthMap[safeProductId]);
+      return value === null ? null : value;
+    },
+    getRangeTargetTotal(monthKeys, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      const safeMonthKeys = Array.isArray(monthKeys) ? monthKeys.map((item) => trimString(item)).filter((item) => item) : [];
+      if (safeMonthKeys.length === 0) {
+        return null;
+      }
+      let total = 0;
+      for (const ym of safeMonthKeys) {
+        const value = this.getMonthTarget(ym, safeMetric);
+        if (value === null) {
+          return null;
+        }
+        total += value;
+      }
+      return roundToTwo(total) || 0;
+    },
+    getProductTargetTotal(productId, monthKeys, metric = "amount") {
+      const safeProductId = trimString(productId);
+      const safeMonthKeys = Array.isArray(monthKeys) ? monthKeys.map((item) => trimString(item)).filter((item) => item) : [];
+      if (!safeProductId || safeMonthKeys.length === 0) {
+        return null;
+      }
+      let total = 0;
+      for (const ym of safeMonthKeys) {
+        const value = this.getProductTarget(ym, safeProductId, metric);
+        if (value === null) {
+          continue;
+        }
+        total += value;
+      }
+      return roundToTwo(total) || 0;
+    },
+  };
+}
+
+export async function fetchSalesTargetsByYears(years, token, env) {
+  const safeYears = Array.from(
+    new Set((Array.isArray(years) ? years : []).map((year) => Number(year)).filter((year) => Number.isInteger(year))),
+  ).sort((left, right) => left - right);
+  if (safeYears.length === 0) {
+    return createTargetsBundle({ years: [] });
+  }
+
+  const query = [
+    "select=target_year,metric_type,version,year_data",
+    `target_year=in.(${safeYears.join(",")})`,
+    "order=target_year.asc",
+  ].join("&");
+
+  const rows = await fetchSupabaseRestRows(`sales_targets?${query}`, token, env);
+
+  const monthlyTargetMaps = {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+  const productAllocationMaps = {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+
+  safeYears.forEach((year) => {
+    monthlyTargetMaps.amount.set(year, null);
+    monthlyTargetMaps.quantity.set(year, null);
+    productAllocationMaps.amount.set(year, null);
+    productAllocationMaps.quantity.set(year, null);
+  });
+
+  rows.forEach((row) => {
+    const year = Number(row?.target_year);
+    if (!Number.isInteger(year) || !safeYears.includes(year)) {
+      return;
+    }
+    const yearData = normalizeTargetYearData(year, row?.year_data);
+    monthlyTargetMaps.amount.set(year, buildMonthlyTargetMap(year, yearData, "amount"));
+    monthlyTargetMaps.quantity.set(year, buildMonthlyTargetMap(year, yearData, "quantity"));
+    productAllocationMaps.amount.set(year, buildProductAllocationMap(year, yearData, "amount"));
+    productAllocationMaps.quantity.set(year, buildProductAllocationMap(year, yearData, "quantity"));
+  });
+
+  return createTargetsBundle({
+    years: safeYears,
+    monthlyTargetMaps,
+    productAllocationMaps,
+  });
 }

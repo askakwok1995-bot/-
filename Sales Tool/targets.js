@@ -1,12 +1,106 @@
+import {
+  TARGET_ALLOCATION_MONTHS,
+  createDefaultProductAllocationEntry,
+  buildMonthlyTargetMap,
+  buildProductAllocationMap,
+  getProductAllocationMonths,
+  getYearMetricTargets,
+  normalizeTargetMetric,
+} from "./domain/targets-model.js";
+
 const TARGET_SAVE_DEBOUNCE_MS = 250;
 const TARGET_YEAR_RANGE_OFFSET = 2;
 const TARGET_QUARTER_TOLERANCE = 0.009;
-const TARGET_PRODUCT_ALLOCATION_TOLERANCE = 0.009;
-const TARGET_ALLOCATION_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 function renderReportsIfAvailable(deps) {
   if (typeof deps.renderReports === "function") {
     deps.renderReports();
+  }
+}
+
+function getActiveTargetMetric(state) {
+  const metric = normalizeTargetMetric(state?.activeTargetMetric);
+  state.activeTargetMetric = metric;
+  return metric;
+}
+
+function getMetricMeta(metric) {
+  const safeMetric = normalizeTargetMetric(metric);
+  if (safeMetric === "quantity") {
+    return {
+      metric: "quantity",
+      label: "数量",
+      targetLabel: "数量目标",
+      allocationLabel: "数量分配",
+      unit: "盒",
+      detailSuffix: "（盒）",
+    };
+  }
+
+  return {
+    metric: "amount",
+    label: "金额",
+    targetLabel: "金额目标",
+    allocationLabel: "金额分配",
+    unit: "元",
+    detailSuffix: "（元）",
+  };
+}
+
+function getMetricButtons(dom) {
+  return [
+    dom.targetMetricAmountBtn instanceof HTMLButtonElement ? dom.targetMetricAmountBtn : null,
+    dom.targetMetricQuantityBtn instanceof HTMLButtonElement ? dom.targetMetricQuantityBtn : null,
+  ].filter((item) => item);
+}
+
+function ensureMetricTargets(yearData, metric) {
+  const safeMetric = normalizeTargetMetric(metric);
+  if (!yearData.targets || typeof yearData.targets !== "object") {
+    yearData.targets = {};
+  }
+  yearData.targets[safeMetric] = getYearMetricTargets(yearData, safeMetric);
+  return yearData.targets[safeMetric];
+}
+
+function ensureEntryMonths(entry, metric) {
+  const safeMetric = normalizeTargetMetric(metric);
+  const key = safeMetric === "quantity" ? "quantityMonths" : "amountMonths";
+  entry[key] = getProductAllocationMonths(entry, safeMetric);
+  return entry[key];
+}
+
+function buildTargetMetricFormatError(metric) {
+  const meta = getMetricMeta(metric);
+  return `${meta.targetLabel}必须为非负数字（支持小数），保存时会保留两位小数。`;
+}
+
+function buildAllocationFormatError(metric) {
+  const meta = getMetricMeta(metric);
+  return `${meta.allocationLabel}必须为非负数字（支持小数），保存时会保留两位小数。`;
+}
+
+function updateTargetMetricUi(state, dom) {
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
+  getMetricButtons(dom).forEach((button) => {
+    const buttonMetric = normalizeTargetMetric(button.dataset.metric, "amount");
+    const isActive = buttonMetric === metric;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  if (dom.targetMetricTipEl instanceof HTMLElement) {
+    dom.targetMetricTipEl.textContent = `当前口径：${meta.targetLabel}${meta.detailSuffix}`;
+  }
+  if (dom.targetQuarterHeaderEl instanceof HTMLElement) {
+    dom.targetQuarterHeaderEl.textContent = `季度${meta.targetLabel}${meta.detailSuffix}`;
+  }
+  if (dom.targetMonthSumHeaderEl instanceof HTMLElement) {
+    dom.targetMonthSumHeaderEl.textContent = `月度合计${meta.detailSuffix}`;
+  }
+  if (dom.targetProductAllocTitleEl instanceof HTMLElement) {
+    dom.targetProductAllocTitleEl.textContent = `按产品分配${meta.targetLabel}（独立规划）`;
   }
 }
 
@@ -23,21 +117,25 @@ export function bindTargetInputEvents(state, dom, deps) {
     if (!Number.isInteger(nextYear)) return;
 
     state.activeTargetYear = nextYear;
-    ensureYearTargets(state, state.activeTargetYear, deps);
+    ensureYearTargets(state, nextYear, deps);
     renderTargetInputSection(state, dom, deps);
     renderReportsIfAvailable(deps);
   });
 
-  if (dom.targetProductAllocQuarterSelect instanceof HTMLSelectElement) {
-    dom.targetProductAllocQuarterSelect.addEventListener("change", () => {
-      const nextQuarter = normalizeTargetAllocationQuarter(dom.targetProductAllocQuarterSelect.value, deps);
-      state.activeTargetAllocationQuarter = nextQuarter;
-      state.targetProductAllocationFormatError = "";
+  getMetricButtons(dom).forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMetric = normalizeTargetMetric(button.dataset.metric, "amount");
+      if (nextMetric === getActiveTargetMetric(state)) return;
 
+      flushTargetSave(state, deps);
+      state.activeTargetMetric = nextMetric;
+      state.targetInputFormatError = "";
+      state.targetProductAllocationFormatError = "";
       ensureYearTargets(state, state.activeTargetYear, deps);
       renderTargetInputSection(state, dom, deps);
+      renderReportsIfAvailable(deps);
     });
-  }
+  });
 
   if (dom.targetClearPageBtn instanceof HTMLButtonElement) {
     dom.targetClearPageBtn.addEventListener("click", () => {
@@ -68,7 +166,6 @@ export function bindTargetInputEvents(state, dom, deps) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (!target.classList.contains("target-input")) return;
-
     handleTargetInputChange(state, dom, deps, target, false);
   });
 
@@ -76,7 +173,6 @@ export function bindTargetInputEvents(state, dom, deps) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (!target.classList.contains("target-input")) return;
-
     handleTargetInputChange(state, dom, deps, target, true);
   });
 
@@ -90,7 +186,6 @@ export function bindTargetInputEvents(state, dom, deps) {
 
       const productId = String(removeBtn.dataset.productId || "").trim();
       if (!productId) return;
-
       handleRemoveDeletedProductAllocationRow(state, dom, deps, productId);
     });
 
@@ -98,7 +193,6 @@ export function bindTargetInputEvents(state, dom, deps) {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
       if (!target.classList.contains("target-product-alloc-input")) return;
-
       handleProductAllocationInputChange(state, dom, deps, target, false);
     });
 
@@ -106,7 +200,6 @@ export function bindTargetInputEvents(state, dom, deps) {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
       if (!target.classList.contains("target-product-alloc-input")) return;
-
       handleProductAllocationInputChange(state, dom, deps, target, true);
     });
   }
@@ -118,13 +211,15 @@ export function handleTargetInputChange(state, dom, deps, input, shouldRenderAft
   const month = Number(input.dataset.month);
   if (!quarterKey) return;
 
+  const metric = getActiveTargetMetric(state);
   const yearData = ensureYearTargets(state, state.activeTargetYear, deps);
-  const quarterData = yearData.quarters[quarterKey];
+  const metricTargets = ensureMetricTargets(yearData, metric);
+  const quarterData = metricTargets.quarters[quarterKey];
   if (!quarterData) return;
 
   const parsed = parseTargetInputValue(input.value);
   if (!parsed.ok) {
-    state.targetInputFormatError = "指标必须为非负数字（支持小数），保存时会保留两位小数。";
+    state.targetInputFormatError = buildTargetMetricFormatError(metric);
     refreshTargetValidationUI(state, dom, deps, yearData);
     renderTargetProductAllocationHint(state, dom, deps, yearData);
     return;
@@ -154,14 +249,10 @@ export function handleTargetInputChange(state, dom, deps, input, shouldRenderAft
 
 export function handleProductAllocationInputChange(state, dom, deps, input, shouldRenderAfterSave) {
   const productId = String(input.dataset.productId || "").trim();
-  if (!productId) return;
+  const month = Number(input.dataset.month);
+  if (!productId || !Number.isInteger(month)) return;
 
-  const activeQuarter = normalizeTargetAllocationQuarter(state.activeTargetAllocationQuarter, deps);
-  const quarterMonths = getQuarterMonthsByKey(activeQuarter, deps);
-  const month = normalizeTargetAllocationMonth(input.dataset.month || quarterMonths[0]);
-  const monthKey = String(month);
-  state.activeTargetAllocationQuarter = activeQuarter;
-
+  const metric = getActiveTargetMetric(state);
   const yearData = ensureYearTargets(state, state.activeTargetYear, deps);
   const allocations = getYearProductAllocations(yearData);
   const { entry } = ensureProductAllocationEntry(allocations, productId, "", deps);
@@ -169,13 +260,14 @@ export function handleProductAllocationInputChange(state, dom, deps, input, shou
 
   const parsed = parseTargetInputValue(input.value);
   if (!parsed.ok) {
-    state.targetProductAllocationFormatError = "分配金额必须为非负数字（支持小数），保存时会保留两位小数。";
+    state.targetProductAllocationFormatError = buildAllocationFormatError(metric);
     renderTargetProductAllocationHint(state, dom, deps, yearData);
     return;
   }
 
+  const months = ensureEntryMonths(entry, metric);
+  months[String(month)] = parsed.value;
   state.targetProductAllocationFormatError = "";
-  entry.months[monthKey] = parsed.value;
   yearData.updatedAt = new Date().toISOString();
 
   scheduleTargetSave(state, deps);
@@ -188,8 +280,10 @@ export function handleProductAllocationInputChange(state, dom, deps, input, shou
 }
 
 function handleQuarterSplitClick(state, dom, deps, quarterKey) {
+  const metric = getActiveTargetMetric(state);
   const yearData = ensureYearTargets(state, state.activeTargetYear, deps);
-  const quarterData = yearData.quarters[quarterKey];
+  const metricTargets = ensureMetricTargets(yearData, metric);
+  const quarterData = metricTargets.quarters[quarterKey];
   if (!quarterData) return;
 
   const quarterMeta = deps.TARGET_QUARTERS.find((quarter) => quarter.key === quarterKey);
@@ -204,9 +298,8 @@ function handleQuarterSplitClick(state, dom, deps, quarterKey) {
   quarterData.months[String(quarterMeta.months[0])] = month1;
   quarterData.months[String(quarterMeta.months[1])] = month2;
   quarterData.months[String(quarterMeta.months[2])] = month3;
-
-  yearData.updatedAt = new Date().toISOString();
   state.targetInputFormatError = "";
+  yearData.updatedAt = new Date().toISOString();
 
   flushTargetSave(state, deps);
   renderTargetInputSection(state, dom, deps);
@@ -214,16 +307,18 @@ function handleQuarterSplitClick(state, dom, deps, quarterKey) {
 }
 
 function handleClearTargetPageClick(state, dom, deps) {
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
   const yearNum = Number(state.activeTargetYear);
   const safeYear = Number.isInteger(yearNum) ? yearNum : getCurrentTargetYear();
-  const confirmed = window.confirm(`确定清空 ${safeYear} 年指标录入本页数据吗？`);
+  const confirmed = window.confirm(`确定清空 ${safeYear} 年${meta.targetLabel}本页数据吗？`);
   if (!confirmed) return;
 
   const yearData = ensureYearTargets(state, safeYear, deps);
+  const metricTargets = ensureMetricTargets(yearData, metric);
   for (const quarter of deps.TARGET_QUARTERS) {
-    const quarterData = yearData.quarters[quarter.key];
+    const quarterData = metricTargets.quarters[quarter.key];
     if (!quarterData) continue;
-
     quarterData.quarterTarget = 0;
     for (const month of quarter.months) {
       quarterData.months[String(month)] = 0;
@@ -239,27 +334,25 @@ function handleClearTargetPageClick(state, dom, deps) {
 }
 
 function handleClearTargetProductAllocationPageClick(state, dom, deps) {
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
   const yearNum = Number(state.activeTargetYear);
   const safeYear = Number.isInteger(yearNum) ? yearNum : getCurrentTargetYear();
-  const quarterKey = normalizeTargetAllocationQuarter(state.activeTargetAllocationQuarter, deps);
-  const confirmed = window.confirm(`确定清空 ${safeYear} 年 ${quarterKey} 产品分配本页数据吗？`);
+  const confirmed = window.confirm(`确定清空 ${safeYear} 年${meta.allocationLabel}本页数据吗？`);
   if (!confirmed) return;
 
   const yearData = ensureYearTargets(state, safeYear, deps);
-  const quarterMonths = getQuarterMonthsByKey(quarterKey, deps);
   const allocations = getYearProductAllocations(yearData);
-
   for (const [productId, entry] of Object.entries(allocations)) {
     const productName = String((entry && entry.productName) || "").trim();
     const result = ensureProductAllocationEntry(allocations, productId, productName, deps);
     if (!result.entry) continue;
-
-    for (const month of quarterMonths) {
-      result.entry.months[String(month)] = 0;
+    const months = ensureEntryMonths(result.entry, metric);
+    for (const month of TARGET_ALLOCATION_MONTHS) {
+      months[String(month)] = 0;
     }
   }
 
-  state.activeTargetAllocationQuarter = quarterKey;
   state.targetProductAllocationFormatError = "";
   yearData.updatedAt = new Date().toISOString();
 
@@ -317,6 +410,8 @@ export function renderTargetInputSection(state, dom, deps) {
   if (!(dom.targetYearSelect instanceof HTMLSelectElement)) return;
   if (!(dom.targetInputBody instanceof HTMLElement)) return;
 
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
   const yearOptions = getTargetYearOptions();
   if (!yearOptions.includes(state.activeTargetYear)) {
     state.activeTargetYear = getCurrentTargetYear();
@@ -326,13 +421,15 @@ export function renderTargetInputSection(state, dom, deps) {
     .map((year) => `<option value="${deps.escapeHtml(String(year))}">${deps.escapeHtml(String(year))}年</option>`)
     .join("");
   dom.targetYearSelect.value = String(state.activeTargetYear);
+  updateTargetMetricUi(state, dom);
 
   const yearData = ensureYearTargets(state, state.activeTargetYear, deps);
-  const validation = validateYearTargets(yearData, deps);
+  const metricTargets = ensureMetricTargets(yearData, metric);
+  const validation = validateYearTargets(yearData, deps, metric);
 
   dom.targetInputBody.innerHTML = deps.TARGET_QUARTERS.map((quarter) => {
     const detail = validation.quarterStates[quarter.key];
-    const quarterData = yearData.quarters[quarter.key];
+    const quarterData = metricTargets.quarters[quarter.key];
     const rowClass = detail && !detail.isMatched ? "target-row-invalid" : "";
     const monthCells = quarter.months
       .map((month) => {
@@ -390,7 +487,11 @@ export function renderTargetInputSection(state, dom, deps) {
     `;
   }).join("");
 
-  renderTargetStatus(state, dom, validation);
+  if (dom.targetClearPageBtn instanceof HTMLButtonElement) {
+    dom.targetClearPageBtn.textContent = `清空${meta.label}目标`;
+  }
+
+  renderTargetStatus(state, dom, validation, metric);
   renderTargetError(state, dom, validation);
   renderTargetProductAllocationSection(state, dom, deps, yearData);
 }
@@ -398,39 +499,40 @@ export function renderTargetInputSection(state, dom, deps) {
 export function refreshTargetValidationUI(state, dom, deps, yearData) {
   if (!(dom.targetInputBody instanceof HTMLElement)) return;
 
-  const validation = validateYearTargets(yearData, deps);
+  const metric = getActiveTargetMetric(state);
+  const validation = validateYearTargets(yearData, deps, metric);
   for (const quarter of deps.TARGET_QUARTERS) {
     const detail = validation.quarterStates[quarter.key];
     const row = dom.targetInputBody.querySelector(`tr[data-quarter="${quarter.key}"]`);
-    if (row instanceof HTMLTableRowElement) {
-      row.classList.toggle("target-row-invalid", !detail.isMatched);
+    if (!(row instanceof HTMLTableRowElement) || !detail) continue;
 
-      const sumEl = row.querySelector('[data-role="month-sum"]');
-      if (sumEl instanceof HTMLElement) {
-        sumEl.textContent = deps.formatMoney(detail.monthSum);
-      }
+    row.classList.toggle("target-row-invalid", !detail.isMatched);
+    const sumEl = row.querySelector('[data-role="month-sum"]');
+    if (sumEl instanceof HTMLElement) {
+      sumEl.textContent = deps.formatMoney(detail.monthSum);
+    }
 
-      const checkEl = row.querySelector('[data-role="quarter-check"]');
-      if (checkEl instanceof HTMLElement) {
-        checkEl.textContent = detail.isMatched ? "已生效" : "未生效";
-      }
+    const checkEl = row.querySelector('[data-role="quarter-check"]');
+    if (checkEl instanceof HTMLElement) {
+      checkEl.textContent = detail.isMatched ? "已生效" : "未生效";
     }
   }
 
-  renderTargetStatus(state, dom, validation);
+  renderTargetStatus(state, dom, validation, metric);
   renderTargetError(state, dom, validation);
 }
 
-export function renderTargetStatus(state, dom, validation) {
+export function renderTargetStatus(state, dom, validation, metric = "amount") {
   if (!(dom.targetStatusEl instanceof HTMLElement)) return;
 
+  const meta = getMetricMeta(metric);
   if (validation.isEffective) {
-    dom.targetStatusEl.textContent = `${state.activeTargetYear} 年指标状态：已生效`;
+    dom.targetStatusEl.textContent = `${state.activeTargetYear} 年${meta.targetLabel}状态：已生效`;
     dom.targetStatusEl.classList.remove("target-status-invalid");
     return;
   }
 
-  dom.targetStatusEl.textContent = `${state.activeTargetYear} 年指标状态：未生效（${validation.errors.length} 个季度待修正）`;
+  dom.targetStatusEl.textContent = `${state.activeTargetYear} 年${meta.targetLabel}状态：未生效（${validation.errors.length} 个季度待修正）`;
   dom.targetStatusEl.classList.add("target-status-invalid");
 }
 
@@ -444,7 +546,6 @@ export function renderTargetError(state, dom, validation) {
   if (state.targetInputFormatError) {
     messages.push(state.targetInputFormatError);
   }
-
   for (const error of validation.errors) {
     messages.push(error.message);
   }
@@ -453,33 +554,20 @@ export function renderTargetError(state, dom, validation) {
 }
 
 function renderTargetProductAllocationSection(state, dom, deps, yearData) {
-  if (!(dom.targetProductAllocQuarterSelect instanceof HTMLSelectElement)) return;
   if (!(dom.targetProductAllocBody instanceof HTMLElement)) return;
 
-  const quarterKey = normalizeTargetAllocationQuarter(state.activeTargetAllocationQuarter, deps);
-  state.activeTargetAllocationQuarter = quarterKey;
-  const quarterMonths = getQuarterMonthsByKey(quarterKey, deps);
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
+  const rows = getProductAllocationRows(state, yearData, metric, deps);
 
-  dom.targetProductAllocQuarterSelect.innerHTML = deps.TARGET_QUARTERS.map(
-    (quarter) => `<option value="${deps.escapeHtml(quarter.key)}">${deps.escapeHtml(quarter.label)}</option>`,
-  ).join("");
-  dom.targetProductAllocQuarterSelect.value = quarterKey;
-
-  if (dom.targetProductAllocMonthCol1 instanceof HTMLElement) {
-    dom.targetProductAllocMonthCol1.textContent = `分配金额（${quarterMonths[0]}月）`;
-  }
-  if (dom.targetProductAllocMonthCol2 instanceof HTMLElement) {
-    dom.targetProductAllocMonthCol2.textContent = `分配金额（${quarterMonths[1]}月）`;
-  }
-  if (dom.targetProductAllocMonthCol3 instanceof HTMLElement) {
-    dom.targetProductAllocMonthCol3.textContent = `分配金额（${quarterMonths[2]}月）`;
+  if (dom.targetProductAllocClearPageBtn instanceof HTMLButtonElement) {
+    dom.targetProductAllocClearPageBtn.textContent = `清空${meta.allocationLabel}`;
   }
 
-  const rows = getProductAllocationRowsForQuarter(state, yearData, quarterMonths, deps);
   if (rows.length === 0) {
     dom.targetProductAllocBody.innerHTML = `
       <tr>
-        <td colspan="6" class="empty">暂无产品配置</td>
+        <td colspan="15" class="empty">暂无产品配置</td>
       </tr>
     `;
   } else {
@@ -498,24 +586,22 @@ function renderTargetProductAllocationSection(state, dom, deps, yearData) {
             </button>
           `
           : "-";
-        const monthCells = quarterMonths
-          .map((month) => {
-            const monthKey = String(month);
-            return `
-              <td>
-                <input
-                  class="target-input target-product-alloc-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  data-product-id="${deps.escapeHtml(row.productId)}"
-                  data-month="${deps.escapeHtml(monthKey)}"
-                  value="${deps.escapeHtml(deps.formatMoney(row.valuesByMonth[monthKey]))}"
-                />
-              </td>
-            `;
-          })
-          .join("");
+        const monthCells = TARGET_ALLOCATION_MONTHS.map((month) => {
+          const monthKey = String(month);
+          return `
+            <td>
+              <input
+                class="target-input target-product-alloc-input"
+                type="number"
+                min="0"
+                step="0.01"
+                data-product-id="${deps.escapeHtml(row.productId)}"
+                data-month="${deps.escapeHtml(monthKey)}"
+                value="${deps.escapeHtml(deps.formatMoney(row.valuesByMonth[monthKey]))}"
+              />
+            </td>
+          `;
+        }).join("");
 
         return `
           <tr>
@@ -536,19 +622,26 @@ function renderTargetProductAllocationHint(state, dom, deps, yearData) {
   if (!(dom.targetProductAllocSummaryEl instanceof HTMLElement)) return;
   if (!(dom.targetProductAllocHintEl instanceof HTMLElement)) return;
 
-  const quarterKey = normalizeTargetAllocationQuarter(state.activeTargetAllocationQuarter, deps);
-  state.activeTargetAllocationQuarter = quarterKey;
+  const metric = getActiveTargetMetric(state);
+  const meta = getMetricMeta(metric);
+  const allocations = getYearProductAllocations(yearData);
+  const monthlyTotals = {};
+  let totalAllocated = 0;
 
-  const quarterTarget = getQuarterTargetValue(yearData, quarterKey, deps);
-  const quarterAllocated = getQuarterAllocatedValue(yearData, quarterKey, deps);
-  const quarterDiff = deps.roundMoney(quarterAllocated - quarterTarget);
-  const quarterAbsDiff = deps.roundMoney(Math.abs(quarterDiff));
-  const quarterMatched = quarterAbsDiff <= TARGET_PRODUCT_ALLOCATION_TOLERANCE;
-  const monthStats = buildQuarterMonthAllocationStats(yearData, quarterKey, deps);
+  for (const month of TARGET_ALLOCATION_MONTHS) {
+    const monthKey = String(month);
+    let monthTotal = 0;
+    for (const entry of Object.values(allocations)) {
+      if (!entry || typeof entry !== "object") continue;
+      const months = getProductAllocationMonths(entry, metric);
+      monthTotal += deps.normalizeTargetNumber(months[monthKey]);
+    }
+    monthlyTotals[monthKey] = deps.roundMoney(monthTotal);
+    totalAllocated += monthTotal;
+  }
 
-  dom.targetProductAllocSummaryEl.textContent = `${quarterKey}目标：${deps.formatMoney(quarterTarget)}；已分配：${deps.formatMoney(
-    quarterAllocated,
-  )}；差额：${deps.formatMoney(quarterDiff)}`;
+  totalAllocated = deps.roundMoney(totalAllocated);
+  dom.targetProductAllocSummaryEl.textContent = `当前口径：${meta.label}；年度分配合计：${deps.formatMoney(totalAllocated)}${meta.unit}`;
 
   dom.targetProductAllocHintEl.classList.remove(
     "target-product-alloc-hint-ok",
@@ -562,38 +655,10 @@ function renderTargetProductAllocationHint(state, dom, deps, yearData) {
     return;
   }
 
-  const monthWarnings = [];
-  const monthErrors = [];
-  for (const stat of monthStats) {
-    if (stat.isMatched) continue;
-    if (stat.diff < 0) {
-      monthWarnings.push(`${stat.month}月尚未分配 ${deps.formatMoney(stat.absDiff)}`);
-    } else {
-      monthErrors.push(`${stat.month}月超分配 ${deps.formatMoney(stat.absDiff)}`);
-    }
-  }
-
-  if (monthWarnings.length === 0 && monthErrors.length === 0 && quarterMatched) {
-    dom.targetProductAllocHintEl.textContent = "该季度3个月均已对齐，季度合计已对齐。";
-    dom.targetProductAllocHintEl.classList.add("target-product-alloc-hint-ok");
-    return;
-  }
-
-  const messages = [];
-  messages.push(...monthWarnings);
-  messages.push(...monthErrors);
-
-  if (!quarterMatched) {
-    if (quarterDiff < 0) {
-      messages.push(`季度合计尚未分配 ${deps.formatMoney(quarterAbsDiff)}`);
-    } else {
-      messages.push(`季度合计超分配 ${deps.formatMoney(quarterAbsDiff)}`);
-    }
-  }
-
-  dom.targetProductAllocHintEl.textContent = messages.join("；");
-  const hasError = monthErrors.length > 0 || quarterDiff > TARGET_PRODUCT_ALLOCATION_TOLERANCE;
-  dom.targetProductAllocHintEl.classList.add(hasError ? "target-product-alloc-hint-error" : "target-product-alloc-hint-warn");
+  const monthlySummary = TARGET_ALLOCATION_MONTHS
+    .map((month) => `${month}月${deps.formatMoney(monthlyTotals[String(month)])}`)
+    .join("；");
+  dom.targetProductAllocHintEl.textContent = `当前口径分配独立保存，不参与目标生效校验。月汇总：${monthlySummary}`;
 }
 
 export function parseTargetInputValue(rawValue) {
@@ -614,12 +679,14 @@ export function parseTargetInputValue(rawValue) {
   return { ok: true, value: Math.round((value + Number.EPSILON) * 100) / 100 };
 }
 
-export function validateYearTargets(yearData, deps) {
+export function validateYearTargets(yearData, deps, metric = "amount") {
+  const meta = getMetricMeta(metric);
+  const metricTargets = getYearMetricTargets(yearData, metric);
   const errors = [];
   const quarterStates = {};
 
   for (const quarter of deps.TARGET_QUARTERS) {
-    const quarterData = yearData.quarters[quarter.key];
+    const quarterData = metricTargets.quarters[quarter.key];
     const quarterTarget = deps.normalizeTargetNumber(quarterData.quarterTarget);
     const monthSum = deps.roundMoney(
       quarter.months.reduce((sum, month) => sum + deps.normalizeTargetNumber(quarterData.months[String(month)]), 0),
@@ -639,7 +706,7 @@ export function validateYearTargets(yearData, deps) {
         quarterKey: quarter.key,
         quarterTarget,
         monthSum,
-        message: `${quarter.key} 季度目标(${deps.formatMoney(quarterTarget)})与月度合计(${deps.formatMoney(monthSum)})不一致。`,
+        message: `${quarter.key} ${meta.targetLabel}(${deps.formatMoney(quarterTarget)})与月度合计(${deps.formatMoney(monthSum)})不一致。`,
       });
     }
   }
@@ -680,11 +747,7 @@ export function ensureYearTargets(state, year, deps) {
 export function getTargetYearOptions() {
   const currentYear = getCurrentTargetYear();
   const years = [];
-  for (
-    let year = currentYear - TARGET_YEAR_RANGE_OFFSET;
-    year <= currentYear + TARGET_YEAR_RANGE_OFFSET;
-    year += 1
-  ) {
+  for (let year = currentYear - TARGET_YEAR_RANGE_OFFSET; year <= currentYear + TARGET_YEAR_RANGE_OFFSET; year += 1) {
     years.push(year);
   }
   return years;
@@ -694,51 +757,27 @@ export function getCurrentTargetYear() {
   return new Date().getFullYear();
 }
 
-export function getEffectiveMonthlyTargetMap(state, year, deps) {
+export function getEffectiveMonthlyTargetMap(state, year, deps, metric = "amount") {
   const yearNum = Number(year);
   if (!Number.isInteger(yearNum)) return null;
 
   const yearData = state.targets.years[String(yearNum)];
   if (!yearData) return null;
 
-  const validation = validateYearTargets(yearData, deps);
+  const validation = validateYearTargets(yearData, deps, metric);
   if (!validation.isEffective) return null;
 
-  const monthMap = {};
-  for (const quarter of deps.TARGET_QUARTERS) {
-    const quarterData = yearData.quarters[quarter.key];
-    for (const month of quarter.months) {
-      const monthKey = `${yearNum}-${String(month).padStart(2, "0")}`;
-      monthMap[monthKey] = deps.normalizeTargetNumber(quarterData.months[String(month)]);
-    }
-  }
-
-  return monthMap;
+  return buildMonthlyTargetMap(yearNum, yearData, metric);
 }
 
-export function getProductMonthlyAllocationMap(state, year, deps) {
+export function getProductMonthlyAllocationMap(state, year, _deps, metric = "amount") {
   const yearNum = Number(year);
   if (!Number.isInteger(yearNum)) return null;
 
   const yearData = state.targets.years[String(yearNum)];
   if (!yearData || typeof yearData !== "object") return null;
 
-  const allocations = getYearProductAllocations(yearData);
-  const result = {};
-  for (const month of TARGET_ALLOCATION_MONTHS) {
-    const monthKey = String(month);
-    const ym = `${yearNum}-${String(month).padStart(2, "0")}`;
-    const byProduct = {};
-
-    for (const [productId, entry] of Object.entries(allocations)) {
-      if (!entry || typeof entry !== "object") continue;
-      byProduct[productId] = deps.normalizeTargetNumber(entry.months ? entry.months[monthKey] : 0);
-    }
-
-    result[ym] = byProduct;
-  }
-
-  return result;
+  return buildProductAllocationMap(yearNum, yearData, metric);
 }
 
 function syncProductAllocationsWithProducts(state, yearData, deps) {
@@ -764,8 +803,8 @@ function syncProductAllocationsWithProducts(state, yearData, deps) {
   }
 
   for (const product of state.products) {
-    const entry = ensureProductAllocationEntry(allocations, product.id, product.productName, deps);
-    if (entry.changed) changed = true;
+    const result = ensureProductAllocationEntry(allocations, product.id, product.productName, deps);
+    if (result.changed) changed = true;
   }
 
   for (const [productId, entry] of Object.entries(allocations)) {
@@ -774,9 +813,8 @@ function syncProductAllocationsWithProducts(state, yearData, deps) {
       changed = true;
       continue;
     }
-
-    const normalizedEntry = ensureProductAllocationEntry(allocations, productId, String(entry.productName || "").trim(), deps);
-    if (normalizedEntry.changed) changed = true;
+    const result = ensureProductAllocationEntry(allocations, productId, String(entry.productName || "").trim(), deps);
+    if (result.changed) changed = true;
   }
 
   return changed;
@@ -816,51 +854,40 @@ function ensureProductAllocationEntry(allocations, productId, productName, deps)
     changed = true;
   }
 
-  if (!entry.months || typeof entry.months !== "object") {
-    entry.months = createDefaultProductAllocationMonths();
-    changed = true;
-  }
-
-  for (const month of TARGET_ALLOCATION_MONTHS) {
-    const monthKey = String(month);
-    const normalized = deps.normalizeTargetNumber(entry.months[monthKey]);
-    if (entry.months[monthKey] !== normalized) {
-      entry.months[monthKey] = normalized;
+  for (const metric of ["amount", "quantity"]) {
+    const key = metric === "quantity" ? "quantityMonths" : "amountMonths";
+    const normalizedMonths = getProductAllocationMonths(entry, metric);
+    if (!entry[key] || typeof entry[key] !== "object") {
+      entry[key] = normalizedMonths;
       changed = true;
+      continue;
+    }
+    for (const month of TARGET_ALLOCATION_MONTHS) {
+      const monthKey = String(month);
+      const normalizedValue = deps.normalizeTargetNumber(normalizedMonths[monthKey]);
+      if (entry[key][monthKey] !== normalizedValue) {
+        entry[key][monthKey] = normalizedValue;
+        changed = true;
+      }
     }
   }
 
   return { changed, entry };
 }
 
-function createDefaultProductAllocationEntry(productId, productName) {
-  return {
-    productId: String(productId || "").trim(),
-    productName: String(productName || "").trim(),
-    months: createDefaultProductAllocationMonths(),
-  };
-}
-
-function createDefaultProductAllocationMonths() {
-  const months = {};
-  for (const month of TARGET_ALLOCATION_MONTHS) {
-    months[String(month)] = 0;
-  }
-  return months;
-}
-
-function getProductAllocationRowsForQuarter(state, yearData, quarterMonths, deps) {
+function getProductAllocationRows(state, yearData, metric, deps) {
   const allocations = getYearProductAllocations(yearData);
   const activeIds = new Set(state.products.map((item) => item.id));
 
   const activeRows = state.products.map((product) => {
     const entry = allocations[product.id] && typeof allocations[product.id] === "object" ? allocations[product.id] : null;
-    const months = entry && entry.months && typeof entry.months === "object" ? entry.months : {};
+    const months = getProductAllocationMonths(entry, metric);
     const valuesByMonth = {};
-    for (const month of quarterMonths) {
+    for (const month of TARGET_ALLOCATION_MONTHS) {
       const monthKey = String(month);
       valuesByMonth[monthKey] = deps.normalizeTargetNumber(months[monthKey]);
     }
+
     return {
       productId: product.id,
       productName: product.productName,
@@ -872,10 +899,11 @@ function getProductAllocationRowsForQuarter(state, yearData, quarterMonths, deps
   const deletedRows = Object.entries(allocations)
     .filter(([productId]) => !activeIds.has(productId))
     .map(([productId, entry]) => {
+      const months = getProductAllocationMonths(entry, metric);
       const valuesByMonth = {};
-      for (const month of quarterMonths) {
+      for (const month of TARGET_ALLOCATION_MONTHS) {
         const monthKey = String(month);
-        valuesByMonth[monthKey] = deps.normalizeTargetNumber(entry && entry.months ? entry.months[monthKey] : 0);
+        valuesByMonth[monthKey] = deps.normalizeTargetNumber(months[monthKey]);
       }
       return {
         productId,
@@ -892,91 +920,4 @@ function getProductAllocationRowsForQuarter(state, yearData, quarterMonths, deps
     );
 
   return activeRows.concat(deletedRows);
-}
-
-function getQuarterTargetValue(yearData, quarterKey, deps) {
-  const quarterMonths = getQuarterMonthsByKey(quarterKey, deps);
-  const quarterData = yearData.quarters[quarterKey];
-  if (!quarterData) return 0;
-
-  let sum = 0;
-  for (const month of quarterMonths) {
-    sum += deps.normalizeTargetNumber(quarterData.months[String(month)]);
-  }
-  return deps.roundMoney(sum);
-}
-
-function getQuarterAllocatedValue(yearData, quarterKey, deps) {
-  const quarterMonths = getQuarterMonthsByKey(quarterKey, deps);
-  const allocations = getYearProductAllocations(yearData);
-  let sum = 0;
-  for (const entry of Object.values(allocations)) {
-    if (!entry || typeof entry !== "object") continue;
-    const months = entry.months && typeof entry.months === "object" ? entry.months : {};
-    for (const month of quarterMonths) {
-      sum += deps.normalizeTargetNumber(months[String(month)]);
-    }
-  }
-  return deps.roundMoney(sum);
-}
-
-function buildQuarterMonthAllocationStats(yearData, quarterKey, deps) {
-  const quarterMonths = getQuarterMonthsByKey(quarterKey, deps);
-  const allocations = getYearProductAllocations(yearData);
-  const quarterData = yearData.quarters[quarterKey];
-  if (!quarterData) return [];
-
-  const stats = [];
-  for (const month of quarterMonths) {
-    const monthKey = String(month);
-    const target = deps.normalizeTargetNumber(quarterData.months[monthKey]);
-    let allocated = 0;
-    for (const entry of Object.values(allocations)) {
-      if (!entry || typeof entry !== "object") continue;
-      const months = entry.months && typeof entry.months === "object" ? entry.months : {};
-      allocated += deps.normalizeTargetNumber(months[monthKey]);
-    }
-    allocated = deps.roundMoney(allocated);
-    const diff = deps.roundMoney(allocated - target);
-    const absDiff = deps.roundMoney(Math.abs(diff));
-    stats.push({
-      month,
-      target,
-      allocated,
-      diff,
-      absDiff,
-      isMatched: absDiff <= TARGET_PRODUCT_ALLOCATION_TOLERANCE,
-    });
-  }
-
-  return stats;
-}
-
-function normalizeTargetAllocationMonth(raw) {
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 12) {
-    return 1;
-  }
-  return value;
-}
-
-function normalizeTargetAllocationQuarter(raw, deps) {
-  const key = String(raw || "").trim().toUpperCase();
-  if (deps.TARGET_QUARTERS.some((quarter) => quarter.key === key)) {
-    return key;
-  }
-  return getCurrentTargetAllocationQuarter();
-}
-
-function getCurrentTargetAllocationQuarter() {
-  return `Q${Math.floor(new Date().getMonth() / 3) + 1}`;
-}
-
-function getQuarterMonthsByKey(quarterKey, deps) {
-  const found = deps.TARGET_QUARTERS.find((quarter) => quarter.key === quarterKey);
-  if (found && Array.isArray(found.months) && found.months.length === 3) {
-    return found.months;
-  }
-  const fallback = deps.TARGET_QUARTERS[0];
-  return fallback && Array.isArray(fallback.months) ? fallback.months : [1, 2, 3];
 }

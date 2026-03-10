@@ -101,7 +101,8 @@ function collectToolSummaryEvidence(toolResult, bucket) {
   }
 
   pushEvidenceItem(bucket, "销售额", trimString(summary?.sales_amount), trimString(toolResult?.range?.period));
-  pushEvidenceItem(bucket, "达成率", trimString(summary?.amount_achievement), trimString(toolResult?.range?.period));
+  pushEvidenceItem(bucket, "金额达成率", trimString(summary?.amount_achievement), trimString(toolResult?.range?.period));
+  pushEvidenceItem(bucket, "数量达成率", trimString(summary?.quantity_achievement), trimString(toolResult?.range?.period));
   pushEvidenceItem(bucket, "销量", trimString(summary?.sales_volume), trimString(toolResult?.range?.period));
 
   const keySignals = Array.isArray(summary?.key_business_signals) ? summary.key_business_signals : [];

@@ -18,6 +18,7 @@ import {
   buildProductsNameMap,
   fetchProductsCatalog,
   fetchSalesRecordsByWindow,
+  fetchSalesTargetsByYears,
   resolveRetrievalWindowFromSnapshot,
 } from "./retrieval-data.js";
 import {
@@ -183,6 +184,32 @@ function compareYm(left, right) {
     return parsedLeft.year - parsedRight.year;
   }
   return parsedLeft.month - parsedRight.month;
+}
+
+function extractYearsFromMonthKeys(monthKeys) {
+  return Array.from(
+    new Set(
+      (Array.isArray(monthKeys) ? monthKeys : [])
+        .map((ym) => Number(String(ym || "").slice(0, 4)))
+        .filter((year) => Number.isInteger(year)),
+    ),
+  ).sort((left, right) => left - right);
+}
+
+async function buildMetricsWithTargets(ctx, records, monthKeys, options = {}) {
+  let targetsBundle = null;
+  if (ctx && typeof ctx.getTargets === "function") {
+    try {
+      const targetYears = Array.isArray(options?.targetYears) && options.targetYears.length > 0 ? options.targetYears : extractYearsFromMonthKeys(monthKeys);
+      targetsBundle = await ctx.getTargets(targetYears);
+    } catch (_error) {
+      targetsBundle = null;
+    }
+  }
+  return buildAggregatedMetrics(records, monthKeys, {
+    ...options,
+    targetsBundle,
+  });
 }
 
 function buildNamedHospitalResolution(targetNames, candidateRows) {
@@ -424,10 +451,13 @@ function buildToolExecutionContext({ businessSnapshot, authToken, env }, deps = 
   const resolveWindowImpl = deps.resolveRetrievalWindowFromSnapshot || resolveRetrievalWindowFromSnapshot;
   const fetchSalesRecordsByWindowImpl = deps.fetchSalesRecordsByWindow || fetchSalesRecordsByWindow;
   const fetchProductsCatalogImpl = deps.fetchProductsCatalog || fetchProductsCatalog;
+  const fetchSalesTargetsByYearsImpl = deps.fetchSalesTargetsByYears || fetchSalesTargetsByYears;
 
   let windowInfoCache = null;
   let recordsCache = null;
   let productCatalogCache = null;
+  let targetsCache = null;
+  let targetsCacheKey = "";
 
   return {
     snapshot: normalizedSnapshot,
@@ -454,13 +484,29 @@ function buildToolExecutionContext({ businessSnapshot, authToken, env }, deps = 
       }
       return productCatalogCache;
     },
+    async getTargets(years = []) {
+      const fallbackWindow = await this.getWindowInfo();
+      const targetYears = Array.isArray(years) && years.length > 0 ? years : extractYearsFromMonthKeys(fallbackWindow.month_keys);
+      const cacheKey = targetYears.join(",");
+      if (!targetsCache || targetsCacheKey !== cacheKey) {
+        try {
+          targetsCache = await fetchSalesTargetsByYearsImpl(targetYears, authToken, env);
+        } catch (_error) {
+          targetsCache = null;
+        }
+        targetsCacheKey = cacheKey;
+      }
+      return targetsCache;
+    },
   };
 }
 
 async function executeOverallSummary(args, ctx) {
   const windowInfo = await ctx.getWindowInfo();
   const records = await ctx.getRecords();
-  const metrics = buildAggregatedMetrics(records, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, records, windowInfo.month_keys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+  });
   const trends = buildRecentTrendsFromMetrics(metrics, Math.min(6, windowInfo.month_keys.length));
   const hasRows = trends.length > 0;
   return {
@@ -492,7 +538,7 @@ async function executeProductSummary(args, ctx) {
   const windowInfo = await ctx.getWindowInfo();
   const records = await ctx.getRecords();
   const productCatalog = await ctx.getProductCatalog();
-  const metrics = buildAggregatedMetrics(records, windowInfo.month_keys);
+  const productNameMap = buildProductsNameMap(productCatalog);
   const includeAllProducts = Boolean(args?.include_all_products);
   const requestedProductNames = normalizeStringArray(args?.product_names);
   const safeLimit = toPositiveInt(args?.limit, includeAllProducts ? ON_DEMAND_PRODUCT_FULL_SAFE_CAP : 5, ON_DEMAND_PRODUCT_FULL_SAFE_CAP);
@@ -502,9 +548,13 @@ async function executeProductSummary(args, ctx) {
   let unmatchedNames = [];
   let coverageCode = "none";
   let matchMode = "none";
+  let metrics = await buildMetricsWithTargets(ctx, records, windowInfo.month_keys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+    productNameMap,
+    scopeProductIds: includeAllProducts ? productCatalog.map((item) => trimString(item?.product_id)) : [],
+  });
 
   if (includeAllProducts) {
-    const productNameMap = buildProductsNameMap(productCatalog);
     rows = buildProductPerformanceRows(metrics, safeLimit, {
       includeAllCatalogProducts: true,
       productCatalog,
@@ -516,13 +566,17 @@ async function executeProductSummary(args, ctx) {
   } else if (requestedProductNames.length > 0) {
     const matched = matchNamedProductsFromCatalog(requestedProductNames.join("，"), productCatalog, ON_DEMAND_PRODUCT_NAMED_SAFE_CAP);
     const requestedProducts = Array.isArray(matched?.requestedProducts) ? matched.requestedProducts : [];
+    metrics = await buildMetricsWithTargets(ctx, records, windowInfo.month_keys, {
+      scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT,
+      productNameMap,
+      scopeProductIds: requestedProducts.map((item) => trimString(item?.product_id)),
+    });
     matchMode = trimString(matched?.matchMode) || "none";
     const requestedLookupSet = new Set(requestedProducts.map((item) => normalizeProductNameForMatch(item?.lookup_key || item?.product_name)).filter((item) => item));
     matchedNames = requestedProducts.map((item) => trimString(item?.product_name)).filter((item) => item);
     unmatchedNames = requestedProductNames.filter(
       (item) => !requestedLookupSet.has(normalizeProductNameForMatch(item)),
     );
-    const productNameMap = buildProductsNameMap(productCatalog);
     rows = buildProductPerformanceRows(metrics, Math.min(safeLimit, Math.max(requestedProducts.length, 1)), {
       includeNamedProducts: true,
       requestedProducts,
@@ -540,7 +594,7 @@ async function executeProductSummary(args, ctx) {
   } else {
     rows = buildProductPerformanceRows(metrics, safeLimit, {
       productCatalog,
-      productNameMap: buildProductsNameMap(productCatalog),
+      productNameMap,
     });
     matchedNames = rows.map((item) => trimString(item?.product_name)).filter((item) => item);
     coverageCode = rows.length > 0 ? "full" : "none";
@@ -590,7 +644,9 @@ async function executeProductSummary(args, ctx) {
 async function executeHospitalSummary(args, ctx) {
   const windowInfo = await ctx.getWindowInfo();
   const records = await ctx.getRecords();
-  const metrics = buildAggregatedMetrics(records, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, records, windowInfo.month_keys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+  });
   const requestedHospitalNames = normalizeStringArray(args?.hospital_names);
   const includeMonthly = Boolean(args?.include_monthly);
   const safeLimit = toPositiveInt(args?.limit, requestedHospitalNames.length > 0 ? requestedHospitalNames.length : 5, ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP);
@@ -687,7 +743,9 @@ async function executeProductHospitalContribution(args, ctx) {
     (item) => !matchedProductLookupSet.has(normalizeProductNameForMatch(item)),
   );
   const filtered = filterRecordsForProductHospital(records, requestedProducts);
-  let metrics = buildAggregatedMetrics(filtered.filtered_records, windowInfo.month_keys);
+  let metrics = await buildMetricsWithTargets(ctx, filtered.filtered_records, windowInfo.month_keys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+  });
   let hospitalRows = buildHospitalPerformanceRows(metrics, safeLimit, {});
   let matchedHospitalNames = hospitalRows.map((item) => trimString(item?.hospital_name)).filter((item) => item);
   let unmatchedHospitalNames = [];
@@ -697,7 +755,9 @@ async function executeProductHospitalContribution(args, ctx) {
     matchedHospitalNames = resolution.matchedNames;
     unmatchedHospitalNames = resolution.unmatchedNames;
     const filteredHospitalRecords = filterRecordsByResolvedHospitalNames(filtered.filtered_records, matchedHospitalNames);
-    metrics = buildAggregatedMetrics(filteredHospitalRecords, windowInfo.month_keys);
+    metrics = await buildMetricsWithTargets(ctx, filteredHospitalRecords, windowInfo.month_keys, {
+      scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL,
+    });
     hospitalRows = buildHospitalPerformanceRows(metrics, Math.min(safeLimit, Math.max(matchedHospitalNames.length, 1)), {});
   }
 
@@ -796,7 +856,9 @@ async function executeTrendSummary(args, ctx) {
     coverageCode = resolution.coverageCode;
   }
 
-  const metrics = buildAggregatedMetrics(filteredRecords, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, filteredRecords, windowInfo.month_keys, {
+    scopeDimension: dimension,
+  });
   const trends = buildRecentTrendsFromMetrics(metrics, granularity === "monthly" ? TOOL_TREND_LIMIT : Math.min(6, windowInfo.month_keys.length));
 
   return {
@@ -980,7 +1042,9 @@ async function executeScopeBreakdown(args, ctx) {
     dimension: scopeDimension,
     targetNames,
   });
-  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, selection.filteredRecords, windowInfo.month_keys, {
+    scopeDimension: scopeDimension,
+  });
   let baseRows = [];
   if (breakdownDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
     const productCatalog = await ctx.getProductCatalog();
@@ -1150,8 +1214,14 @@ async function executePeriodComparisonSummary(args, ctx) {
   const comparisonMonthKeys = listMonthKeysInRange(comparisonStartMonth, comparisonEndMonth);
   const primaryRecords = filterRecordsByMonthWindow(records, primaryStartMonth, primaryEndMonth);
   const comparisonRecords = filterRecordsByMonthWindow(records, comparisonStartMonth, comparisonEndMonth);
-  const primaryMetrics = buildAggregatedMetrics(primaryRecords, primaryMonthKeys);
-  const comparisonMetrics = buildAggregatedMetrics(comparisonRecords, comparisonMonthKeys);
+  const primaryMetrics = await buildMetricsWithTargets(ctx, primaryRecords, primaryMonthKeys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+    targetYears: extractYearsFromMonthKeys(primaryMonthKeys),
+  });
+  const comparisonMetrics = await buildMetricsWithTargets(ctx, comparisonRecords, comparisonMonthKeys, {
+    scopeDimension: QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL,
+    targetYears: extractYearsFromMonthKeys(comparisonMonthKeys),
+  });
   const summary = buildPeriodComparisonSummary(primaryMetrics, comparisonMetrics);
 
   return {
@@ -1245,7 +1315,9 @@ async function executeEntityRanking(args, ctx) {
       : ON_DEMAND_HOSPITAL_NAMED_SAFE_CAP,
   );
   const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
-  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, selection.filteredRecords, windowInfo.month_keys, {
+    scopeDimension: dimension,
+  });
   let baseRows = [];
 
   if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
@@ -1335,7 +1407,9 @@ async function executeAnomalyInsights(args, ctx) {
   const targetNames = normalizeStringArray(args?.target_names);
   const safeLimit = toPositiveInt(args?.limit, 3, TOOL_TREND_LIMIT);
   const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
-  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, selection.filteredRecords, windowInfo.month_keys, {
+    scopeDimension: dimension,
+  });
   const trendRows = buildRecentTrendsFromMetrics(metrics, TOOL_TREND_LIMIT);
   const rows = sortRowsByMetric(trendRows, "change_value", "top")
     .map((row) => ({
@@ -1397,7 +1471,9 @@ async function executeRiskOpportunitySummary(args, ctx) {
   const dimension = trimString(args?.dimension) || QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
   const targetNames = normalizeStringArray(args?.target_names);
   const selection = await resolveDimensionSelection({ ctx, records, windowInfo, dimension, targetNames });
-  const metrics = buildAggregatedMetrics(selection.filteredRecords, windowInfo.month_keys);
+  const metrics = await buildMetricsWithTargets(ctx, selection.filteredRecords, windowInfo.month_keys, {
+    scopeDimension: dimension,
+  });
   const riskHints = buildRiskOpportunityHints(metrics);
   const rows = [
     ...riskHints.risk_alerts.map((text) => ({ signal_type: "risk", text })),

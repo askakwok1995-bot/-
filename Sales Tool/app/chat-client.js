@@ -14,6 +14,8 @@ function createEmptyBusinessSnapshot() {
     performance_overview: {
       sales_amount: "--",
       sales_amount_value: null,
+      amount_target: "--",
+      amount_target_value: null,
       amount_achievement: "--",
       amount_achievement_ratio: null,
       latest_key_change: "--",
@@ -21,6 +23,11 @@ function createEmptyBusinessSnapshot() {
       latest_key_change_code: "unknown",
       sales_volume: "--",
       sales_volume_value: null,
+      quantity_target: "--",
+      quantity_target_value: null,
+      quantity_achievement: "--",
+      quantity_achievement_ratio: null,
+      preferred_achievement_metric: "none",
     },
     key_business_signals: [],
     product_performance: [],
@@ -40,8 +47,17 @@ function isValidYm(value) {
 }
 
 function normalizeNumericValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const text = trimString(value).replace(/,/g, "");
+    if (!text) return null;
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
   const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : null;
+  return value === null || value === undefined ? null : Number.isFinite(numberValue) ? numberValue : null;
 }
 
 function formatAmountWanText(value) {
@@ -186,28 +202,18 @@ export function buildBusinessSnapshotPayload(state, deps) {
   const reportSnapshot = buildReportSnapshot({ records: reportRecords }, deps, { startYm, endYm });
   const monthRows = Array.isArray(reportSnapshot?.monthRows) ? reportSnapshot.monthRows : [];
   const productRows = Array.isArray(reportSnapshot?.productRows) ? reportSnapshot.productRows : [];
-
-  let totalAmount = 0;
-  let totalQuantity = 0;
-  let targetAmountSum = 0;
-  let hasMissingTarget = false;
-
-  monthRows.forEach((row) => {
-    const amount = Number(row?.amount);
-    const quantity = Number(row?.quantity);
-    const targetAmount = Number(row?.targetAmount);
-    if (Number.isFinite(amount)) totalAmount += amount;
-    if (Number.isFinite(quantity)) totalQuantity += quantity;
-    if (Number.isFinite(targetAmount)) {
-      targetAmountSum += targetAmount;
-    } else {
-      hasMissingTarget = true;
-    }
-  });
-
-  totalAmount = deps.roundMoney(totalAmount);
-  totalQuantity = deps.roundMoney(totalQuantity);
-  targetAmountSum = deps.roundMoney(targetAmountSum);
+  const totalAmount = normalizeNumericValue(reportSnapshot?.rangeAmountTotal) ?? 0;
+  const totalQuantity = normalizeNumericValue(reportSnapshot?.rangeQuantityTotal) ?? 0;
+  const targetAmountValue = normalizeNumericValue(reportSnapshot?.rangeTargetAmountTotal);
+  const targetQuantityValue = normalizeNumericValue(reportSnapshot?.rangeTargetQuantityTotal);
+  const amountAchievementRatio = normalizeNumericValue(reportSnapshot?.rangeAmountAchievement);
+  const quantityAchievementRatio = normalizeNumericValue(reportSnapshot?.rangeQuantityAchievement);
+  let preferredAchievementMetric = "none";
+  if (amountAchievementRatio !== null) {
+    preferredAchievementMetric = "amount";
+  } else if (quantityAchievementRatio !== null) {
+    preferredAchievementMetric = "quantity";
+  }
 
   const latestMonthRow = monthRows.length > 0 ? monthRows[monthRows.length - 1] : null;
   let latestKeyChange = "--";
@@ -223,17 +229,23 @@ export function buildBusinessSnapshotPayload(state, deps) {
     latestKeyChange = `最近月金额同比 ${formatDeltaPercentText(latestKeyChangeRatio)}`;
   }
 
-  const achievementRatio = !hasMissingTarget && targetAmountSum > 0 ? totalAmount / targetAmountSum : null;
   snapshot.performance_overview = {
     sales_amount: formatAmountWanText(totalAmount),
     sales_amount_value: totalAmount,
-    amount_achievement: achievementRatio === null ? "--" : formatPercentText(achievementRatio),
-    amount_achievement_ratio: achievementRatio,
+    amount_target: formatAmountWanText(targetAmountValue),
+    amount_target_value: targetAmountValue,
+    amount_achievement: formatPercentText(amountAchievementRatio),
+    amount_achievement_ratio: amountAchievementRatio,
     latest_key_change: latestKeyChange,
     latest_key_change_ratio: latestKeyChangeRatio,
     latest_key_change_code: latestKeyChangeCode,
     sales_volume: formatQuantityBoxText(totalQuantity, deps),
     sales_volume_value: totalQuantity,
+    quantity_target: formatQuantityBoxText(targetQuantityValue, deps),
+    quantity_target_value: targetQuantityValue,
+    quantity_achievement: formatPercentText(quantityAchievementRatio),
+    quantity_achievement_ratio: quantityAchievementRatio,
+    preferred_achievement_metric: preferredAchievementMetric,
   };
 
   const keySignals = [];
@@ -266,13 +278,27 @@ export function buildBusinessSnapshotPayload(state, deps) {
     const changeMeta = resolveProductChangeMeta(row, productMomRatioMap);
     const salesAmountValue = normalizeNumericValue(row?.amount);
     const salesShareRatio = normalizeNumericValue(row?.amountShare);
+    const targetAmount = normalizeNumericValue(row?.targetAmount);
+    const amountAchievement = normalizeNumericValue(row?.amountAchievement);
+    const targetQuantity = normalizeNumericValue(row?.targetQuantity);
+    const quantityAchievement = normalizeNumericValue(row?.quantityAchievement);
     return {
       product_name: trimString(row?.productName) || "未命名产品",
       product_code: parseProductCodeFromKey(row?.productKey),
       sales_amount: formatAmountWanText(salesAmountValue),
       sales_amount_value: salesAmountValue,
+      amount_target: formatAmountWanText(targetAmount),
+      amount_target_value: targetAmount,
+      amount_achievement: formatPercentText(amountAchievement),
+      amount_achievement_ratio: amountAchievement,
       sales_share: formatPercentText(salesShareRatio),
       sales_share_ratio: salesShareRatio,
+      sales_volume: formatQuantityBoxText(row?.quantity, deps),
+      sales_volume_value: normalizeNumericValue(row?.quantity),
+      quantity_target: formatQuantityBoxText(targetQuantity, deps),
+      quantity_target_value: targetQuantity,
+      quantity_achievement: formatPercentText(quantityAchievement),
+      quantity_achievement_ratio: quantityAchievement,
       change_metric: changeMeta.changeMetric,
       change_metric_code: changeMeta.changeMetricCode,
       change_value: changeMeta.changeValue,

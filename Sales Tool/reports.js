@@ -45,6 +45,8 @@ const CHART_COMPACT_SIZE_BY_KEY = {
   [CHART_KEYS.hospitalShare]: "pie",
   [CHART_KEYS.hospitalTrend]: "wide",
 };
+const TARGET_CHART_KEYS = Object.freeze([CHART_KEYS.monthlyTrend, CHART_KEYS.quarterlyTrend, CHART_KEYS.productPerformance]);
+const DEFAULT_REPORT_TARGET_CHART_METRIC = "amount";
 export const DEFAULT_REPORT_CHART_PALETTE_ID = "classic";
 export const REPORT_CHART_PALETTES = [
   {
@@ -265,6 +267,84 @@ let isChartEventsBound = false;
 let isChartResizeBound = false;
 let latestChartRange = null;
 let latestChartPointCounts = null;
+
+function normalizeReportTargetChartMetric(raw) {
+  return String(raw || "").trim().toLowerCase() === "quantity" ? "quantity" : "amount";
+}
+
+function ensureReportTargetChartMetricsState(state) {
+  if (!state || typeof state !== "object") {
+    return {};
+  }
+  if (!state.reportTargetChartMetrics || typeof state.reportTargetChartMetrics !== "object") {
+    state.reportTargetChartMetrics = {};
+  }
+  TARGET_CHART_KEYS.forEach((chartKey) => {
+    state.reportTargetChartMetrics[chartKey] = normalizeReportTargetChartMetric(
+      state.reportTargetChartMetrics[chartKey] || DEFAULT_REPORT_TARGET_CHART_METRIC,
+    );
+  });
+  return state.reportTargetChartMetrics;
+}
+
+function getReportTargetChartMetric(state, chartKey) {
+  const metrics = ensureReportTargetChartMetricsState(state);
+  const safeChartKey = String(chartKey || "").trim();
+  if (!TARGET_CHART_KEYS.includes(safeChartKey)) {
+    return DEFAULT_REPORT_TARGET_CHART_METRIC;
+  }
+  return metrics[safeChartKey] || DEFAULT_REPORT_TARGET_CHART_METRIC;
+}
+
+function setReportTargetChartMetric(state, chartKey, metric) {
+  const metrics = ensureReportTargetChartMetricsState(state);
+  const safeChartKey = String(chartKey || "").trim();
+  if (!TARGET_CHART_KEYS.includes(safeChartKey)) {
+    return;
+  }
+  metrics[safeChartKey] = normalizeReportTargetChartMetric(metric);
+}
+
+function getReportTargetChartMetricButtons(chartKey) {
+  if (typeof document === "undefined") {
+    return [];
+  }
+  return Array.from(
+    document.querySelectorAll(`[data-report-chart-metric-btn="true"][data-chart-key="${String(chartKey || "").trim()}"]`),
+  );
+}
+
+function renderReportTargetChartMetricButtons(state) {
+  TARGET_CHART_KEYS.forEach((chartKey) => {
+    const activeMetric = getReportTargetChartMetric(state, chartKey);
+    getReportTargetChartMetricButtons(chartKey).forEach((button) => {
+      const buttonMetric = normalizeReportTargetChartMetric(button.getAttribute("data-chart-metric"));
+      const isActive = buttonMetric === activeMetric;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  });
+}
+
+function bindReportTargetChartMetricButtons(state, dom, deps) {
+  TARGET_CHART_KEYS.forEach((chartKey) => {
+    getReportTargetChartMetricButtons(chartKey).forEach((button) => {
+      if (button.dataset.metricBound === "true") {
+        return;
+      }
+      button.dataset.metricBound = "true";
+      button.addEventListener("click", () => {
+        const nextMetric = normalizeReportTargetChartMetric(button.getAttribute("data-chart-metric"));
+        if (getReportTargetChartMetric(state, chartKey) === nextMetric) {
+          return;
+        }
+        setReportTargetChartMetric(state, chartKey, nextMetric);
+        renderReportTargetChartMetricButtons(state);
+        renderReportSection(state, dom, deps);
+      });
+    });
+  });
+}
 
 function normalizeReportChartPaletteId(raw) {
   const value = String(raw || "").trim();
@@ -571,6 +651,7 @@ export function renderReportSection(state, dom, deps) {
   renderReportChartPaletteSelect(state, dom);
   renderReportChartDataLabelModeSelect(state, dom);
   renderReportAmountUnitSelect(state, dom);
+  renderReportTargetChartMetricButtons(state);
   const activeAmountUnit = getActiveReportAmountUnit(state);
 
   try {
@@ -603,8 +684,8 @@ export function renderReportSection(state, dom, deps) {
     dom.reportHintEl.classList.remove("report-hint-error");
 
     if (snapshot.hasTargetGap) {
-      const yearsText = snapshot.targetGapYears.join("、");
-      dom.reportHintEl.textContent = `所涉年份总指标未生效，月/季度达成率按缺省展示；产品指标按分配展示（${yearsText}年）。金额单位：${activeAmountUnit.label}。`;
+      const gapLabel = buildTargetGapLabel(snapshot);
+      dom.reportHintEl.textContent = `所涉年份存在未生效指标，月/季度达成率按缺省展示；产品指标按分配展示（${gapLabel || "请补录指标"}）。金额单位：${activeAmountUnit.label}。`;
     } else {
       dom.reportHintEl.textContent = `报表由销售记录自动生成，金额单位：${activeAmountUnit.label}。`;
     }
@@ -619,7 +700,9 @@ export function renderReportSection(state, dom, deps) {
         <td>${deps.escapeHtml(formatPercentCell(row.amountAchievement))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.amountMom))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.targetQuantity, deps))}</td>
         <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityAchievement))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityMom))}</td>
       </tr>
@@ -638,7 +721,9 @@ export function renderReportSection(state, dom, deps) {
         <td>${deps.escapeHtml(formatPercentCell(row.amountAchievement))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.amountQoq))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.targetQuantity, deps))}</td>
         <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityAchievement))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityQoq))}</td>
       </tr>
@@ -647,7 +732,7 @@ export function renderReportSection(state, dom, deps) {
           .join("")
       : `
       <tr>
-        <td colspan="9" class="empty">当前范围不包含完整季度</td>
+        <td colspan="11" class="empty">当前范围不包含完整季度</td>
       </tr>
     `;
 
@@ -663,6 +748,8 @@ export function renderReportSection(state, dom, deps) {
         <td>${deps.escapeHtml(formatPercentCell(row.amountShare))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.amountYoy))}</td>
         <td>${deps.escapeHtml(formatQuantityCell(row.quantity, deps))}</td>
+        <td>${deps.escapeHtml(formatQuantityCell(row.targetQuantity, deps))}</td>
+        <td>${deps.escapeHtml(formatPercentCell(row.quantityAchievement))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityShare))}</td>
         <td>${deps.escapeHtml(formatPercentCell(row.quantityYoy))}</td>
       </tr>
@@ -671,7 +758,7 @@ export function renderReportSection(state, dom, deps) {
           .join("")
       : `
       <tr>
-        <td colspan="9" class="empty">当前范围无产品销售数据</td>
+        <td colspan="11" class="empty">当前范围无产品销售数据</td>
       </tr>
     `;
 
@@ -725,6 +812,8 @@ export function bindReportEvents(state, dom, deps) {
   renderReportChartPaletteSelect(state, dom);
   renderReportChartDataLabelModeSelect(state, dom);
   renderReportAmountUnitSelect(state, dom);
+  renderReportTargetChartMetricButtons(state);
+  bindReportTargetChartMetricButtons(state, dom, deps);
 
   if (dom.reportChartPaletteSelect instanceof HTMLSelectElement) {
     dom.reportChartPaletteSelect.addEventListener("change", () => {
@@ -881,7 +970,7 @@ function buildReportExportSheets(snapshot, deps, activeAmountUnit = getReportAmo
   const moneyHeader = (text) => `${text}（${activeAmountUnit.label}）`;
 
   const monthRows = [
-    ["月份", moneyHeader("指标金额"), moneyHeader("实际金额"), "达成率", "金额同比", "金额环比", "实际数量", "数量同比", "数量环比"],
+    ["月份", moneyHeader("指标金额"), moneyHeader("实际金额"), "金额达成率", "金额同比", "金额环比", "指标数量", "实际数量", "数量达成率", "数量同比", "数量环比"],
     ...snapshot.monthRows.map((row) => [
       formatMonthLabel(row.ym),
       toExportCell(row.targetAmount, "money", deps, activeAmountUnit),
@@ -889,14 +978,16 @@ function buildReportExportSheets(snapshot, deps, activeAmountUnit = getReportAmo
       toExportCell(row.amountAchievement, "percent", deps),
       toExportCell(row.amountYoy, "percent", deps),
       toExportCell(row.amountMom, "percent", deps),
+      toExportCell(row.targetQuantity, "quantity", deps),
       toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityAchievement, "percent", deps),
       toExportCell(row.quantityYoy, "percent", deps),
       toExportCell(row.quantityMom, "percent", deps),
     ]),
   ];
 
   const quarterRows = [
-    ["季度", moneyHeader("指标金额"), moneyHeader("实际金额"), "达成率", "金额同比", "金额环比", "实际数量", "数量同比", "数量环比"],
+    ["季度", moneyHeader("指标金额"), moneyHeader("实际金额"), "金额达成率", "金额同比", "金额环比", "指标数量", "实际数量", "数量达成率", "数量同比", "数量环比"],
     ...snapshot.quarterRows.map((row) => [
       row.label,
       toExportCell(row.targetAmount, "money", deps, activeAmountUnit),
@@ -904,14 +995,16 @@ function buildReportExportSheets(snapshot, deps, activeAmountUnit = getReportAmo
       toExportCell(row.amountAchievement, "percent", deps),
       toExportCell(row.amountYoy, "percent", deps),
       toExportCell(row.amountQoq, "percent", deps),
+      toExportCell(row.targetQuantity, "quantity", deps),
       toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.quantityAchievement, "percent", deps),
       toExportCell(row.quantityYoy, "percent", deps),
       toExportCell(row.quantityQoq, "percent", deps),
     ]),
   ];
 
   const productRows = [
-    ["产品/规格", moneyHeader("实际金额"), moneyHeader("指标金额"), "达成率", "金额占比", "金额同比", "实际数量", "数量占比", "数量同比"],
+    ["产品/规格", moneyHeader("实际金额"), moneyHeader("指标金额"), "金额达成率", "金额占比", "金额同比", "实际数量", "指标数量", "数量达成率", "数量占比", "数量同比"],
     ...snapshot.productRows.map((row) => [
       toExportCell(row.productName, "text", deps),
       toExportCell(row.amount, "money", deps, activeAmountUnit),
@@ -920,6 +1013,8 @@ function buildReportExportSheets(snapshot, deps, activeAmountUnit = getReportAmo
       toExportCell(row.amountShare, "percent", deps),
       toExportCell(row.amountYoy, "percent", deps),
       toExportCell(row.quantity, "quantity", deps),
+      toExportCell(row.targetQuantity, "quantity", deps),
+      toExportCell(row.quantityAchievement, "percent", deps),
       toExportCell(row.quantityShare, "percent", deps),
       toExportCell(row.quantityYoy, "percent", deps),
     ]),
@@ -994,6 +1089,7 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
   const activeAmountUnit = amountUnit || getActiveReportAmountUnit(state);
   const labelMode = normalizeReportChartDataLabelMode(state.reportChartDataLabelMode);
   state.reportChartDataLabelMode = labelMode;
+  renderReportTargetChartMetricButtons(state);
 
   if (!isEchartsReady()) {
     setChartsUnavailableState(dom, "图表组件未加载，仅显示数据表。");
@@ -1020,9 +1116,33 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
     const hospitalShareChart = ensureChartInstance(CHART_KEYS.hospitalShare, dom.chartHospitalShareEl);
     const hospitalTrendChart = ensureChartInstance(CHART_KEYS.hospitalTrend, dom.chartHospitalTrendEl);
 
-    updateMonthlyTrendChart(monthlyTrendChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateQuarterlyTrendChart(quarterlyTrendChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateProductPerformanceChart(productPerformanceChart, snapshot, deps, palette, activeAmountUnit, labelMode);
+    updateMonthlyTrendChart(
+      monthlyTrendChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.monthlyTrend),
+    );
+    updateQuarterlyTrendChart(
+      quarterlyTrendChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.quarterlyTrend),
+    );
+    updateProductPerformanceChart(
+      productPerformanceChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.productPerformance),
+    );
     updateProductMonthlyTrendChart(productMonthlyTrendChart, snapshot, deps, palette, activeAmountUnit, labelMode);
     updateProductTopChart(productTopChart, snapshot, deps, palette, activeAmountUnit, labelMode);
     updateHospitalTopChart(hospitalTopChart, snapshot, deps, palette, activeAmountUnit, labelMode);
@@ -1033,8 +1153,8 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
 
     if (dom.reportChartsHintEl instanceof HTMLElement) {
       if (snapshot.hasTargetGap) {
-        const yearsText = snapshot.targetGapYears.join("、");
-        dom.reportChartsHintEl.textContent = `部分年份总指标未生效，月/季度目标图按缺省值展示；产品分配指标图按可用数据展示（${yearsText}年）。金额单位：${activeAmountUnit.label}。`;
+        const gapLabel = buildTargetGapLabel(snapshot);
+        dom.reportChartsHintEl.textContent = `部分年份指标未生效，月/季度目标图按缺省值展示；产品分配指标图按可用数据展示（${gapLabel || "请补录指标"}）。金额单位：${activeAmountUnit.label}。`;
       } else {
         dom.reportChartsHintEl.textContent = `图表口径与销售分析表一致，金额单位：${activeAmountUnit.label}。`;
       }
@@ -1284,7 +1404,7 @@ function renderEmptyChart(instance, message) {
   );
 }
 
-function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
 
@@ -1293,25 +1413,79 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
     renderEmptyChart(instance, CHART_EMPTY_TEXT);
     return;
   }
-
-  const actualAmountData = snapshot.monthRows.map((row) => {
-    const scaled = scaleAmount(row.amount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : 0;
+  const chartMetric = buildTargetChartMetricPayload(snapshot.monthRows, metric, deps, amountUnit, {
+    amountActualSeriesName: "达成金额",
+    quantityActualSeriesName: "达成数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
   });
-  const targetAmountData = snapshot.monthRows.map((row) => {
-    if (!Number.isFinite(row.targetAmount)) return null;
-    const scaled = scaleAmount(row.targetAmount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : null;
+  const series = [
+    {
+      name: chartMetric.actualSeriesName,
+      type: "bar",
+      barMaxWidth: 22,
+      yAxisIndex: 0,
+      data: chartMetric.actualData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    },
+  ];
+  if (chartMetric.hasTargetSeries) {
+    series.push({
+      name: chartMetric.targetSeriesName,
+      type: "bar",
+      barMaxWidth: 22,
+      yAxisIndex: 0,
+      data: chartMetric.targetData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    });
+    series.push({
+      name: chartMetric.achievementSeriesName,
+      type: "line",
+      smooth: true,
+      connectNulls: false,
+      yAxisIndex: 1,
+      data: chartMetric.achievementData,
+      lineStyle: {
+        width: 2,
+      },
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => formatPercentLabelValue(params.value),
+          }
+        : { show: false },
+      labelLayout: buildChartDataLabelLayout(labelMode),
+    });
+  }
+  series.push({
+    name: chartMetric.growthSeriesName,
+    type: "line",
+    smooth: true,
+    connectNulls: false,
+    yAxisIndex: 1,
+    data: chartMetric.growthData,
+    lineStyle: {
+      type: "dashed",
+      width: 2,
+    },
+    label: labelEnabled
+      ? {
+          ...buildChartDataLabelStyle(palette, labelMode, "top"),
+          formatter: (params) => formatPercentLabelValue(params.value),
+        }
+      : { show: false },
+    labelLayout: buildChartDataLabelLayout(labelMode),
   });
-  const achievementData = snapshot.monthRows.map((row) =>
-    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
-  );
-  const amountYoyData = snapshot.monthRows.map((row) => (Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null));
-  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
-  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
-  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
-  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
-  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
 
   instance.setOption(
     {
@@ -1328,12 +1502,12 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
               return `${item.marker}${item.seriesName}：--`;
             }
 
-            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
             if (isPercent) {
               return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
             }
 
-            return `${item.marker}${item.seriesName}：${formatMoneyDisplay(value, deps)}`;
+            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
           });
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
           return [title, ...lines].join("<br/>");
@@ -1362,13 +1536,13 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
       yAxis: [
         {
           type: "value",
-          name: `金额（${amountUnit.label}）`,
+          name: chartMetric.valueAxisName,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
           axisLabel: {
             color: palette.axisTextColor,
-            formatter: (value) => formatMoneyDisplay(value, deps),
+            formatter: (value) => chartMetric.formatAxisValue(value),
           },
           axisLine: buildAxisLineTheme(palette),
           splitLine: buildSplitLineTheme(palette),
@@ -1376,8 +1550,8 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
         {
           type: "value",
           name: "比率（%）",
-          min: negativeFloor,
-          max: positiveCeil,
+          min: chartMetric.negativeFloor,
+          max: chartMetric.positiveCeil,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
@@ -1389,77 +1563,13 @@ function updateMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, 
           splitLine: buildSplitLineTheme(palette),
         },
       ],
-      series: [
-        {
-          name: "达成金额",
-          type: "bar",
-          barMaxWidth: 22,
-          yAxisIndex: 0,
-          data: actualAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "指标金额",
-          type: "bar",
-          barMaxWidth: 22,
-          yAxisIndex: 0,
-          data: targetAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "达成率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: achievementData,
-          lineStyle: {
-            width: 2,
-          },
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-        {
-          name: "金额同比增长率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: amountYoyData,
-          lineStyle: {
-            type: "dashed",
-            width: 2,
-          },
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-      ],
+      series,
     },
     true,
   );
 }
 
-function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
 
@@ -1468,27 +1578,79 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
     renderEmptyChart(instance, CHART_EMPTY_TEXT);
     return;
   }
-
-  const actualAmountData = snapshot.quarterRows.map((row) => {
-    const scaled = scaleAmount(row.amount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : 0;
+  const chartMetric = buildTargetChartMetricPayload(snapshot.quarterRows, metric, deps, amountUnit, {
+    amountActualSeriesName: "达成金额",
+    quantityActualSeriesName: "达成数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
   });
-  const targetAmountData = snapshot.quarterRows.map((row) => {
-    if (!Number.isFinite(row.targetAmount)) return null;
-    const scaled = scaleAmount(row.targetAmount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : null;
+  const series = [
+    {
+      name: chartMetric.actualSeriesName,
+      type: "bar",
+      barMaxWidth: 22,
+      yAxisIndex: 0,
+      data: chartMetric.actualData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    },
+  ];
+  if (chartMetric.hasTargetSeries) {
+    series.push({
+      name: chartMetric.targetSeriesName,
+      type: "bar",
+      barMaxWidth: 22,
+      yAxisIndex: 0,
+      data: chartMetric.targetData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    });
+    series.push({
+      name: chartMetric.achievementSeriesName,
+      type: "line",
+      smooth: true,
+      connectNulls: false,
+      yAxisIndex: 1,
+      data: chartMetric.achievementData,
+      lineStyle: {
+        width: 2,
+      },
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => formatPercentLabelValue(params.value),
+          }
+        : { show: false },
+      labelLayout: buildChartDataLabelLayout(labelMode),
+    });
+  }
+  series.push({
+    name: chartMetric.growthSeriesName,
+    type: "line",
+    smooth: true,
+    connectNulls: false,
+    yAxisIndex: 1,
+    data: chartMetric.growthData,
+    lineStyle: {
+      type: "dashed",
+      width: 2,
+    },
+    label: labelEnabled
+      ? {
+          ...buildChartDataLabelStyle(palette, labelMode, "top"),
+          formatter: (params) => formatPercentLabelValue(params.value),
+        }
+      : { show: false },
+    labelLayout: buildChartDataLabelLayout(labelMode),
   });
-  const achievementData = snapshot.quarterRows.map((row) =>
-    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
-  );
-  const amountYoyData = snapshot.quarterRows.map((row) =>
-    Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null,
-  );
-  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
-  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
-  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
-  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
-  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
 
   instance.setOption(
     {
@@ -1505,12 +1667,12 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
               return `${item.marker}${item.seriesName}：--`;
             }
 
-            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
             if (isPercent) {
               return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
             }
 
-            return `${item.marker}${item.seriesName}：${formatMoneyDisplay(value, deps)}`;
+            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
           });
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
           return [title, ...lines].join("<br/>");
@@ -1539,13 +1701,13 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
       yAxis: [
         {
           type: "value",
-          name: `金额（${amountUnit.label}）`,
+          name: chartMetric.valueAxisName,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
           axisLabel: {
             color: palette.axisTextColor,
-            formatter: (value) => formatMoneyDisplay(value, deps),
+            formatter: (value) => chartMetric.formatAxisValue(value),
           },
           axisLine: buildAxisLineTheme(palette),
           splitLine: buildSplitLineTheme(palette),
@@ -1553,8 +1715,8 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
         {
           type: "value",
           name: "比率（%）",
-          min: negativeFloor,
-          max: positiveCeil,
+          min: chartMetric.negativeFloor,
+          max: chartMetric.positiveCeil,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
@@ -1566,77 +1728,13 @@ function updateQuarterlyTrendChart(instance, snapshot, deps, palette, amountUnit
           splitLine: buildSplitLineTheme(palette),
         },
       ],
-      series: [
-        {
-          name: "达成金额",
-          type: "bar",
-          barMaxWidth: 22,
-          yAxisIndex: 0,
-          data: actualAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "指标金额",
-          type: "bar",
-          barMaxWidth: 22,
-          yAxisIndex: 0,
-          data: targetAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "达成率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: achievementData,
-          lineStyle: {
-            width: 2,
-          },
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-        {
-          name: "金额同比增长率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: amountYoyData,
-          lineStyle: {
-            type: "dashed",
-            width: 2,
-          },
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-      ],
+      series,
     },
     true,
   );
 }
 
-function updateProductPerformanceChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateProductPerformanceChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
 
@@ -1647,25 +1745,79 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
   }
 
   const labels = rows.map((row) => row.productName);
-  const actualAmountData = rows.map((row) => {
-    const scaled = scaleAmount(row.amount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : 0;
+  const chartMetric = buildTargetChartMetricPayload(rows, metric, deps, amountUnit, {
+    amountActualSeriesName: "实际金额",
+    quantityActualSeriesName: "实际数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
   });
-  const targetAmountData = rows.map((row) => {
-    if (!Number.isFinite(row.targetAmount)) return null;
-    const scaled = scaleAmount(row.targetAmount, amountUnit);
-    return Number.isFinite(scaled) ? scaled : null;
+  const series = [
+    {
+      name: chartMetric.actualSeriesName,
+      type: "bar",
+      barMaxWidth: 20,
+      yAxisIndex: 0,
+      data: chartMetric.actualData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    },
+  ];
+  if (chartMetric.hasTargetSeries) {
+    series.push({
+      name: chartMetric.targetSeriesName,
+      type: "bar",
+      barMaxWidth: 20,
+      yAxisIndex: 0,
+      data: chartMetric.targetData,
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
+          }
+        : { show: false },
+    });
+    series.push({
+      name: chartMetric.achievementSeriesName,
+      type: "line",
+      smooth: true,
+      connectNulls: false,
+      yAxisIndex: 1,
+      data: chartMetric.achievementData,
+      lineStyle: {
+        width: 2,
+      },
+      label: labelEnabled
+        ? {
+            ...buildChartDataLabelStyle(palette, labelMode, "top"),
+            formatter: (params) => formatPercentLabelValue(params.value),
+          }
+        : { show: false },
+      labelLayout: buildChartDataLabelLayout(labelMode),
+    });
+  }
+  series.push({
+    name: chartMetric.growthSeriesName,
+    type: "line",
+    smooth: true,
+    connectNulls: false,
+    yAxisIndex: 1,
+    data: chartMetric.growthData,
+    lineStyle: {
+      type: "dashed",
+      width: 2,
+    },
+    label: labelEnabled
+      ? {
+          ...buildChartDataLabelStyle(palette, labelMode, "top"),
+          formatter: (params) => formatPercentLabelValue(params.value),
+        }
+      : { show: false },
+    labelLayout: buildChartDataLabelLayout(labelMode),
   });
-  const achievementData = rows.map((row) =>
-    Number.isFinite(row.amountAchievement) ? Number((row.amountAchievement * 100).toFixed(2)) : null,
-  );
-  const amountYoyData = rows.map((row) => (Number.isFinite(row.amountYoy) ? Number((row.amountYoy * 100).toFixed(2)) : null));
-
-  const percentCandidates = achievementData.concat(amountYoyData).filter((value) => Number.isFinite(value));
-  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
-  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
-  const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
-  const negativeFloor = Math.min(0, Math.floor(minPercentValue / 10) * 10);
 
   instance.setOption(
     {
@@ -1682,11 +1834,11 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
               return `${item.marker}${item.seriesName}：--`;
             }
 
-            const isPercent = item.seriesName === "达成率" || item.seriesName === "金额同比增长率";
+            const isPercent = item.seriesName === chartMetric.achievementSeriesName || item.seriesName === chartMetric.growthSeriesName;
             if (isPercent) {
               return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
             }
-            return `${item.marker}${item.seriesName}：${formatMoneyDisplay(value, deps)}`;
+            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
           });
 
           const title = params.length ? String(params[0].axisValueLabel || params[0].axisValue || "") : "";
@@ -1719,13 +1871,13 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
       yAxis: [
         {
           type: "value",
-          name: `金额（${amountUnit.label}）`,
+          name: chartMetric.valueAxisName,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
           axisLabel: {
             color: palette.axisTextColor,
-            formatter: (value) => formatMoneyDisplay(value, deps),
+            formatter: (value) => chartMetric.formatAxisValue(value),
           },
           axisLine: buildAxisLineTheme(palette),
           splitLine: buildSplitLineTheme(palette),
@@ -1733,8 +1885,8 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
         {
           type: "value",
           name: "比率（%）",
-          min: negativeFloor,
-          max: positiveCeil,
+          min: chartMetric.negativeFloor,
+          max: chartMetric.positiveCeil,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
@@ -1746,68 +1898,7 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
           splitLine: buildSplitLineTheme(palette),
         },
       ],
-      series: [
-        {
-          name: "实际金额",
-          type: "bar",
-          barMaxWidth: 20,
-          yAxisIndex: 0,
-          data: actualAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "指标金额",
-          type: "bar",
-          barMaxWidth: 20,
-          yAxisIndex: 0,
-          data: targetAmountData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
-              }
-            : { show: false },
-        },
-        {
-          name: "达成率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: achievementData,
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-        {
-          name: "金额同比增长率",
-          type: "line",
-          smooth: true,
-          connectNulls: false,
-          yAxisIndex: 1,
-          data: amountYoyData,
-          lineStyle: {
-            type: "dashed",
-            width: 2,
-          },
-          label: labelEnabled
-            ? {
-                ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatPercentLabelValue(params.value),
-              }
-            : { show: false },
-          labelLayout: buildChartDataLabelLayout(labelMode),
-        },
-      ],
+      series,
     },
     true,
   );
@@ -2555,11 +2646,11 @@ function isSeriesVisible(seriesName, selectedMap) {
 function buildChartXlsxExportPayload(snapshot, chartKey, deps, state, amountUnit, selectedMap) {
   switch (chartKey) {
     case CHART_KEYS.monthlyTrend:
-      return buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap);
+      return buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.monthlyTrend));
     case CHART_KEYS.quarterlyTrend:
-      return buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap);
+      return buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.quarterlyTrend));
     case CHART_KEYS.productPerformance:
-      return buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap);
+      return buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.productPerformance));
     case CHART_KEYS.productMonthlyTrend:
       return buildProductMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap);
     case CHART_KEYS.productTop:
@@ -2575,13 +2666,38 @@ function buildChartXlsxExportPayload(snapshot, chartKey, deps, state, amountUnit
   }
 }
 
-function buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
+function buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildTargetChartMetricPayload(snapshot.monthRows, metric, deps, amountUnit, {
+    amountActualSeriesName: "达成金额",
+    quantityActualSeriesName: "达成数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
+  });
   const defs = [
-    { name: "达成金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.amount, deps, amountUnit) },
-    { name: "指标金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.targetAmount, deps, amountUnit) },
-    { name: "达成率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountAchievement) },
-    { name: "金额同比增长率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountYoy) },
+    {
+      name: chartMetric.actualSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.actualData[index],
+    },
   ];
+  if (chartMetric.hasTargetSeries) {
+    defs.push({
+      name: chartMetric.targetSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.targetData[index],
+    });
+    defs.push({
+      name: chartMetric.achievementSeriesName,
+      kind: "percent",
+      getter: (_row, index) =>
+        Number.isFinite(chartMetric.achievementData[index]) ? normalizeRatioValue(chartMetric.achievementData[index] / 100) : null,
+    });
+  }
+  defs.push({
+    name: chartMetric.growthSeriesName,
+    kind: "percent",
+    getter: (_row, index) => (Number.isFinite(chartMetric.growthData[index]) ? normalizeRatioValue(chartMetric.growthData[index] / 100) : null),
+  });
   const visibleDefs = defs.filter((item) => isSeriesVisible(item.name, selectedMap));
   if (!visibleDefs.length) return null;
 
@@ -2590,21 +2706,46 @@ function buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "月份", kind: "text" }].concat(
       visibleDefs.map((item) => ({
-        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.name,
+        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.kind === "quantity" ? `${item.name}（盒）` : item.name,
         kind: item.kind,
       })),
     ),
-    rows: snapshot.monthRows.map((row) => [formatMonthLabel(row.ym)].concat(visibleDefs.map((item) => item.getter(row)))),
+    rows: snapshot.monthRows.map((row, index) => [formatMonthLabel(row.ym)].concat(visibleDefs.map((item) => item.getter(row, index)))),
   };
 }
 
-function buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
+function buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildTargetChartMetricPayload(snapshot.quarterRows, metric, deps, amountUnit, {
+    amountActualSeriesName: "达成金额",
+    quantityActualSeriesName: "达成数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
+  });
   const defs = [
-    { name: "达成金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.amount, deps, amountUnit) },
-    { name: "指标金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.targetAmount, deps, amountUnit) },
-    { name: "达成率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountAchievement) },
-    { name: "金额同比增长率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountYoy) },
+    {
+      name: chartMetric.actualSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.actualData[index],
+    },
   ];
+  if (chartMetric.hasTargetSeries) {
+    defs.push({
+      name: chartMetric.targetSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.targetData[index],
+    });
+    defs.push({
+      name: chartMetric.achievementSeriesName,
+      kind: "percent",
+      getter: (_row, index) =>
+        Number.isFinite(chartMetric.achievementData[index]) ? normalizeRatioValue(chartMetric.achievementData[index] / 100) : null,
+    });
+  }
+  defs.push({
+    name: chartMetric.growthSeriesName,
+    kind: "percent",
+    getter: (_row, index) => (Number.isFinite(chartMetric.growthData[index]) ? normalizeRatioValue(chartMetric.growthData[index] / 100) : null),
+  });
   const visibleDefs = defs.filter((item) => isSeriesVisible(item.name, selectedMap));
   if (!visibleDefs.length) return null;
 
@@ -2613,24 +2754,49 @@ function buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "季度", kind: "text" }].concat(
       visibleDefs.map((item) => ({
-        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.name,
+        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.kind === "quantity" ? `${item.name}（盒）` : item.name,
         kind: item.kind,
       })),
     ),
-    rows: snapshot.quarterRows.map((row) => [String(row.label || "").trim()].concat(visibleDefs.map((item) => item.getter(row)))),
+    rows: snapshot.quarterRows.map((row, index) => [String(row.label || "").trim()].concat(visibleDefs.map((item) => item.getter(row, index)))),
   };
 }
 
-function buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap) {
+function buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap, metric) {
   const topRows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
   if (!topRows.length) return null;
 
+  const chartMetric = buildTargetChartMetricPayload(topRows, metric, deps, amountUnit, {
+    amountActualSeriesName: "实际金额",
+    quantityActualSeriesName: "实际数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
+  });
   const defs = [
-    { name: "实际金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.amount, deps, amountUnit) },
-    { name: "指标金额", kind: "money", getter: (row) => scaleAndRoundAmount(row.targetAmount, deps, amountUnit) },
-    { name: "达成率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountAchievement) },
-    { name: "金额同比增长率", kind: "percent", getter: (row) => normalizeRatioValue(row.amountYoy) },
+    {
+      name: chartMetric.actualSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.actualData[index],
+    },
   ];
+  if (chartMetric.hasTargetSeries) {
+    defs.push({
+      name: chartMetric.targetSeriesName,
+      kind: chartMetric.valueKind,
+      getter: (_row, index) => chartMetric.targetData[index],
+    });
+    defs.push({
+      name: chartMetric.achievementSeriesName,
+      kind: "percent",
+      getter: (_row, index) =>
+        Number.isFinite(chartMetric.achievementData[index]) ? normalizeRatioValue(chartMetric.achievementData[index] / 100) : null,
+    });
+  }
+  defs.push({
+    name: chartMetric.growthSeriesName,
+    kind: "percent",
+    getter: (_row, index) => (Number.isFinite(chartMetric.growthData[index]) ? normalizeRatioValue(chartMetric.growthData[index] / 100) : null),
+  });
   const visibleDefs = defs.filter((item) => isSeriesVisible(item.name, selectedMap));
   if (!visibleDefs.length) return null;
 
@@ -2639,11 +2805,11 @@ function buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap) {
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "产品/规格", kind: "text" }].concat(
       visibleDefs.map((item) => ({
-        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.name,
+        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.kind === "quantity" ? `${item.name}（盒）` : item.name,
         kind: item.kind,
       })),
     ),
-    rows: topRows.map((row) => [row.productName].concat(visibleDefs.map((item) => item.getter(row)))),
+    rows: topRows.map((row, index) => [row.productName].concat(visibleDefs.map((item) => item.getter(row, index)))),
   };
 }
 
@@ -3275,22 +3441,127 @@ function formatPercentCell(value) {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+function formatQuantityDisplay(value, deps) {
+  if (!Number.isFinite(value)) return "--";
+  return deps.formatMoney(deps.roundMoney(Number(value)));
+}
+
+function formatQuantityLabelValue(value, deps) {
+  if (!Number.isFinite(value)) return "--";
+  return formatQuantityDisplay(value, deps);
+}
+
+function buildTargetGapLabel(snapshot) {
+  const parts = [];
+  const amountYears = Array.isArray(snapshot?.amountTargetGapYears) ? snapshot.amountTargetGapYears : [];
+  const quantityYears = Array.isArray(snapshot?.quantityTargetGapYears) ? snapshot.quantityTargetGapYears : [];
+  if (amountYears.length > 0) {
+    parts.push(`金额指标：${amountYears.join("、")}年`);
+  }
+  if (quantityYears.length > 0) {
+    parts.push(`数量指标：${quantityYears.join("、")}年`);
+  }
+  return parts.join("；");
+}
+
+function buildTargetChartMetricPayload(rows, metric, deps, amountUnit, options = {}) {
+  const safeMetric = normalizeReportTargetChartMetric(metric);
+  const amountActualKey = String(options.amountActualKey || "amount");
+  const quantityActualKey = String(options.quantityActualKey || "quantity");
+  const amountTargetKey = String(options.amountTargetKey || "targetAmount");
+  const quantityTargetKey = String(options.quantityTargetKey || "targetQuantity");
+  const amountAchievementKey = String(options.amountAchievementKey || "amountAchievement");
+  const quantityAchievementKey = String(options.quantityAchievementKey || "quantityAchievement");
+  const amountGrowthKey = String(options.amountGrowthKey || "amountYoy");
+  const quantityGrowthKey = String(options.quantityGrowthKey || "quantityYoy");
+
+  const actualSeriesName =
+    safeMetric === "quantity" ? String(options.quantityActualSeriesName || "实际数量") : String(options.amountActualSeriesName || "实际金额");
+  const targetSeriesName = safeMetric === "quantity" ? "指标数量" : "指标金额";
+  const achievementSeriesName = safeMetric === "quantity" ? "数量达成率" : "金额达成率";
+  const growthSeriesName =
+    safeMetric === "quantity" ? String(options.quantityGrowthSeriesName || "数量同比增长率") : String(options.amountGrowthSeriesName || "金额同比增长率");
+
+  const actualData = rows.map((row) => {
+    const rawValue = Number(row?.[safeMetric === "quantity" ? quantityActualKey : amountActualKey]);
+    if (!Number.isFinite(rawValue)) return 0;
+    if (safeMetric === "quantity") {
+      return deps.roundMoney(rawValue);
+    }
+    const scaled = scaleAmount(rawValue, amountUnit);
+    return Number.isFinite(scaled) ? scaled : 0;
+  });
+
+  const targetData = rows.map((row) => {
+    const rawValue = Number(row?.[safeMetric === "quantity" ? quantityTargetKey : amountTargetKey]);
+    if (!Number.isFinite(rawValue)) return null;
+    if (safeMetric === "quantity") {
+      return deps.roundMoney(rawValue);
+    }
+    const scaled = scaleAmount(rawValue, amountUnit);
+    return Number.isFinite(scaled) ? scaled : null;
+  });
+
+  const achievementData = rows.map((row) => {
+    const rawValue = Number(row?.[safeMetric === "quantity" ? quantityAchievementKey : amountAchievementKey]);
+    return Number.isFinite(rawValue) ? Number((rawValue * 100).toFixed(2)) : null;
+  });
+
+  const growthData = rows.map((row) => {
+    const rawValue = Number(row?.[safeMetric === "quantity" ? quantityGrowthKey : amountGrowthKey]);
+    return Number.isFinite(rawValue) ? Number((rawValue * 100).toFixed(2)) : null;
+  });
+
+  const hasTargetSeries = targetData.some((value) => Number.isFinite(value) && value > 0);
+  const percentCandidates = growthData
+    .concat(hasTargetSeries ? achievementData : [])
+    .filter((value) => Number.isFinite(value));
+  const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
+  const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
+
+  return {
+    metric: safeMetric,
+    valueKind: safeMetric === "quantity" ? "quantity" : "money",
+    valueAxisName: safeMetric === "quantity" ? "数量（盒）" : `金额（${amountUnit.label}）`,
+    actualSeriesName,
+    targetSeriesName,
+    achievementSeriesName,
+    growthSeriesName,
+    actualData,
+    targetData,
+    achievementData,
+    growthData,
+    hasTargetSeries,
+    positiveCeil: Math.max(120, Math.ceil(maxPercentValue / 10) * 10),
+    negativeFloor: Math.min(0, Math.floor(minPercentValue / 10) * 10),
+    formatValue(value) {
+      return safeMetric === "quantity" ? `${formatQuantityDisplay(value, deps)}盒` : formatMoneyDisplay(value, deps);
+    },
+    formatAxisValue(value) {
+      return safeMetric === "quantity" ? formatQuantityDisplay(value, deps) : formatMoneyDisplay(value, deps);
+    },
+    formatLabelValue(value) {
+      return safeMetric === "quantity" ? formatQuantityLabelValue(value, deps) : formatMoneyForLabel(value, deps);
+    },
+  };
+}
+
 function renderEmptyRows(dom) {
   dom.reportMonthBody.innerHTML = `
     <tr>
-      <td colspan="9" class="empty">暂无可分析数据</td>
+      <td colspan="11" class="empty">暂无可分析数据</td>
     </tr>
   `;
 
   dom.reportQuarterBody.innerHTML = `
     <tr>
-      <td colspan="9" class="empty">暂无可分析数据</td>
+      <td colspan="11" class="empty">暂无可分析数据</td>
     </tr>
   `;
 
   dom.reportProductBody.innerHTML = `
     <tr>
-      <td colspan="9" class="empty">暂无可分析数据</td>
+      <td colspan="11" class="empty">暂无可分析数据</td>
     </tr>
   `;
 

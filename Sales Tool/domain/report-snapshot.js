@@ -168,6 +168,19 @@ function calcGrowth(current, baseline) {
   return Number(((currentValue - baselineValue) / Math.abs(baselineValue)).toFixed(6));
 }
 
+function unionSortedValues(...sets) {
+  const merged = new Set();
+  sets.forEach((set) => {
+    if (!(set instanceof Set)) return;
+    set.forEach((value) => {
+      if (Number.isInteger(Number(value))) {
+        merged.add(Number(value));
+      }
+    });
+  });
+  return Array.from(merged).sort((left, right) => left - right);
+}
+
 export function buildReportSnapshot(state, deps, range) {
   const monthKeys = listYmRange(range.startYm, range.endYm);
   const monthSet = new Set(monthKeys);
@@ -204,23 +217,36 @@ export function buildReportSnapshot(state, deps, range) {
     addNestedValue(hospitalMonthlyTotals, hospitalKey, ym, amount, quantity);
   }
 
-  const targetCache = new Map();
-  const productTargetCache = new Map();
-  const targetUnavailableYears = new Set();
+  const targetCache = {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+  const productTargetCache = {
+    amount: new Map(),
+    quantity: new Map(),
+  };
+  const targetUnavailableYears = {
+    amount: new Set(),
+    quantity: new Set(),
+  };
 
-  const getMonthTarget = (ym) => {
+  const getMonthTarget = (ym, metric) => {
+    const safeMetric = metric === "quantity" ? "quantity" : "amount";
     const parsedYm = parseYm(ym);
     if (!parsedYm) return null;
 
-    if (!targetCache.has(parsedYm.year)) {
-      const yearTargetMap = typeof deps.getEffectiveMonthlyTargetMap === "function" ? deps.getEffectiveMonthlyTargetMap(parsedYm.year) : null;
-      targetCache.set(parsedYm.year, yearTargetMap);
+    if (!targetCache[safeMetric].has(parsedYm.year)) {
+      const yearTargetMap =
+        typeof deps.getEffectiveMonthlyTargetMap === "function"
+          ? deps.getEffectiveMonthlyTargetMap(parsedYm.year, safeMetric)
+          : null;
+      targetCache[safeMetric].set(parsedYm.year, yearTargetMap);
       if (!yearTargetMap) {
-        targetUnavailableYears.add(parsedYm.year);
+        targetUnavailableYears[safeMetric].add(parsedYm.year);
       }
     }
 
-    const monthMap = targetCache.get(parsedYm.year);
+    const monthMap = targetCache[safeMetric].get(parsedYm.year);
     if (!monthMap) return null;
 
     const targetValue = Number(monthMap[ym]);
@@ -229,20 +255,23 @@ export function buildReportSnapshot(state, deps, range) {
     return deps.roundMoney(targetValue);
   };
 
-  const getProductMonthAllocation = (ym, productId) => {
+  const getProductMonthAllocation = (ym, productId, metric) => {
     const safeProductId = String(productId || "").trim();
     if (!safeProductId) return null;
 
+    const safeMetric = metric === "quantity" ? "quantity" : "amount";
     const parsedYm = parseYm(ym);
     if (!parsedYm) return 0;
 
-    if (!productTargetCache.has(parsedYm.year)) {
+    if (!productTargetCache[safeMetric].has(parsedYm.year)) {
       const yearAllocationMap =
-        typeof deps.getProductMonthlyAllocationMap === "function" ? deps.getProductMonthlyAllocationMap(parsedYm.year) : null;
-      productTargetCache.set(parsedYm.year, yearAllocationMap);
+        typeof deps.getProductMonthlyAllocationMap === "function"
+          ? deps.getProductMonthlyAllocationMap(parsedYm.year, safeMetric)
+          : null;
+      productTargetCache[safeMetric].set(parsedYm.year, yearAllocationMap);
     }
 
-    const monthMap = productTargetCache.get(parsedYm.year);
+    const monthMap = productTargetCache[safeMetric].get(parsedYm.year);
     if (!monthMap || typeof monthMap !== "object") return 0;
 
     const monthProductMap = monthMap[ym];
@@ -255,7 +284,8 @@ export function buildReportSnapshot(state, deps, range) {
 
   const monthRows = monthKeys.map((ym) => {
     const actual = readValue(monthlyTotals, ym, deps);
-    const targetAmount = getMonthTarget(ym);
+    const targetAmount = getMonthTarget(ym, "amount");
+    const targetQuantity = getMonthTarget(ym, "quantity");
 
     const yoyYm = addYearsToYm(ym, -1);
     const prevYm = addMonthsToYm(ym, -1);
@@ -266,9 +296,11 @@ export function buildReportSnapshot(state, deps, range) {
     return {
       ym,
       targetAmount,
+      targetQuantity,
       amount: actual.amount,
       quantity: actual.quantity,
       amountAchievement: calcRate(actual.amount, targetAmount),
+      quantityAchievement: calcRate(actual.quantity, targetQuantity),
       amountYoy: calcGrowth(actual.amount, yoy.amount),
       amountMom: calcGrowth(actual.amount, prev.amount),
       quantityYoy: calcGrowth(actual.quantity, yoy.quantity),
@@ -280,10 +312,14 @@ export function buildReportSnapshot(state, deps, range) {
   const quarterRows = completeQuarters.map((quarter) => {
     const actual = sumMonths(monthlyTotals, quarter.months, deps);
 
-    const targetMonthValues = quarter.months.map((ym) => getMonthTarget(ym));
-    const targetAmount = targetMonthValues.some((value) => value === null)
+    const amountTargetMonthValues = quarter.months.map((ym) => getMonthTarget(ym, "amount"));
+    const quantityTargetMonthValues = quarter.months.map((ym) => getMonthTarget(ym, "quantity"));
+    const targetAmount = amountTargetMonthValues.some((value) => value === null)
       ? null
-      : deps.roundMoney(targetMonthValues.reduce((sum, value) => sum + Number(value), 0));
+      : deps.roundMoney(amountTargetMonthValues.reduce((sum, value) => sum + Number(value), 0));
+    const targetQuantity = quantityTargetMonthValues.some((value) => value === null)
+      ? null
+      : deps.roundMoney(quantityTargetMonthValues.reduce((sum, value) => sum + Number(value), 0));
 
     const yoyQuarterMonths = quarter.months.map((ym) => addYearsToYm(ym, -1));
     const prevQuarterMonths = buildQuarterMonths(quarter.prevYear, quarter.prevQuarter);
@@ -294,9 +330,11 @@ export function buildReportSnapshot(state, deps, range) {
     return {
       label: `${quarter.year} Q${quarter.quarter}`,
       targetAmount,
+      targetQuantity,
       amount: actual.amount,
       quantity: actual.quantity,
       amountAchievement: calcRate(actual.amount, targetAmount),
+      quantityAchievement: calcRate(actual.quantity, targetQuantity),
       amountYoy: calcGrowth(actual.amount, yoy.amount),
       amountQoq: calcGrowth(actual.amount, prev.amount),
       quantityYoy: calcGrowth(actual.quantity, yoy.quantity),
@@ -313,7 +351,9 @@ export function buildReportSnapshot(state, deps, range) {
   let rangeRecordCount = 0;
   let hasRangeRecords = false;
   let rangeTargetAmountTotal = 0;
-  let hasMissingRangeTarget = false;
+  let rangeTargetQuantityTotal = 0;
+  let hasMissingAmountTarget = false;
+  let hasMissingQuantityTarget = false;
 
   for (const ym of monthKeys) {
     const current = readValue(monthlyTotals, ym, deps);
@@ -324,18 +364,26 @@ export function buildReportSnapshot(state, deps, range) {
     rangeAmountTotal += current.amount;
     rangeQuantityTotal += current.quantity;
 
-    const monthTarget = getMonthTarget(ym);
-    if (monthTarget === null) {
-      hasMissingRangeTarget = true;
-      continue;
+    const monthAmountTarget = getMonthTarget(ym, "amount");
+    const monthQuantityTarget = getMonthTarget(ym, "quantity");
+    if (monthAmountTarget === null) {
+      hasMissingAmountTarget = true;
+    } else {
+      rangeTargetAmountTotal += Number(monthAmountTarget);
     }
-    rangeTargetAmountTotal += Number(monthTarget);
+    if (monthQuantityTarget === null) {
+      hasMissingQuantityTarget = true;
+    } else {
+      rangeTargetQuantityTotal += Number(monthQuantityTarget);
+    }
   }
 
   rangeAmountTotal = deps.roundMoney(rangeAmountTotal);
   rangeQuantityTotal = deps.roundMoney(rangeQuantityTotal);
-  rangeTargetAmountTotal = hasMissingRangeTarget ? null : deps.roundMoney(rangeTargetAmountTotal);
+  rangeTargetAmountTotal = hasMissingAmountTarget ? null : deps.roundMoney(rangeTargetAmountTotal);
+  rangeTargetQuantityTotal = hasMissingQuantityTarget ? null : deps.roundMoney(rangeTargetQuantityTotal);
   const rangeAmountAchievement = calcRate(rangeAmountTotal, rangeTargetAmountTotal);
+  const rangeQuantityAchievement = calcRate(rangeQuantityTotal, rangeTargetQuantityTotal);
 
   for (const [productKey, byMonthMap] of productMonthlyTotals.entries()) {
     const current = sumMonths(byMonthMap, monthKeys, deps);
@@ -345,12 +393,16 @@ export function buildReportSnapshot(state, deps, range) {
     const productId = parseProductIdFromKey(productKey);
 
     let targetAmount = null;
+    let targetQuantity = null;
     if (productId) {
-      let targetSum = 0;
+      let targetAmountSum = 0;
+      let targetQuantitySum = 0;
       for (const ym of monthKeys) {
-        targetSum += Number(getProductMonthAllocation(ym, productId) || 0);
+        targetAmountSum += Number(getProductMonthAllocation(ym, productId, "amount") || 0);
+        targetQuantitySum += Number(getProductMonthAllocation(ym, productId, "quantity") || 0);
       }
-      targetAmount = deps.roundMoney(targetSum);
+      targetAmount = deps.roundMoney(targetAmountSum);
+      targetQuantity = deps.roundMoney(targetQuantitySum);
     }
 
     productRows.push({
@@ -358,8 +410,10 @@ export function buildReportSnapshot(state, deps, range) {
       productName: productNames.get(productKey) || "未命名产品",
       amount: current.amount,
       targetAmount,
+      targetQuantity,
       amountAchievement: calcRate(current.amount, targetAmount),
       quantity: current.quantity,
+      quantityAchievement: calcRate(current.quantity, targetQuantity),
       amountShare: calcRate(current.amount, rangeAmountTotal),
       quantityShare: calcRate(current.quantity, rangeQuantityTotal),
       amountYoy: calcGrowth(current.amount, previous.amount),
@@ -443,10 +497,15 @@ export function buildReportSnapshot(state, deps, range) {
     hospitalTotalCount: hospitalRows.length,
     rangeRecordCount,
     rangeAmountTotal,
+    rangeQuantityTotal,
     rangeTargetAmountTotal,
+    rangeTargetQuantityTotal,
     rangeAmountAchievement,
+    rangeQuantityAchievement,
     hasRangeRecords,
-    hasTargetGap: targetUnavailableYears.size > 0,
-    targetGapYears: Array.from(targetUnavailableYears).sort((a, b) => a - b),
+    hasTargetGap: targetUnavailableYears.amount.size > 0 || targetUnavailableYears.quantity.size > 0,
+    targetGapYears: unionSortedValues(targetUnavailableYears.amount, targetUnavailableYears.quantity),
+    amountTargetGapYears: Array.from(targetUnavailableYears.amount).sort((a, b) => a - b),
+    quantityTargetGapYears: Array.from(targetUnavailableYears.quantity).sort((a, b) => a - b),
   };
 }

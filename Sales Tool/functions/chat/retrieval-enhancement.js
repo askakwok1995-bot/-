@@ -29,6 +29,7 @@ import {
   createInitialRetrievalState,
   fetchProductsCatalog,
   fetchSalesRecordsByWindow,
+  fetchSalesTargetsByYears,
   resolveRetrievalWindowFromSnapshot,
   resolveTargetDimensionForEnhancement,
 } from "./retrieval-data.js";
@@ -55,11 +56,47 @@ function resolveControlledTrendLimit(existingRows, granularityCode, availableCou
   return Math.min(availableCount, target);
 }
 
-export function buildAggregatedMetrics(records, monthKeys) {
+function calcAchievementRatio(actual, target) {
+  const actualValue = normalizeNumericValue(actual);
+  const targetValue = normalizeNumericValue(target);
+  if (actualValue === null || targetValue === null || targetValue <= 0) {
+    return null;
+  }
+  return roundToTwo(actualValue / targetValue);
+}
+
+function uniqueNonEmptyStrings(values) {
+  return Array.from(new Set((Array.isArray(values) ? values : []).map((item) => trimString(item)).filter((item) => item)));
+}
+
+function buildScopedProductTargetTotal(targetsBundle, monthKeys, productIds, metric) {
+  if (!targetsBundle || typeof targetsBundle.getProductTargetTotal !== "function") {
+    return null;
+  }
+  const safeProductIds = uniqueNonEmptyStrings(productIds);
+  if (safeProductIds.length === 0) {
+    return null;
+  }
+  let total = 0;
+  for (const productId of safeProductIds) {
+    const value = normalizeNumericValue(targetsBundle.getProductTargetTotal(productId, monthKeys, metric));
+    if (value === null) {
+      continue;
+    }
+    total += value;
+  }
+  return roundToTwo(total) || 0;
+}
+
+export function buildAggregatedMetrics(records, monthKeys, options = {}) {
   const monthSet = new Set(monthKeys);
   const monthTotals = new Map();
   const productMap = new Map();
   const hospitalMap = new Map();
+  const targetsBundle = options?.targetsBundle && typeof options.targetsBundle === "object" ? options.targetsBundle : null;
+  const productNameMap = options?.productNameMap instanceof Map ? options.productNameMap : new Map();
+  const scopeDimension = trimString(options?.scopeDimension);
+  const scopedProductIds = uniqueNonEmptyStrings(options?.scopeProductIds);
 
   monthKeys.forEach((ym) => {
     monthTotals.set(ym, { amount: 0, quantity: 0 });
@@ -84,9 +121,15 @@ export function buildAggregatedMetrics(records, monthKeys) {
     monthTotals.set(record.ym, monthMetric);
 
     const productKey = trimString(record.product_name) || "未命名产品";
-    const productMetric = productMap.get(productKey) || { name: productKey, amount: 0, quantity: 0, monthly: new Map() };
+    const catalogProductId = trimString(productNameMap.get(normalizeTextForLookup(productKey)));
+    const productMetric =
+      productMap.get(productKey) ||
+      { name: productKey, amount: 0, quantity: 0, monthly: new Map(), product_id: catalogProductId };
     productMetric.amount += amount;
     productMetric.quantity += quantity;
+    if (!productMetric.product_id && catalogProductId) {
+      productMetric.product_id = catalogProductId;
+    }
     const productMonthMetric = productMetric.monthly.get(record.ym) || { amount: 0, quantity: 0 };
     productMonthMetric.amount += amount;
     productMonthMetric.quantity += quantity;
@@ -110,10 +153,22 @@ export function buildAggregatedMetrics(records, monthKeys) {
     const yoyYm = addMonthsToYm(ym, -12);
     const prevMetric = monthTotals.get(prevYm) || null;
     const yoyMetric = monthTotals.get(yoyYm) || null;
+    const amountTargetValue =
+      targetsBundle && typeof targetsBundle.getMonthTarget === "function"
+        ? normalizeNumericValue(targetsBundle.getMonthTarget(ym, "amount"))
+        : null;
+    const quantityTargetValue =
+      targetsBundle && typeof targetsBundle.getMonthTarget === "function"
+        ? normalizeNumericValue(targetsBundle.getMonthTarget(ym, "quantity"))
+        : null;
     return {
       ym,
       amount: roundToTwo(monthMetric.amount) || 0,
       quantity: roundToTwo(monthMetric.quantity) || 0,
+      amount_target_value: amountTargetValue,
+      quantity_target_value: quantityTargetValue,
+      amount_achievement_ratio: calcAchievementRatio(monthMetric.amount, amountTargetValue),
+      quantity_achievement_ratio: calcAchievementRatio(monthMetric.quantity, quantityTargetValue),
       amount_mom_ratio: prevMetric ? calcGrowthRatio(monthMetric.amount, prevMetric.amount) : null,
       amount_yoy_ratio: yoyMetric ? calcGrowthRatio(monthMetric.amount, yoyMetric.amount) : null,
     };
@@ -131,24 +186,59 @@ export function buildAggregatedMetrics(records, monthKeys) {
         quantity,
         amount_share_ratio: amountShare,
         quantity_share_ratio: quantityShare,
+        product_id: trimString(row.product_id),
       };
     });
     rows.sort((left, right) => right.amount - left.amount);
     return rows;
   };
 
+  let totalAmountTarget =
+    targetsBundle && typeof targetsBundle.getRangeTargetTotal === "function"
+      ? normalizeNumericValue(targetsBundle.getRangeTargetTotal(monthKeys, "amount"))
+      : null;
+  let totalQuantityTarget =
+    targetsBundle && typeof targetsBundle.getRangeTargetTotal === "function"
+      ? normalizeNumericValue(targetsBundle.getRangeTargetTotal(monthKeys, "quantity"))
+      : null;
+
+  if (scopeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
+    const productIdsForScope =
+      scopedProductIds.length > 0 ? scopedProductIds : Array.from(productMap.values()).map((row) => trimString(row?.product_id));
+    totalAmountTarget = buildScopedProductTargetTotal(targetsBundle, monthKeys, productIdsForScope, "amount");
+    totalQuantityTarget = buildScopedProductTargetTotal(targetsBundle, monthKeys, productIdsForScope, "quantity");
+  } else if (scopeDimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL) {
+    totalAmountTarget = null;
+    totalQuantityTarget = null;
+  }
+
   return {
     total_amount: roundToTwo(totalAmount) || 0,
     total_quantity: roundToTwo(totalQuantity) || 0,
+    total_amount_target: totalAmountTarget,
+    total_quantity_target: totalQuantityTarget,
+    amount_achievement_ratio: calcAchievementRatio(totalAmount, totalAmountTarget),
+    quantity_achievement_ratio: calcAchievementRatio(totalQuantity, totalQuantityTarget),
     monthly_rows: monthlyRows,
     product_rows: toRankedRows(productMap),
     hospital_rows: toRankedRows(hospitalMap),
+    targets_bundle: targetsBundle,
   };
 }
 
 export function buildPerformanceOverviewFromMetrics(metrics) {
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestRow = monthlyRows.length > 0 ? monthlyRows[monthlyRows.length - 1] : null;
+  const amountTargetValue = normalizeNumericValue(metrics?.total_amount_target);
+  const quantityTargetValue = normalizeNumericValue(metrics?.total_quantity_target);
+  const amountAchievementRatio = normalizeNumericValue(metrics?.amount_achievement_ratio);
+  const quantityAchievementRatio = normalizeNumericValue(metrics?.quantity_achievement_ratio);
+  let preferredAchievementMetric = "none";
+  if (amountAchievementRatio !== null) {
+    preferredAchievementMetric = "amount";
+  } else if (quantityAchievementRatio !== null) {
+    preferredAchievementMetric = "quantity";
+  }
 
   let latestKeyChange = "--";
   let latestKeyChangeRatio = null;
@@ -166,13 +256,20 @@ export function buildPerformanceOverviewFromMetrics(metrics) {
   return {
     sales_amount: formatAmountWanText(metrics?.total_amount),
     sales_amount_value: normalizeNumericValue(metrics?.total_amount),
-    amount_achievement: "--",
-    amount_achievement_ratio: null,
+    amount_target: formatAmountWanText(amountTargetValue),
+    amount_target_value: amountTargetValue,
+    amount_achievement: formatPercentText(amountAchievementRatio),
+    amount_achievement_ratio: amountAchievementRatio,
     latest_key_change: latestKeyChange,
     latest_key_change_ratio: latestKeyChangeRatio,
     latest_key_change_code: latestKeyChangeCode,
     sales_volume: formatQuantityBoxText(metrics?.total_quantity),
     sales_volume_value: normalizeNumericValue(metrics?.total_quantity),
+    quantity_target: formatQuantityBoxText(quantityTargetValue),
+    quantity_target_value: quantityTargetValue,
+    quantity_achievement: formatPercentText(quantityAchievementRatio),
+    quantity_achievement_ratio: quantityAchievementRatio,
+    preferred_achievement_metric: preferredAchievementMetric,
   };
 }
 
@@ -244,16 +341,23 @@ export function buildProductPerformanceRows(metrics, limit, options = {}) {
   const sourceRows = Array.isArray(metrics?.product_rows) ? metrics.product_rows : [];
   const monthlyRows = Array.isArray(metrics?.monthly_rows) ? metrics.monthly_rows : [];
   const latestYm = trimString(monthlyRows[monthlyRows.length - 1]?.ym);
+  const monthKeys = monthlyRows.map((item) => trimString(item?.ym)).filter((item) => item);
   const includeAllCatalogProducts = Boolean(options?.includeAllCatalogProducts);
   const includeNamedProducts = Boolean(options?.includeNamedProducts);
   const requestedProducts = Array.isArray(options?.requestedProducts) ? options.requestedProducts : [];
   const productCatalog = Array.isArray(options?.productCatalog) ? options.productCatalog : [];
   const productNameMap = options?.productNameMap instanceof Map ? options.productNameMap : new Map();
+  const targetsBundle =
+    options?.targetsBundle && typeof options.targetsBundle === "object"
+      ? options.targetsBundle
+      : metrics?.targets_bundle && typeof metrics.targets_bundle === "object"
+        ? metrics.targets_bundle
+        : null;
 
   let rows = sourceRows.map((row) => ({
     ...row,
     _has_record: true,
-    _catalog_product_id: "",
+    _catalog_product_id: trimString(row?.product_id),
     _lookup_key: normalizeTextForLookup(row?.name),
   }));
 
@@ -388,16 +492,34 @@ export function buildProductPerformanceRows(metrics, limit, options = {}) {
     const productCode =
       trimString(row?._catalog_product_id) ||
       (lookupKey && productNameMap instanceof Map ? trimString(productNameMap.get(lookupKey)) : "");
+    const amountTargetValue =
+      productCode && targetsBundle && typeof targetsBundle.getProductTargetTotal === "function"
+        ? normalizeNumericValue(targetsBundle.getProductTargetTotal(productCode, monthKeys, "amount"))
+        : null;
+    const quantityTargetValue =
+      productCode && targetsBundle && typeof targetsBundle.getProductTargetTotal === "function"
+        ? normalizeNumericValue(targetsBundle.getProductTargetTotal(productCode, monthKeys, "quantity"))
+        : null;
+    const amountAchievementRatio = calcAchievementRatio(row.amount, amountTargetValue);
+    const quantityAchievementRatio = calcAchievementRatio(row.quantity, quantityTargetValue);
 
     return {
       product_name: row.name,
       product_code: productCode,
       sales_amount: formatAmountWanText(row.amount),
       sales_amount_value: normalizeNumericValue(row.amount),
+      amount_target: formatAmountWanText(amountTargetValue),
+      amount_target_value: amountTargetValue,
+      amount_achievement: formatPercentText(amountAchievementRatio),
+      amount_achievement_ratio: amountAchievementRatio,
       sales_share: formatPercentText(row.amount_share_ratio),
       sales_share_ratio: normalizeNumericValue(row.amount_share_ratio),
       sales_volume: formatQuantityBoxText(row.quantity),
       sales_volume_value: normalizeNumericValue(row.quantity),
+      quantity_target: formatQuantityBoxText(quantityTargetValue),
+      quantity_target_value: quantityTargetValue,
+      quantity_achievement: formatPercentText(quantityAchievementRatio),
+      quantity_achievement_ratio: quantityAchievementRatio,
       change_metric: changeMetric,
       change_metric_code: changeMetricCode,
       change_value: changeValue,
@@ -829,6 +951,14 @@ export async function buildOnDemandSnapshotEnhancement(params) {
     };
   }
 
+  let targetsBundle = null;
+  try {
+    const targetYears = Array.from(new Set(windowInfo.month_keys.map((ym) => Number(String(ym).slice(0, 4))).filter((year) => Number.isInteger(year))));
+    targetsBundle = await fetchSalesTargetsByYears(targetYears, params?.authToken, params?.env);
+  } catch (_error) {
+    targetsBundle = null;
+  }
+
   let recordsForMetrics = records;
   let productHospitalSupportCode = "none";
   let productHospitalTargetCount = 0;
@@ -839,7 +969,11 @@ export async function buildOnDemandSnapshotEnhancement(params) {
     productHospitalTargetCount = filteredResult.target_count;
   }
 
-  const metrics = buildAggregatedMetrics(recordsForMetrics, windowInfo.month_keys);
+  const metrics = buildAggregatedMetrics(recordsForMetrics, windowInfo.month_keys, {
+    targetsBundle,
+    scopeDimension: targetDimension,
+    scopeProductIds: requestedProducts.map((item) => trimString(item?.product_id)),
+  });
   const enhancementPayload = await buildDimensionEnhancementPayload({
     targetDimension,
     granularityCode: trimString(params?.questionJudgment?.granularity?.code),

@@ -66,7 +66,7 @@ export function createTargetsRepository({ getAuthContext, createDefaultTargetsPa
     const sourceYears = sourceTargets.years && typeof sourceTargets.years === "object" ? sourceTargets.years : {};
     const rawVersion = Number(sourceTargets.version);
     const safeVersion = Number.isInteger(rawVersion) && rawVersion > 0 ? rawVersion : 1;
-    const safeMetricType = String(sourceTargets.metricType || "").trim() || "amount";
+    const safeMetricType = String(createDefaultTargetsPayload().metricType || "dual").trim() || "dual";
 
     const rows = [];
     for (const [yearKey, yearData] of Object.entries(sourceYears)) {

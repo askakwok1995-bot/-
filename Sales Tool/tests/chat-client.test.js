@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createChatReplyRequester } from "../app/chat-client.js";
+import { buildBusinessSnapshotPayload, createChatReplyRequester } from "../app/chat-client.js";
 
 function createRequester(fetchImpl) {
   return createChatReplyRequester({
@@ -115,4 +115,43 @@ test("createChatReplyRequester returns minimal current payload", async () => {
     model: "tool-model",
     requestId: "req-chat-client-success",
   });
+});
+
+test("buildBusinessSnapshotPayload falls back to quantity achievement when amount target is unavailable", () => {
+  const snapshot = buildBusinessSnapshotPayload(
+    {
+      reportStartYm: "2025-01",
+      reportEndYm: "2025-01",
+      reportRecords: [
+        {
+          date: "2025-01-02",
+          productId: "p1",
+          productName: "Botox50",
+          hospital: "华山医院",
+          amount: 1000,
+          quantity: 5,
+        },
+      ],
+      products: [],
+    },
+    {
+      roundMoney: (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100,
+      formatMoney: (value) => Number(value).toFixed(2),
+      normalizeText: (value) => String(value || "").trim().toLowerCase(),
+      isValidDateParts: () => true,
+      getEffectiveMonthlyTargetMap(_year, metric = "amount") {
+        if (metric === "quantity") {
+          return { "2025-01": 10 };
+        }
+        return null;
+      },
+      getProductMonthlyAllocationMap() {
+        return null;
+      },
+    },
+  );
+
+  assert.equal(snapshot.performance_overview.amount_achievement, "--");
+  assert.equal(snapshot.performance_overview.quantity_achievement, "50.00%");
+  assert.equal(snapshot.performance_overview.preferred_achievement_metric, "quantity");
 });

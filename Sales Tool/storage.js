@@ -1,3 +1,13 @@
+import {
+  TARGETS_VERSION as TARGETS_VERSION_VALUE,
+  TARGET_METRIC_TYPE as TARGET_METRIC_TYPE_VALUE,
+  createDefaultTargetYear as createDefaultTargetYearValue,
+  createDefaultTargetsPayload as createDefaultTargetsPayloadValue,
+  normalizeTargetNumber as normalizeTargetNumberValue,
+  normalizeTargetYearData as normalizeTargetYearDataValue,
+  normalizeTargetsPayload as normalizeTargetsPayloadValue,
+} from "./domain/targets-model.js";
+
 export const RECORDS_STORAGE_KEY = "sales_records_v1";
 export const PRODUCT_MASTER_STORAGE_KEY = "sales_product_master_v1";
 export const TARGETS_STORAGE_KEY = "sales_targets_v1";
@@ -6,8 +16,8 @@ export const REPORT_RANGE_STORAGE_KEY = "sales_report_range_v1";
 export const REPORT_CHART_PALETTE_STORAGE_KEY = "sales_report_chart_palette_v1";
 export const REPORT_CHART_DATA_LABEL_STORAGE_KEY = "sales_report_chart_data_label_v1";
 export const REPORT_AMOUNT_UNIT_STORAGE_KEY = "sales_report_amount_unit_v1";
-export const TARGETS_VERSION = 1;
-export const TARGET_METRIC_TYPE = "amount";
+export const TARGETS_VERSION = TARGETS_VERSION_VALUE;
+export const TARGET_METRIC_TYPE = TARGET_METRIC_TYPE_VALUE;
 export const TARGET_QUARTERS = [
   { key: "Q1", label: "Q1（1-3月）", months: [1, 2, 3] },
   { key: "Q2", label: "Q2（4-6月）", months: [4, 5, 6] },
@@ -225,129 +235,23 @@ export function saveTargets(state) {
 }
 
 export function createDefaultTargetsPayload() {
-  return {
-    version: TARGETS_VERSION,
-    metricType: TARGET_METRIC_TYPE,
-    years: {},
-  };
+  return createDefaultTargetsPayloadValue();
 }
 
 export function normalizeTargetsPayload(payload) {
-  if (!payload || typeof payload !== "object") {
-    return createDefaultTargetsPayload();
-  }
-
-  const normalized = createDefaultTargetsPayload();
-  const sourceYears = payload.years;
-  if (!sourceYears || typeof sourceYears !== "object") {
-    return normalized;
-  }
-
-  for (const [yearKey, yearData] of Object.entries(sourceYears)) {
-    const year = Number(yearKey);
-    if (!Number.isInteger(year)) continue;
-    normalized.years[String(year)] = normalizeTargetYearData(year, yearData);
-  }
-
-  return normalized;
+  return normalizeTargetsPayloadValue(payload);
 }
 
 export function normalizeTargetYearData(year, yearData) {
-  const normalized = createDefaultTargetYear(year);
-  if (!yearData || typeof yearData !== "object") {
-    return normalized;
-  }
-
-  const sourceQuarters = yearData.quarters;
-  if (sourceQuarters && typeof sourceQuarters === "object") {
-    for (const quarter of TARGET_QUARTERS) {
-      const sourceQuarter = sourceQuarters[quarter.key];
-      if (!sourceQuarter || typeof sourceQuarter !== "object") continue;
-
-      normalized.quarters[quarter.key].quarterTarget = normalizeTargetNumber(sourceQuarter.quarterTarget);
-      const sourceMonths = sourceQuarter.months;
-      if (!sourceMonths || typeof sourceMonths !== "object") continue;
-
-      for (const month of quarter.months) {
-        normalized.quarters[quarter.key].months[String(month)] = normalizeTargetNumber(sourceMonths[String(month)]);
-      }
-    }
-  }
-
-  const sourceAllocations = yearData.productAllocations;
-  if (sourceAllocations && typeof sourceAllocations === "object") {
-    for (const [productId, sourceEntry] of Object.entries(sourceAllocations)) {
-      const normalizedEntry = normalizeProductAllocationEntry(productId, sourceEntry);
-      if (!normalizedEntry) continue;
-      normalized.productAllocations[normalizedEntry.productId] = normalizedEntry;
-    }
-  }
-
-  if (typeof yearData.updatedAt === "string" && !Number.isNaN(Date.parse(yearData.updatedAt))) {
-    normalized.updatedAt = yearData.updatedAt;
-  }
-
-  return normalized;
+  return normalizeTargetYearDataValue(year, yearData);
 }
 
 export function createDefaultTargetYear(year) {
-  const quarters = {};
-  for (const quarter of TARGET_QUARTERS) {
-    const months = {};
-    for (const month of quarter.months) {
-      months[String(month)] = 0;
-    }
-    quarters[quarter.key] = {
-      quarterTarget: 0,
-      months,
-    };
-  }
-
-  return {
-    year,
-    quarters,
-    productAllocations: {},
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-function normalizeProductAllocationEntry(productId, sourceEntry) {
-  const safeProductId = String(productId || "").trim();
-  if (!safeProductId) return null;
-  if (!sourceEntry || typeof sourceEntry !== "object") {
-    return createDefaultProductAllocationEntry(safeProductId, "");
-  }
-
-  const months = {};
-  const sourceMonths = sourceEntry.months && typeof sourceEntry.months === "object" ? sourceEntry.months : {};
-  for (let month = 1; month <= 12; month += 1) {
-    months[String(month)] = normalizeTargetNumber(sourceMonths[String(month)]);
-  }
-
-  return {
-    productId: safeProductId,
-    productName: String(sourceEntry.productName || "").trim(),
-    months,
-  };
-}
-
-function createDefaultProductAllocationEntry(productId, productName) {
-  const months = {};
-  for (let month = 1; month <= 12; month += 1) {
-    months[String(month)] = 0;
-  }
-
-  return {
-    productId,
-    productName: String(productName || "").trim(),
-    months,
-  };
+  return createDefaultTargetYearValue(year);
 }
 
 export function normalizeTargetNumber(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num < 0) return 0;
-  return roundMoney(num);
+  return normalizeTargetNumberValue(value);
 }
 
 export function normalizeProduct(item) {

@@ -4,7 +4,40 @@ import test from "node:test";
 import { createToolRuntimeContext, executeToolByName } from "../functions/chat/tool-executors.js";
 import { TOOL_NAMES } from "../functions/chat/tool-registry.js";
 
-function createRuntimeContext() {
+function createTargetsBundle() {
+  const monthTargets = {
+    amount: { "2025-01": 200000, "2025-02": 200000 },
+    quantity: { "2025-01": 200, "2025-02": 200 },
+  };
+  const productTargets = {
+    amount: {
+      p1: { "2025-01": 120000, "2025-02": 130000 },
+      p2: { "2025-01": 80000, "2025-02": 70000 },
+    },
+    quantity: {
+      p1: { "2025-01": 100, "2025-02": 110 },
+      p2: { "2025-01": 90, "2025-02": 90 },
+    },
+  };
+
+  return {
+    getMonthTarget(ym, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      return monthTargets[safeMetric][ym] ?? null;
+    },
+    getRangeTargetTotal(monthKeys, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      return (Array.isArray(monthKeys) ? monthKeys : []).reduce((sum, ym) => sum + (monthTargets[safeMetric][ym] ?? 0), 0);
+    },
+    getProductTargetTotal(productId, monthKeys, metric = "amount") {
+      const safeMetric = metric === "quantity" ? "quantity" : "amount";
+      const productMap = productTargets[safeMetric][productId] || {};
+      return (Array.isArray(monthKeys) ? monthKeys : []).reduce((sum, ym) => sum + (productMap[ym] ?? 0), 0);
+    },
+  };
+}
+
+function createRuntimeContext(extraDeps = {}) {
   const records = [
     { ym: "2025-01", amount: 100000, quantity: 100, product_name: "Botox50", hospital_name: "华山医院" },
     { ym: "2025-02", amount: 130000, quantity: 110, product_name: "Botox50", hospital_name: "华山医院" },
@@ -26,6 +59,7 @@ function createRuntimeContext() {
     {
       fetchSalesRecordsByWindow: async () => records,
       fetchProductsCatalog: async () => catalog,
+      ...extraDeps,
     },
   );
 }
@@ -166,6 +200,25 @@ test("get_hospital_summary rows expose sales volume fields", async () => {
   assert.ok(result.result.rows.length > 0);
   assert.ok("sales_volume" in result.result.rows[0]);
   assert.ok("sales_volume_value" in result.result.rows[0]);
+});
+
+test("get_product_summary exposes amount and quantity achievements when targets are available", async () => {
+  const runtimeContext = createRuntimeContext({
+    fetchSalesTargetsByYears: async () => createTargetsBundle(),
+  });
+  const result = await executeToolByName(
+    TOOL_NAMES.GET_PRODUCT_SUMMARY,
+    { include_all_products: true, limit: 5 },
+    runtimeContext,
+  );
+
+  assert.equal(result.result.summary.amount_target, "40.00万元");
+  assert.equal(result.result.summary.amount_achievement, "95.00%");
+  assert.equal(result.result.summary.quantity_target, "390盒");
+  assert.equal(result.result.summary.quantity_achievement, "99.00%");
+  assert.equal(result.result.summary.preferred_achievement_metric, "amount");
+  assert.equal(result.result.rows[0].amount_target, "25.00万元");
+  assert.equal(result.result.rows[0].quantity_target, "210盒");
 });
 
 test("get_sales_overview_brief no longer hard-caps top entities at three", async () => {

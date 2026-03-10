@@ -47,8 +47,8 @@ export function createAppDeps({ state, dom, repos, ui, shared, feedback }) {
     ...feedback,
   };
 
-  deps.getEffectiveMonthlyTargetMap = (year) => ui.getEffectiveMonthlyTargetMap(state, year, deps);
-  deps.getProductMonthlyAllocationMap = (year) => ui.getProductMonthlyAllocationMap(state, year, deps);
+  deps.getEffectiveMonthlyTargetMap = (year, metric) => ui.getEffectiveMonthlyTargetMap(state, year, deps, metric);
+  deps.getProductMonthlyAllocationMap = (year, metric) => ui.getProductMonthlyAllocationMap(state, year, deps, metric);
   deps.validateSalesInput = (data, selectedProduct) => ui.validateSalesInput(state, data, selectedProduct);
   deps.renderProductMaster = () => ui.renderProductMaster(state, dom, deps);
   deps.renderProductSelectOptions = () => ui.renderProductSelectOptions(state, dom, deps);
