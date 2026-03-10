@@ -81,7 +81,7 @@ export const REPORT_CHART_PALETTES = [
     trackColor: "rgba(104, 151, 173, 0.16)",
     axisPointerColor: "rgba(44, 127, 164, 0.18)",
     series: {
-      trend4: ["#1a6f98", "#91cfe3", "#23978b", "#f1a65d"],
+      trend4: ["#1a6f98", "#5ca9c4", "#23978b", "#f1a65d"],
       productMonthlyLines: ["#1a6f98", "#27a48f", "#5f9fd4", "#f1a65d", "#4dc1d8", "#7ac7a3", "#6f7fd8", "#f4c978", "#e27b69", "#8ebed2"],
       productPie: ["#1a6f98", "#23978b", "#5f9fd4", "#f1a65d", "#4dc1d8", "#7ac7a3", "#6f7fd8", "#f4c978", "#e27b69", "#8ebed2"],
       hospitalSharePie: ["#0f5c84", "#1f7ca0", "#2c97a1", "#f0ad63", "#5fb6d5", "#73c3b3", "#8bd4e9", "#f7c785", "#d77d6a", "#9cb0bf"],
