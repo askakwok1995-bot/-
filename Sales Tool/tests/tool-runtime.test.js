@@ -101,7 +101,6 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
                             route_intent: "direct_answer",
                             question_type: "trend",
                             required_evidence: ["aggregate", "timeseries"],
-                            requested_views: ["get_sales_trend_brief"],
                             synthesis_expectation: "先给出当前报表区间的趋势判断，再补一条关键波动依据。",
                             required_tool_call_min: 1,
                             initial_tools: [
@@ -164,26 +163,21 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.match(firstRoundSystemInstruction, /\[阶段 1：首轮规划阶段\]/u);
   assert.match(firstRoundSystemInstruction, /\[阶段 2：深挖取数阶段\]/u);
   assert.match(firstRoundSystemInstruction, /\[阶段 3：最终总结阶段\]/u);
-  assert.match(firstRoundSystemInstruction, /默认优先调用 submit_analysis_plan/u);
-  assert.match(firstRoundSystemInstruction, /泛整体问题，或产品\/医院表现概览类问题，可直接先调用宏工具获取首轮事实/u);
+  assert.match(firstRoundSystemInstruction, /必须且只能优先调用 submit_analysis_plan/u);
+  assert.match(firstRoundSystemInstruction, /绝对禁止跳过此工具直接调用其他数据获取工具/u);
   assert.match(firstRoundSystemInstruction, /策略 A：Direct Answer/u);
   assert.match(firstRoundSystemInstruction, /策略 B：Bounded Answer/u);
   assert.equal((firstRoundSystemInstruction.match(/角色定位：/g) || []).length, 1);
   assert.equal(firstRoundGenerationConfig?.temperature, 0.7);
   assert.equal(firstRoundGenerationConfig?.maxOutputTokens, 1800);
-  assert.deepEqual(firstRoundDeclarationNames, [
-    "submit_analysis_plan",
-    "get_sales_overview_brief",
-    "get_sales_trend_brief",
-    "get_dimension_overview_brief",
-  ]);
+  assert.deepEqual(firstRoundDeclarationNames, ["submit_analysis_plan"]);
   assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "diagnostics"]);
   assert.deepEqual(result.missingEvidenceTypes, []);
 });
 
-test("runToolFirstChat allows direct macro start for broad overall report question", async () => {
+test("runToolFirstChat executes broad overall report macro from planner initial_tools", async () => {
   const toolCalls = [];
   let firstRoundDeclarationNames = [];
   let geminiCallCount = 0;
@@ -196,7 +190,7 @@ test("runToolFirstChat allows direct macro start for broad overall report questi
     questionJudgment: createQuestionJudgment(),
     authToken: "token",
     env: {},
-    requestId: "tool-runtime-overall-report-direct-macro",
+    requestId: "tool-runtime-overall-report-planner-first",
     deps: {
       requestGeminiGenerateContent: async (payload) => {
         geminiCallCount += 1;
@@ -214,8 +208,21 @@ test("runToolFirstChat allows direct macro start for broad overall report questi
                     parts: [
                       {
                         functionCall: {
-                          name: "get_sales_overview_brief",
-                          args: { limit: 5 },
+                          name: "submit_analysis_plan",
+                          args: {
+                            primary_dimension: "overall",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "report",
+                            required_evidence: ["aggregate", "timeseries", "breakdown", "diagnostics"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_sales_overview_brief",
+                                args: { limit: 5 },
+                              },
+                            ],
+                          },
                         },
                       },
                     ],
@@ -265,19 +272,15 @@ test("runToolFirstChat allows direct macro start for broad overall report questi
 
   assert.equal(result.ok, true);
   assert.equal(geminiCallCount, 2);
-  assert.deepEqual(firstRoundDeclarationNames, [
-    "submit_analysis_plan",
-    "get_sales_overview_brief",
-    "get_sales_trend_brief",
-    "get_dimension_overview_brief",
-  ]);
+  assert.deepEqual(firstRoundDeclarationNames, ["submit_analysis_plan"]);
   assert.deepEqual(toolCalls, ["get_sales_overview_brief"]);
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
   assert.equal(result.plannerState?.question_type, "report");
+  assert.equal(result.plannerState?.relevance, QUESTION_JUDGMENT_CODES.relevance.RELEVANT);
   assert.deepEqual(result.plannerState?.requested_views, ["get_sales_overview_brief"]);
 });
 
-test("runToolFirstChat allows direct macro start for broad overall trend question without planner", async () => {
+test("runToolFirstChat does not execute direct macro calls before planner submission", async () => {
   const toolCalls = [];
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
@@ -289,40 +292,25 @@ test("runToolFirstChat allows direct macro start for broad overall trend questio
     questionJudgment: createQuestionJudgment(),
     authToken: "token",
     env: {},
-    requestId: "tool-runtime-overall-trend-direct-macro",
+    requestId: "tool-runtime-overall-trend-direct-macro-blocked",
     deps: {
       requestGeminiGenerateContent: async () => {
         geminiCallCount += 1;
-        if (geminiCallCount === 1) {
-          return {
-            ok: true,
-            model: "stub-model",
-            payload: {
-              candidates: [
-                {
-                  content: {
-                    parts: [
-                      {
-                        functionCall: {
-                          name: "get_sales_trend_brief",
-                          args: { limit: 4 },
-                        },
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      functionCall: {
+                        name: "get_sales_trend_brief",
+                        args: { limit: 4 },
                       },
-                    ],
-                  },
-                },
-              ],
-            },
-          };
-        }
-        return {
-          ok: true,
-          model: "stub-model",
-          payload: {
-            candidates: [
-              {
-                content: {
-                  parts: [{ text: "当前报表区间内销售趋势整体向上，最近月增速明显抬升，说明市场活跃度正在恢复。"}],
+                    },
+                  ],
                 },
               },
             ],
@@ -331,199 +319,18 @@ test("runToolFirstChat allows direct macro start for broad overall trend questio
       },
       executeToolByName: async (name) => {
         toolCalls.push(name);
-        return {
-          result: {
-            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
-            matched_entities: { products: [], hospitals: [] },
-            unmatched_entities: { products: [], hospitals: [] },
-            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
-            boundaries: [],
-            diagnostic_flags: ["view_sales_trend_brief"],
-            summary: { sales_amount: "2861.75万元" },
-            rows: [{ row_label: "趋势:2025-12", sales_amount: "316.08万元" }],
-          },
-          meta: {
-            detail_request_mode: "macro_trend",
-            coverage_code: "full",
-            analysis_view: "sales_trend_brief",
-            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
-          },
-        };
+        throw new Error("should-not-call-tools");
       },
     },
   });
 
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false);
   assert.equal(geminiCallCount, 2);
-  assert.deepEqual(toolCalls, ["get_sales_trend_brief"]);
-  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
-  assert.equal(result.plannerState?.question_type, "trend");
-  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
+  assert.equal(result.fallbackReason, "planner_call_missing");
+  assert.deepEqual(toolCalls, []);
 });
 
-test("runToolFirstChat auto-starts overview macro when broad overall report question omits planner and tools", async () => {
-  const toolCalls = [];
-  let geminiCallCount = 0;
-  const result = await runToolFirstChat({
-    message: "根据当前分析区间，生成详细的销售分析报告",
-    historyWindow: [],
-    businessSnapshot: {
-      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
-    },
-    questionJudgment: createQuestionJudgment(),
-    authToken: "token",
-    env: {},
-    requestId: "tool-runtime-overall-report-auto-macro",
-    deps: {
-      requestGeminiGenerateContent: async () => {
-        geminiCallCount += 1;
-        if (geminiCallCount === 1) {
-          return {
-            ok: true,
-            model: "stub-model",
-            payload: {
-              candidates: [
-                {
-                  content: {
-                    parts: [{ text: "请先给出一份详细的整体报告。"}],
-                  },
-                },
-              ],
-            },
-          };
-        }
-        return {
-          ok: true,
-          model: "stub-model",
-          payload: {
-            candidates: [
-              {
-                content: {
-                  parts: [{ text: "当前报表区间内整体销售表现稳健，累计销售额和销量保持高位，头部产品贡献集中，最近月延续上升趋势，建议围绕高贡献产品继续放大增长。"}],
-                },
-              },
-            ],
-          },
-        };
-      },
-      executeToolByName: async (name) => {
-        toolCalls.push(name);
-        return {
-          result: {
-            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
-            matched_entities: { products: [], hospitals: [] },
-            unmatched_entities: { products: [], hospitals: [] },
-            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
-            boundaries: [],
-            diagnostic_flags: ["view_sales_overview_brief"],
-            summary: { sales_amount: "2861.75万元" },
-            rows: [{ row_label: "Top1产品", sales_amount: "1064.83万元" }],
-          },
-          meta: {
-            detail_request_mode: "macro_overview",
-            coverage_code: "full",
-            analysis_view: "sales_overview_brief",
-            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
-          },
-        };
-      },
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(geminiCallCount, 2);
-  assert.deepEqual(toolCalls, ["get_sales_overview_brief"]);
-  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
-  assert.equal(result.plannerState?.question_type, "report");
-  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_overview_brief"]);
-});
-
-test("runToolFirstChat keeps broad overall report entry stable under noisy history", async () => {
-  const toolCalls = [];
-  const payloads = [];
-  let geminiCallCount = 0;
-  const result = await runToolFirstChat({
-    message: "请给我一份当前区间的详细销售分析报告",
-    historyWindow: [
-      { role: "user", content: "先看看医院表现" },
-      { role: "assistant", content: "医院表现整体稳定，头部医院贡献较高。" },
-      { role: "user", content: "再看看产品结构" },
-      { role: "assistant", content: "产品结构较集中，头部规格贡献明显。" },
-    ],
-    businessSnapshot: {
-      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
-    },
-    questionJudgment: createQuestionJudgment(),
-    authToken: "token",
-    env: {},
-    requestId: "tool-runtime-overall-report-history-compact",
-    deps: {
-      requestGeminiGenerateContent: async (payload) => {
-        geminiCallCount += 1;
-        payloads.push(JSON.parse(JSON.stringify(payload)));
-        if (geminiCallCount === 1) {
-          return {
-            ok: true,
-            model: "stub-model",
-            payload: {
-              candidates: [
-                {
-                  content: {
-                    parts: [{ text: "请给我本区间的详细报告。" }],
-                  },
-                },
-              ],
-            },
-          };
-        }
-        return {
-          ok: true,
-          model: "stub-model",
-          payload: {
-            candidates: [
-              {
-                content: {
-                  parts: [{ text: "当前报表区间内销售表现稳健，头部产品贡献集中，最近月延续上行，建议继续放大核心产品的增长势能。" }],
-                },
-              },
-            ],
-          },
-        };
-      },
-      executeToolByName: async (name) => {
-        toolCalls.push(name);
-        return {
-          result: {
-            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
-            matched_entities: { products: [], hospitals: [] },
-            unmatched_entities: { products: [], hospitals: [] },
-            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
-            boundaries: [],
-            diagnostic_flags: ["view_sales_overview_brief"],
-            summary: { sales_amount: "2861.75万元" },
-            rows: [{ row_label: "Top1产品", sales_amount: "1064.83万元" }],
-          },
-          meta: {
-            detail_request_mode: "macro_overview",
-            coverage_code: "full",
-            analysis_view: "sales_overview_brief",
-            evidence_types: ["aggregate", "timeseries", "breakdown", "diagnostics"],
-          },
-        };
-      },
-    },
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(geminiCallCount, 2);
-  assert.deepEqual(toolCalls, ["get_sales_overview_brief"]);
-  assert.equal(payloads[0]?.contents?.length, 3);
-  assert.equal(payloads[0]?.contents?.[0]?.parts?.[0]?.text, "再看看产品结构");
-  assert.equal(payloads[0]?.contents?.[1]?.parts?.[0]?.text, "产品结构较集中，头部规格贡献明显。");
-  assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
-});
-
-test("runToolFirstChat auto-starts dimension overview macro for broad product performance question", async () => {
+test("runToolFirstChat derives requested_views from planner initial_tools for broad product overview question", async () => {
   const toolCalls = [];
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
@@ -540,7 +347,7 @@ test("runToolFirstChat auto-starts dimension overview macro for broad product pe
     }),
     authToken: "token",
     env: {},
-    requestId: "tool-runtime-product-overview-auto-macro",
+    requestId: "tool-runtime-product-overview-planner-first",
     deps: {
       requestGeminiGenerateContent: async () => {
         geminiCallCount += 1;
@@ -552,7 +359,27 @@ test("runToolFirstChat auto-starts dimension overview macro for broad product pe
               candidates: [
                 {
                   content: {
-                    parts: [{ text: "请分析一下当前区间内的产品表现。"}],
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            primary_dimension: "product",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "overview",
+                            required_evidence: ["aggregate", "breakdown", "ranking"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_dimension_overview_brief",
+                                args: { dimension: "product" },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
                   },
                 },
               ],
@@ -1066,7 +893,7 @@ test("runToolFirstChat prefers dimension report macro for product report questio
 
   assert.equal(result.ok, true);
   assert.equal(result.outputContext.route_code, ROUTE_DECISION_CODES.DIRECT_ANSWER);
-  assert.deepEqual(firstRoundDeclarationNames, ["submit_analysis_plan", "get_dimension_report_brief"]);
+  assert.deepEqual(firstRoundDeclarationNames, ["submit_analysis_plan"]);
   assert.deepEqual(toolCalls, ["get_dimension_report_brief"]);
   assert.deepEqual(result.plannerState?.requested_views, ["get_dimension_report_brief"]);
   assert.deepEqual(result.evidenceTypesCompleted, ["aggregate", "timeseries", "breakdown", "ranking", "diagnostics"]);
@@ -1434,8 +1261,9 @@ test("runToolFirstChat downgrades report answer to bounded when required evidenc
   assert.equal(result.analysisConfidence, "low");
 });
 
-test("runToolFirstChat rejects invalid planner missing relevance and requires resubmission", async () => {
+test("runToolFirstChat accepts planner missing relevance and falls back to question judgment", async () => {
   let geminiCallCount = 0;
+  const toolCalls = [];
   const result = await runToolFirstChat({
     message: "分析产品销售结构",
     historyWindow: [],
@@ -1486,19 +1314,138 @@ test("runToolFirstChat rejects invalid planner missing relevance and requires re
           };
         }
         return {
-          ok: false,
-          code: "should-not-reach-second-pass",
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前产品销售结构集中度较高，头部产品贡献更明显。" }],
+                },
+              },
+            ],
+          },
         };
       },
-      executeToolByName: async () => {
-        throw new Error("should-not-call-tools");
+      executeToolByName: async (name, args) => {
+        toolCalls.push({ name, args });
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            summary: { concentration_hint: "37.68%" },
+            rows: [{ product_name: "Botox50", sales_share: "37.68%" }],
+          },
+          meta: {
+            detail_request_mode: "generic",
+            coverage_code: "full",
+            evidence_types: ["breakdown"],
+          },
+        };
       },
     },
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.fallbackReason, "gemini_error");
+  assert.equal(result.ok, true);
   assert.equal(geminiCallCount, 2);
+  assert.equal(result.plannerState?.relevance, QUESTION_JUDGMENT_CODES.relevance.RELEVANT);
+  assert.deepEqual(toolCalls, [{ name: "get_share_breakdown", args: { dimension: "product" } }]);
+});
+
+test("runToolFirstChat ignores requested_views mismatch and derives from initial_tools", async () => {
+  let geminiCallCount = 0;
+  const toolCalls = [];
+  const result = await runToolFirstChat({
+    message: "分析销售趋势",
+    historyWindow: [],
+    businessSnapshot: {
+      analysis_range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+    },
+    questionJudgment: createQuestionJudgment(),
+    authToken: "token",
+    env: {},
+    requestId: "tool-runtime-requested-views-derived-from-initial-tools",
+    deps: {
+      requestGeminiGenerateContent: async () => {
+        geminiCallCount += 1;
+        if (geminiCallCount === 1) {
+          return {
+            ok: true,
+            model: "stub-model",
+            payload: {
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "submit_analysis_plan",
+                          args: {
+                            relevance: "relevant",
+                            primary_dimension: "overall",
+                            granularity: "summary",
+                            route_intent: "direct_answer",
+                            question_type: "trend",
+                            required_evidence: ["aggregate", "timeseries"],
+                            requested_views: ["get_sales_overview_brief"],
+                            required_tool_call_min: 1,
+                            initial_tools: [
+                              {
+                                name: "get_sales_trend_brief",
+                                args: { limit: 4 },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          ok: true,
+          model: "stub-model",
+          payload: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "当前销售趋势整体向上，最近月继续增长。" }],
+                },
+              },
+            ],
+          },
+        };
+      },
+      executeToolByName: async (name, args) => {
+        toolCalls.push({ name, args });
+        return {
+          result: {
+            range: { start_month: "2025-01", end_month: "2025-12", period: "2025-01~2025-12" },
+            matched_entities: { products: [], hospitals: [] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            summary: { sales_amount: "2861.75万元" },
+            rows: [{ period: "2025-12", sales_amount: "316.08万元" }],
+          },
+          meta: {
+            detail_request_mode: "macro_trend",
+            coverage_code: "full",
+            evidence_types: ["aggregate", "timeseries"],
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(geminiCallCount, 2);
+  assert.deepEqual(toolCalls, [{ name: "get_sales_trend_brief", args: { limit: 4 } }]);
+  assert.deepEqual(result.plannerState?.requested_views, ["get_sales_trend_brief"]);
 });
 
 test("runToolFirstChat fails when planner is rejected and model skips replanning by calling tools directly", async () => {
@@ -1921,6 +1868,15 @@ test("submit_analysis_plan schema uses structured args object instead of args_js
     },
   });
 
+  assert.ok(plannerDeclaration);
+  assert.deepEqual(plannerDeclaration?.parameters?.required, [
+    "primary_dimension",
+    "granularity",
+    "route_intent",
+    "question_type",
+    "required_evidence",
+    "required_tool_call_min",
+  ]);
   const initialToolSchema = plannerDeclaration?.parameters?.properties?.initial_tools?.items;
   assert.ok(initialToolSchema);
   assert.equal(initialToolSchema.properties?.args?.type, "OBJECT");

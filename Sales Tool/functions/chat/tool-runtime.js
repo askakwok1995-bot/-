@@ -103,17 +103,6 @@ const GENERIC_HOSPITAL_MENTIONS = Object.freeze([
   "某医院",
 ]);
 
-const DIRECT_MACRO_START_TOOL_NAMES = Object.freeze([
-  "get_sales_overview_brief",
-  "get_sales_trend_brief",
-  "get_dimension_overview_brief",
-]);
-
-const MACRO_EVIDENCE_BY_TOOL_NAME = Object.freeze({
-  get_sales_overview_brief: ["aggregate", "timeseries", "breakdown", "diagnostics"],
-  get_sales_trend_brief: ["aggregate", "timeseries", "breakdown", "diagnostics"],
-  get_dimension_overview_brief: ["aggregate", "breakdown", "ranking"],
-});
 const TOOL_DECLARATION_BY_NAME = new Map(
   buildToolDeclarations().map((declaration) => [trimString(declaration?.name), declaration]),
 );
@@ -333,13 +322,11 @@ function buildPlannerDeclaration(allowedViewNames = PLANNER_VIEW_NAMES) {
         },
       },
       required: [
-        "relevance",
         "primary_dimension",
         "granularity",
         "route_intent",
         "question_type",
         "required_evidence",
-        "requested_views",
         "required_tool_call_min",
       ],
     },
@@ -557,120 +544,6 @@ function normalizePlannerToolCalls(toolCalls, message, conversationState = null)
       args: nextArgs,
     };
   });
-}
-
-function buildDefaultDirectMacroCalls(message) {
-  const safeMessage = trimString(message);
-  if (!safeMessage) {
-    return [];
-  }
-  if (isDimensionOverviewMacroStartCandidate(safeMessage)) {
-    const dimension = safeMessage.includes("医院")
-      ? QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL
-      : QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
-    return [
-      {
-        name: "get_dimension_overview_brief",
-        args: {
-          dimension,
-        },
-      },
-    ];
-  }
-  if (!isBroadOverallMacroStartCandidate(safeMessage)) {
-    return [];
-  }
-  if (safeMessage.includes("趋势") || safeMessage.includes("走势")) {
-    return [{ name: "get_sales_trend_brief", args: {} }];
-  }
-  return [{ name: "get_sales_overview_brief", args: {} }];
-}
-
-function inferQuestionTypeForDirectMacroStart(message, toolCalls) {
-  const safeMessage = trimString(message);
-  const toolNames = Array.isArray(toolCalls) ? toolCalls.map((item) => trimString(item?.name)) : [];
-  if (safeMessage.includes("趋势") || toolNames.includes("get_sales_trend_brief")) {
-    return "trend";
-  }
-  if (safeMessage.includes("报告") || safeMessage.includes("汇报")) {
-    return "report";
-  }
-  return "overview";
-}
-
-function inferPrimaryDimensionForDirectMacroStart(toolCalls) {
-  const firstCall = Array.isArray(toolCalls) && toolCalls.length > 0 ? toolCalls[0] : null;
-  const toolName = trimString(firstCall?.name);
-  if (toolName === "get_dimension_overview_brief") {
-    const dimension = trimString(firstCall?.args?.dimension);
-    if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT) {
-      return QUESTION_JUDGMENT_CODES.primary_dimension.PRODUCT;
-    }
-    if (dimension === QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL) {
-      return QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL;
-    }
-  }
-  if (toolName === "get_sales_trend_brief") {
-    return QUESTION_JUDGMENT_CODES.primary_dimension.TREND;
-  }
-  return QUESTION_JUDGMENT_CODES.primary_dimension.OVERALL;
-}
-
-function buildQuestionJudgmentFromCodes(primaryDimensionCode, fallbackQuestionJudgment) {
-  const fallback = fallbackQuestionJudgment && typeof fallbackQuestionJudgment === "object" ? fallbackQuestionJudgment : {};
-  return {
-    ...fallback,
-    primary_dimension: {
-      code: primaryDimensionCode,
-      label: QUESTION_JUDGMENT_LABELS.primary_dimension[primaryDimensionCode] || trimString(fallback?.primary_dimension?.label),
-    },
-    granularity: {
-      code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY,
-      label: QUESTION_JUDGMENT_LABELS.granularity[QUESTION_JUDGMENT_CODES.granularity.SUMMARY],
-    },
-    relevance: {
-      code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
-      label: QUESTION_JUDGMENT_LABELS.relevance[QUESTION_JUDGMENT_CODES.relevance.RELEVANT],
-    },
-  };
-}
-
-function buildDirectMacroPlannerState(message, toolCalls, fallbackQuestionJudgment) {
-  const requestedViews = Array.isArray(toolCalls)
-    ? toolCalls.map((item) => trimString(item?.name)).filter((item) => item)
-    : [];
-  const uniqueViews = Array.from(new Set(requestedViews));
-  const questionType = inferQuestionTypeForDirectMacroStart(message, toolCalls);
-  const requiredEvidence = Array.from(
-    new Set(
-      uniqueViews.flatMap((toolName) => {
-        const evidenceTypes = MACRO_EVIDENCE_BY_TOOL_NAME[toolName];
-        return Array.isArray(evidenceTypes) ? evidenceTypes : [];
-      }),
-    ),
-  );
-  const primaryDimensionCode = inferPrimaryDimensionForDirectMacroStart(toolCalls);
-  return {
-    relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
-    route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
-    question_type: questionType,
-    required_evidence: requiredEvidence.length > 0 ? requiredEvidence : deriveRequiredEvidenceByQuestionType(questionType),
-    requested_views: uniqueViews,
-    refuse_reason: "",
-    bounded_reason: "",
-    synthesis_expectation: "",
-    required_tool_call_min: 1,
-    zero_tool_refuse: false,
-    initial_tools: Array.isArray(toolCalls)
-      ? toolCalls.map((call) => ({
-          name: trimString(call?.name),
-          args: call?.args && typeof call.args === "object" && !Array.isArray(call.args) ? { ...call.args } : {},
-        }))
-      : [],
-    missing_evidence_types: [],
-    analysis_confidence: "low",
-    questionJudgment: buildQuestionJudgmentFromCodes(primaryDimensionCode, fallbackQuestionJudgment),
-  };
 }
 
 async function executePlannedCalls({
@@ -920,10 +793,6 @@ function validateRawPlannerInitialTools(rawInitialTools, allowedSet) {
   return { accepted: true, note: "" };
 }
 
-function hasOwnStringField(value, key) {
-  return Object.prototype.hasOwnProperty.call(value || {}, key) && trimString(value?.[key]);
-}
-
 function hasOwnNumericField(value, key) {
   return Object.prototype.hasOwnProperty.call(value || {}, key) && Number.isFinite(Number(value?.[key]));
 }
@@ -1042,13 +911,6 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
       : PLANNER_VIEW_NAMES,
   );
 
-  if (!hasOwnStringField(safeArgs, "relevance")) {
-    return {
-      accepted: false,
-      note: "缺失 relevance，请先明确判断这是相关问题还是无关问题。",
-    };
-  }
-
   if (
     trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.REFUSE &&
     trimString(plannerState?.relevance) !== QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT
@@ -1062,23 +924,15 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
   const initialTools = Array.isArray(plannerState?.initial_tools) ? plannerState.initial_tools : [];
   const rawInitialTools = Array.isArray(safeArgs?.initial_tools) ? safeArgs.initial_tools : [];
   const requestedViews = Array.isArray(plannerState?.requested_views) ? plannerState.requested_views : [];
-  const hasRequestedViews = requestedViews.length > 0;
   const hasInitialTools = initialTools.length > 0;
   const isZeroToolRefuse =
     trimString(plannerState?.relevance) === QUESTION_JUDGMENT_CODES.relevance.IRRELEVANT &&
     trimString(plannerState?.route_intent) === ROUTE_DECISION_CODES.REFUSE;
 
-  if (!isZeroToolRefuse && !hasRequestedViews && !hasInitialTools) {
+  if (!isZeroToolRefuse && !hasInitialTools) {
     return {
       accepted: false,
-      note: "相关问题必须至少提供 requested_views 或 initial_tools 其中之一，不能两者都为空。",
-    };
-  }
-
-  if (!isZeroToolRefuse && hasRequestedViews && !hasInitialTools) {
-    return {
-      accepted: false,
-      note: "requested_views 已给出，但 initial_tools 为空。请给出首批工具调用计划后再继续。",
+      note: "相关问题必须提供 initial_tools，作为首批工具调用计划。",
     };
   }
 
@@ -1108,17 +962,6 @@ function validatePlannerState(plannerArgs, plannerState, allowedViewNames) {
       accepted: false,
       note: "requested_views 中包含当前阶段不可用的工具，请改用当前允许暴露的工具。",
     };
-  }
-
-  if (!isZeroToolRefuse && hasRequestedViews) {
-    const initialToolNames = new Set(initialTools.map((item) => trimString(item?.name)).filter((item) => item));
-    const missingPlannedTools = requestedViews.filter((item) => !initialToolNames.has(trimString(item)));
-    if (missingPlannedTools.length > 0) {
-      return {
-        accepted: false,
-        note: `requested_views 中的 ${missingPlannedTools.join("、")} 缺少对应的 initial_tools 参数计划。`,
-      };
-    }
   }
 
   return {
@@ -1377,8 +1220,6 @@ export async function runToolFirstChat({
   let plannerRecoveryAttempted = false;
   const firstRoundDimensionReportMacroOnly = shouldUseDimensionReportMacroFirstRound(message);
   const firstRoundMacroOnly = shouldUseMacroOnlyFirstRound(message);
-  const allowDirectMacroStart =
-    isBroadOverallMacroStartCandidate(message) || isDimensionOverviewMacroStartCandidate(message);
 
   for (let roundIndex = 0; roundIndex < TOOL_RUNTIME_MAX_ROUNDS; roundIndex += 1) {
     state.rounds = roundIndex + 1;
@@ -1392,9 +1233,10 @@ export async function runToolFirstChat({
         : PLANNER_VIEW_NAMES;
     const shouldForcePlannerRecovery =
       !state.planner_completed && state.tool_call_count === 0 && plannerRecoveryAttempted;
+    const shouldExposePlannerOnly = !state.planner_completed;
     const geminiResponse = await requestGeminiGenerateContentImpl(
       buildToolPayload(contents, allowedViewNames, {
-        plannerOnly: shouldForcePlannerRecovery,
+        plannerOnly: shouldExposePlannerOnly,
         forcePlannerRecovery: shouldForcePlannerRecovery,
       }),
       env,
@@ -1416,49 +1258,6 @@ export async function runToolFirstChat({
     const { content, plannerCall, toolCalls } = extractRuntimeCalls(geminiResponse.payload);
 
     if (!state.planner_completed) {
-      const autoDirectMacroCalls =
-        roundIndex === 0 && !plannerCall && toolCalls.length === 0 ? buildDefaultDirectMacroCalls(message) : [];
-      const canDirectMacroStart =
-        allowDirectMacroStart &&
-        roundIndex === 0 &&
-        !plannerCall &&
-        toolCalls.length > 0 &&
-        toolCalls.every((call) => DIRECT_MACRO_START_TOOL_NAMES.includes(trimString(call?.name)));
-      const plannedDirectMacroCalls = canDirectMacroStart ? toolCalls : autoDirectMacroCalls;
-
-      if (plannedDirectMacroCalls.length > 0) {
-        if (canDirectMacroStart && content) {
-          contents.push(content);
-        }
-        plannerState = buildDirectMacroPlannerState(message, plannedDirectMacroCalls, questionJudgment);
-        state.planner_completed = true;
-        state.planner_relevance = plannerState.relevance;
-        state.planner_route_intent = plannerState.route_intent;
-        state.question_type = plannerState.question_type;
-        state.evidence_types_requested = plannerState.required_evidence.slice(0, 8);
-        state.planner_requested_views = plannerState.requested_views.slice(0, 6);
-        state.planner_refuse_reason = plannerState.refuse_reason;
-        state.planner_bounded_reason = plannerState.bounded_reason;
-        state.planner_zero_tool_refuse = plannerState.zero_tool_refuse;
-
-        const directStartResult = await executePlannedCalls({
-          plannedCalls: plannedDirectMacroCalls,
-          state,
-          runtimeContext,
-          deps,
-          executeToolByNameImpl,
-          lastToolResultRef,
-          toolCallTrace,
-          contents,
-          env,
-          requestId,
-        });
-        if (!directStartResult.ok) {
-          return directStartResult;
-        }
-        continue;
-      }
-
       if (!plannerCall) {
         const canRetryPlanner =
           !plannerRecoveryAttempted &&
