@@ -1057,12 +1057,12 @@ tbody tr:hover td {
 
 .report-chart-card-product-pie .report-chart-card-tools {
   width: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  align-items: flex-start;
-  justify-items: flex-start;
-  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+  padding: 10px 12px;
   border: 1px solid rgb(132 169 188 / 16%);
   border-radius: 24px;
   background:
@@ -1077,15 +1077,18 @@ tbody tr:hover td {
 }
 
 .report-chart-card-product-pie .report-chart-export-group {
-  width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
+  width: auto;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .report-chart-card-product-pie .report-chart-export-group .secondary-btn {
-  min-width: 0;
-  flex: 1 1 132px;
+  min-width: 78px;
+  min-height: 34px;
+  padding: 0 14px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2257,6 +2260,17 @@ tr.selected-row td {
 
   .report-chart-export-group {
     justify-content: flex-start;
+  }
+
+  .report-chart-card-product-pie .report-chart-card-tools {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .report-chart-card-product-pie .report-chart-export-group {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .report-chart-card-head-with-tools {
