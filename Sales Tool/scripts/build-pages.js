@@ -15,6 +15,8 @@ const STATIC_FILES = [
   "targets.js",
   "reports.js",
   "ai-chat-ui.js",
+  "demo-workspace.js",
+  "workspace-ui.js",
 ];
 
 const STATIC_DIRS = ["app", "domain", "infra", "vendor"];
