@@ -45,7 +45,16 @@ const CHART_COMPACT_SIZE_BY_KEY = {
   [CHART_KEYS.hospitalShare]: "pie",
   [CHART_KEYS.hospitalTrend]: "wide",
 };
-const TARGET_CHART_KEYS = Object.freeze([CHART_KEYS.monthlyTrend, CHART_KEYS.quarterlyTrend, CHART_KEYS.productPerformance]);
+const TARGET_CHART_KEYS = Object.freeze([
+  CHART_KEYS.monthlyTrend,
+  CHART_KEYS.quarterlyTrend,
+  CHART_KEYS.productPerformance,
+  CHART_KEYS.productMonthlyTrend,
+  CHART_KEYS.productTop,
+  CHART_KEYS.hospitalTop,
+  CHART_KEYS.hospitalShare,
+  CHART_KEYS.hospitalTrend,
+]);
 const DEFAULT_REPORT_TARGET_CHART_METRIC = "amount";
 export const DEFAULT_REPORT_CHART_PALETTE_ID = "classic";
 export const REPORT_CHART_PALETTES = [
@@ -1102,8 +1111,15 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
   }
 
   try {
-    renderHospitalTrendSelect(state, dom, snapshot, deps, activeAmountUnit);
-    const pointCounts = buildChartPointCounts(snapshot);
+    renderHospitalTrendSelect(
+      state,
+      dom,
+      snapshot,
+      deps,
+      activeAmountUnit,
+      getReportTargetChartMetric(state, CHART_KEYS.hospitalTrend),
+    );
+    const pointCounts = buildChartPointCounts(snapshot, state);
     latestChartPointCounts = pointCounts;
     applyChartCompactLayout(dom, pointCounts);
 
@@ -1143,11 +1159,52 @@ function renderReportCharts(state, dom, deps, snapshot, range, amountUnit) {
       labelMode,
       getReportTargetChartMetric(state, CHART_KEYS.productPerformance),
     );
-    updateProductMonthlyTrendChart(productMonthlyTrendChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateProductTopChart(productTopChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateHospitalTopChart(hospitalTopChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateHospitalShareChart(hospitalShareChart, snapshot, deps, palette, activeAmountUnit, labelMode);
-    updateHospitalTrendChart(hospitalTrendChart, snapshot, state, deps, palette, activeAmountUnit, labelMode);
+    updateProductMonthlyTrendChart(
+      productMonthlyTrendChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.productMonthlyTrend),
+    );
+    updateProductTopChart(
+      productTopChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.productTop),
+    );
+    updateHospitalTopChart(
+      hospitalTopChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.hospitalTop),
+    );
+    updateHospitalShareChart(
+      hospitalShareChart,
+      snapshot,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.hospitalShare),
+    );
+    updateHospitalTrendChart(
+      hospitalTrendChart,
+      snapshot,
+      state,
+      deps,
+      palette,
+      activeAmountUnit,
+      labelMode,
+      getReportTargetChartMetric(state, CHART_KEYS.hospitalTrend),
+    );
 
     setChartButtonsDisabled(dom, false);
 
@@ -1172,23 +1229,36 @@ function isEchartsReady() {
   return typeof window !== "undefined" && window.echarts && typeof window.echarts.init === "function";
 }
 
-function buildChartPointCounts(snapshot) {
-  const productTopRows = Array.isArray(snapshot.productRows) ? snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT) : [];
-  const hospitalTopRows = Array.isArray(snapshot.hospitalRows) ? snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT) : [];
-  const hospitalShareRows = hospitalTopRows.filter((row) => Number.isFinite(row.amount) && row.amount > 0);
+function buildChartPointCounts(snapshot, state) {
+  const productTopMetric = getReportTargetChartMetric(state, CHART_KEYS.productTop);
+  const productMonthlyMetric = getReportTargetChartMetric(state, CHART_KEYS.productMonthlyTrend);
+  const hospitalTopMetric = getReportTargetChartMetric(state, CHART_KEYS.hospitalTop);
+  const hospitalShareMetric = getReportTargetChartMetric(state, CHART_KEYS.hospitalShare);
+  const hospitalTrendMetric = getReportTargetChartMetric(state, CHART_KEYS.hospitalTrend);
+  const productTopRows = filterChartRowsByMetricValue(getSortedProductChartRows(snapshot, productTopMetric, PRODUCT_CHART_TOP_LIMIT), productTopMetric);
+  const productMonthlyRows = filterChartRowsByMetricValue(
+    getSortedProductChartRows(snapshot, productMonthlyMetric, PRODUCT_CHART_TOP_LIMIT),
+    productMonthlyMetric,
+  );
+  const hospitalTopRows = filterChartRowsByMetricValue(
+    getSortedHospitalChartRows(snapshot, hospitalTopMetric, HOSPITAL_CHART_TOP_LIMIT),
+    hospitalTopMetric,
+  );
+  const hospitalShareRows = filterChartRowsByMetricValue(
+    getSortedHospitalChartRows(snapshot, hospitalShareMetric, HOSPITAL_CHART_TOP_LIMIT),
+    hospitalShareMetric,
+  );
+  const hospitalTrendRows = getHospitalTrendCandidateRows(snapshot, hospitalTrendMetric);
 
   return {
     [CHART_KEYS.monthlyTrend]: Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0,
     [CHART_KEYS.quarterlyTrend]: Array.isArray(snapshot.quarterRows) ? snapshot.quarterRows.length : 0,
-    [CHART_KEYS.productPerformance]: productTopRows.length,
-    [CHART_KEYS.productMonthlyTrend]: Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0,
+    [CHART_KEYS.productPerformance]: getSortedProductChartRows(snapshot, getReportTargetChartMetric(state, CHART_KEYS.productPerformance), PRODUCT_CHART_TOP_LIMIT).length,
+    [CHART_KEYS.productMonthlyTrend]: productMonthlyRows.length ? (Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0) : 0,
     [CHART_KEYS.productTop]: productTopRows.length,
     [CHART_KEYS.hospitalTop]: hospitalTopRows.length,
     [CHART_KEYS.hospitalShare]: hospitalShareRows.length,
-    [CHART_KEYS.hospitalTrend]:
-      (Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0) && (Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows.length : 0)
-        ? snapshot.monthRows.length
-        : 0,
+    [CHART_KEYS.hospitalTrend]: (Array.isArray(snapshot.monthRows) ? snapshot.monthRows.length : 0) && hospitalTrendRows.length ? snapshot.monthRows.length : 0,
   };
 }
 
@@ -1299,8 +1369,8 @@ function setChartsUnavailableState(dom, message) {
   }
 }
 
-function resolveActiveHospitalChartKey(state, snapshot) {
-  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+function resolveActiveHospitalChartKey(state, snapshot, metric = DEFAULT_REPORT_TARGET_CHART_METRIC) {
+  const rows = getHospitalTrendCandidateRows(snapshot, metric);
   if (!rows.length) {
     state.activeHospitalChartKey = "";
     return "";
@@ -1316,20 +1386,22 @@ function resolveActiveHospitalChartKey(state, snapshot) {
   return fallbackKey;
 }
 
-function renderHospitalTrendSelect(state, dom, snapshot, deps, amountUnit) {
+function renderHospitalTrendSelect(state, dom, snapshot, deps, amountUnit, metric = DEFAULT_REPORT_TARGET_CHART_METRIC) {
   if (!(dom.hospitalTrendSelect instanceof HTMLSelectElement)) return;
 
-  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+  const safeMetric = normalizeReportTargetChartMetric(metric);
+  const rows = getHospitalTrendCandidateRows(snapshot, safeMetric);
   if (!rows.length) {
     setHospitalTrendSelectUnavailable(dom, "暂无可选医院");
     return;
   }
 
-  const selectedKey = resolveActiveHospitalChartKey(state, snapshot);
+  const selectedKey = resolveActiveHospitalChartKey(state, snapshot, safeMetric);
   dom.hospitalTrendSelect.disabled = false;
   dom.hospitalTrendSelect.innerHTML = rows
     .map((row) => {
-      const optionLabel = `${row.hospitalName}（${formatScaledMoney(row.amount, deps, amountUnit)}）`;
+      const optionValue = safeMetric === "quantity" ? `${formatQuantityDisplay(row.quantity, deps)}盒` : formatScaledMoney(row.amount, deps, amountUnit);
+      const optionLabel = `${row.hospitalName}（${optionValue}）`;
       return `<option value="${deps.escapeHtml(row.hospitalKey)}">${deps.escapeHtml(optionLabel)}</option>`;
     })
     .join("");
@@ -1904,13 +1976,20 @@ function updateProductPerformanceChart(instance, snapshot, deps, palette, amount
   );
 }
 
-function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "产品金额趋势",
+    quantitySeriesName: "产品数量趋势",
+  });
 
   const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
   const monthKeys = snapshot.monthRows.map((row) => row.ym);
-  const topRows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+  const topRows = filterChartRowsByMetricValue(
+    getSortedProductChartRows(snapshot, chartMetric.metric, PRODUCT_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
 
   if (!labels.length || !topRows.length) {
     renderEmptyChart(instance, "当前范围无产品销售数据");
@@ -1923,13 +2002,14 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
 
   const series = topRows.map((row) => {
     const safeProductKey = String(row.productKey || "").trim();
-    const monthlyMap = safeProductKey ? productMonthlySeries[safeProductKey] : null;
+    const monthlySeriesEntry = safeProductKey ? productMonthlySeries[safeProductKey] : null;
+    const monthlyMap =
+      monthlySeriesEntry && typeof monthlySeriesEntry === "object" ? monthlySeriesEntry[chartMetric.metric] : null;
     const data = monthKeys.map((ym) => {
       if (!monthlyMap || typeof monthlyMap !== "object") return 0;
       const value = Number(monthlyMap[ym]);
       if (!Number.isFinite(value)) return 0;
-      const scaled = scaleAmount(value, amountUnit);
-      return Number.isFinite(scaled) ? scaled : 0;
+      return chartMetric.scaleValue(value) ?? 0;
     });
 
     return {
@@ -1943,7 +2023,7 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
       label: labelEnabled
         ? {
             ...buildChartDataLabelStyle(palette, labelMode, "top"),
-            formatter: (params) => formatMoneyForLabel(params.value, deps),
+            formatter: (params) => chartMetric.formatLabelValue(params.value),
           }
         : { show: false },
       labelLayout: buildChartDataLabelLayout(labelMode),
@@ -1965,7 +2045,7 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
             if (!Number.isFinite(value)) {
               return `${item.marker}${item.seriesName}：--`;
             }
-            return `${item.marker}${item.seriesName}：${formatMoneyDisplay(value, deps)}`;
+            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
           });
           return [title, ...lines].join("<br/>");
         },
@@ -1993,13 +2073,13 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
       },
       yAxis: {
         type: "value",
-        name: `金额（${amountUnit.label}）`,
+        name: chartMetric.valueAxisName,
         nameTextStyle: {
           color: palette.axisTextColor,
         },
         axisLabel: {
           color: palette.axisTextColor,
-          formatter: (value) => formatMoneyDisplay(value, deps),
+          formatter: (value) => chartMetric.formatAxisValue(value),
         },
         axisLine: buildAxisLineTheme(palette),
         splitLine: buildSplitLineTheme(palette),
@@ -2010,14 +2090,24 @@ function updateProductMonthlyTrendChart(instance, snapshot, deps, palette, amoun
   );
 }
 
-function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const isNameOnlyMode = labelMode === "none";
   const labelEnabled = labelMode !== "none";
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "产品金额占比",
+    quantitySeriesName: "产品数量占比",
+    amountShareSeriesName: "金额占比",
+    quantityShareSeriesName: "数量占比",
+  });
 
-  const rows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const rows = filterChartRowsByMetricValue(
+    getSortedProductChartRows(snapshot, chartMetric.metric, PRODUCT_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   if (!rows.length) {
-    renderEmptyChart(instance, "当前范围无产品销售数据");
+    renderEmptyChart(instance, "当前范围无可展示占比数据");
     return;
   }
 
@@ -2032,7 +2122,7 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
         formatter: (params) => {
           const value = Number(params.value);
           const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-          return `${params.name}<br/>金额：${formatMoneyDisplay(value, deps)}<br/>占比：${percent}`;
+          return `${params.name}<br/>${chartMetric.metricLabel}：${chartMetric.formatValue(value)}<br/>占比：${percent}`;
         },
       },
       legend: {
@@ -2044,7 +2134,7 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
       },
       series: [
         {
-          name: "产品金额占比",
+          name: chartMetric.seriesName,
           type: "pie",
           radius: ["48%", "72%"],
           center: ["50%", "46%"],
@@ -2063,8 +2153,8 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
                   if (labelMode === "compact") {
                     return `${params.name}\n${percent}`;
                   }
-                  const amountText = formatMoneyForLabel(params.value, deps);
-                  return `${params.name}\n${percent}｜${amountText || "--"}`;
+                  const valueText = chartMetric.formatLabelValue(params.value);
+                  return `${params.name}\n${percent}｜${valueText || "--"}`;
                 },
               }
             : { show: false },
@@ -2073,7 +2163,7 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
           },
           data: rows.map((row) => ({
             name: row.productName,
-            value: scaleAmount(row.amount, amountUnit),
+            value: chartMetric.scaleValue(row[metricKey]),
           })),
         },
       ],
@@ -2082,11 +2172,19 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
   );
 }
 
-function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "销售金额",
+    quantitySeriesName: "销售数量",
+  });
 
-  const rows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const rows = filterChartRowsByMetricValue(
+    getSortedHospitalChartRows(snapshot, chartMetric.metric, HOSPITAL_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   if (!rows.length) {
     renderEmptyChart(instance, "当前范围无医院销售数据");
     return;
@@ -2094,7 +2192,7 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
 
   const labels = rows.map((row) => row.hospitalName);
   const values = rows.map((row) => {
-    const scaled = scaleAmount(row.amount, amountUnit);
+    const scaled = chartMetric.scaleValue(row[metricKey]);
     return Number.isFinite(scaled) ? scaled : 0;
   });
 
@@ -2107,7 +2205,7 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
         trigger: "axis",
         ...buildThemedTooltipBase(palette),
         axisPointer: { type: "shadow" },
-        valueFormatter: (value) => (Number.isFinite(value) ? formatMoneyDisplay(value, deps) : "--"),
+        valueFormatter: (value) => (Number.isFinite(value) ? chartMetric.formatValue(value) : "--"),
       },
       grid: {
         left: 140,
@@ -2117,9 +2215,13 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
       },
       xAxis: {
         type: "value",
+        name: chartMetric.valueAxisName,
         axisLabel: {
           color: palette.axisTextColor,
-          formatter: (value) => formatMoneyDisplay(value, deps),
+          formatter: (value) => chartMetric.formatAxisValue(value),
+        },
+        nameTextStyle: {
+          color: palette.axisTextColor,
         },
         axisLine: buildAxisLineTheme(palette),
         splitLine: buildSplitLineTheme(palette),
@@ -2135,14 +2237,14 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
       },
       series: [
         {
-          name: "销售金额",
+          name: chartMetric.seriesName,
           type: "bar",
           barMaxWidth: 22,
           data: values,
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "right"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
+                formatter: (params) => chartMetric.formatLabelValue(params.value),
               }
             : { show: false },
         },
@@ -2152,18 +2254,25 @@ function updateHospitalTopChart(instance, snapshot, deps, palette, amountUnit, l
   );
 }
 
-function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit, labelMode) {
+function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const isNameOnlyMode = labelMode === "none";
   const labelEnabled = labelMode !== "none";
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "医院金额占比",
+    quantitySeriesName: "医院数量占比",
+    amountShareSeriesName: "金额占比",
+    quantityShareSeriesName: "数量占比",
+  });
 
-  const topRows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const topRows = getSortedHospitalChartRows(snapshot, chartMetric.metric, HOSPITAL_CHART_TOP_LIMIT);
   if (!topRows.length) {
     renderEmptyChart(instance, "当前范围无医院销售数据");
     return;
   }
 
-  const rows = topRows.filter((row) => Number.isFinite(row.amount) && row.amount > 0);
+  const rows = filterChartRowsByMetricValue(topRows, chartMetric.metric);
 
   if (!rows.length) {
     renderEmptyChart(instance, "当前范围无可展示占比数据");
@@ -2188,7 +2297,7 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
         formatter: (params) => {
           const value = Number(params.value);
           const percent = Number.isFinite(params.percent) ? `${params.percent.toFixed(2)}%` : "--";
-          return `${params.name}<br/>金额：${formatMoneyDisplay(value, deps)}<br/>占比：${percent}`;
+          return `${params.name}<br/>${chartMetric.metricLabel}：${chartMetric.formatValue(value)}<br/>占比：${percent}`;
         },
       },
       legend: {
@@ -2200,7 +2309,7 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
       },
       series: [
         {
-          name: "医院金额占比",
+          name: chartMetric.seriesName,
           type: "pie",
           radius: ["48%", "72%"],
           center: ["50%", "46%"],
@@ -2219,8 +2328,8 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
                   if (labelMode === "compact") {
                     return `${params.name}\n${percent}`;
                   }
-                  const amountText = formatMoneyForLabel(params.value, deps);
-                  return `${params.name}\n${percent}｜${amountText || "--"}`;
+                  const valueText = chartMetric.formatLabelValue(params.value);
+                  return `${params.name}\n${percent}｜${valueText || "--"}`;
                 },
               }
             : { show: false },
@@ -2229,7 +2338,7 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
           },
           data: rows.map((row) => ({
             name: row.hospitalName,
-            value: scaleAmount(row.amount, amountUnit),
+            value: chartMetric.scaleValue(row[metricKey]),
           })),
         },
       ],
@@ -2238,11 +2347,17 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
   );
 }
 
-function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amountUnit, labelMode) {
+function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amountUnit, labelMode, metric) {
   if (!instance) return;
   const labelEnabled = labelMode !== "none";
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "销售金额",
+    quantitySeriesName: "销售数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
+  });
 
-  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+  const rows = getHospitalTrendCandidateRows(snapshot, chartMetric.metric);
   const labels = snapshot.monthRows.map((row) => formatMonthLabel(row.ym));
   const monthKeys = snapshot.monthRows.map((row) => row.ym);
   if (!rows.length || !labels.length) {
@@ -2250,27 +2365,29 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
     return;
   }
 
-  const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot);
+  const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot, chartMetric.metric);
   if (!activeHospitalKey) {
     renderEmptyChart(instance, "当前范围无医院销售数据");
     return;
   }
 
   const selectedRow = rows.find((row) => row.hospitalKey === activeHospitalKey) || rows[0];
-  const monthlySeriesMap =
+  const monthlySeriesEntry =
     snapshot.hospitalMonthlySeries && typeof snapshot.hospitalMonthlySeries === "object"
       ? snapshot.hospitalMonthlySeries[activeHospitalKey]
       : null;
+  const monthlySeriesMap =
+    monthlySeriesEntry && typeof monthlySeriesEntry === "object" ? monthlySeriesEntry[chartMetric.metric] : null;
 
-  const amountData = monthKeys.map((ym) => {
+  const metricData = monthKeys.map((ym) => {
     if (!monthlySeriesMap || typeof monthlySeriesMap !== "object") return 0;
     const value = Number(monthlySeriesMap[ym]);
     if (!Number.isFinite(value)) return 0;
-    const scaled = scaleAmount(value, amountUnit);
+    const scaled = chartMetric.scaleValue(value);
     return Number.isFinite(scaled) ? scaled : 0;
   });
 
-  const amountYoyData = monthKeys.map((ym) => {
+  const metricYoyData = monthKeys.map((ym) => {
     if (!monthlySeriesMap || typeof monthlySeriesMap !== "object") return null;
     const current = Number(monthlySeriesMap[ym]);
     const baseline = Number(monthlySeriesMap[addYearsToYm(ym, -1)]);
@@ -2278,7 +2395,7 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
     return Number.isFinite(ratio) ? Number((ratio * 100).toFixed(2)) : null;
   });
 
-  const percentCandidates = amountYoyData.filter((value) => Number.isFinite(value));
+  const percentCandidates = metricYoyData.filter((value) => Number.isFinite(value));
   const maxPercentValue = percentCandidates.length ? Math.max(...percentCandidates, 0) : 0;
   const minPercentValue = percentCandidates.length ? Math.min(...percentCandidates, 0) : 0;
   const positiveCeil = Math.max(120, Math.ceil(maxPercentValue / 10) * 10);
@@ -2300,11 +2417,11 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
               return `${item.marker}${item.seriesName}：--`;
             }
 
-            if (item.seriesName === "金额同比增长率") {
+            if (item.seriesName === chartMetric.growthSeriesName) {
               return `${item.marker}${item.seriesName}：${value.toFixed(2)}%`;
             }
 
-            return `${item.marker}${item.seriesName}：${formatMoneyDisplay(value, deps)}`;
+            return `${item.marker}${item.seriesName}：${chartMetric.formatValue(value)}`;
           });
           return [title, ...lines].join("<br/>");
         },
@@ -2332,13 +2449,13 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       yAxis: [
         {
           type: "value",
-          name: `金额（${amountUnit.label}）`,
+          name: chartMetric.valueAxisName,
           nameTextStyle: {
             color: palette.axisTextColor,
           },
           axisLabel: {
             color: palette.axisTextColor,
-            formatter: (value) => formatMoneyDisplay(value, deps),
+            formatter: (value) => chartMetric.formatAxisValue(value),
           },
           axisLine: buildAxisLineTheme(palette),
           splitLine: buildSplitLineTheme(palette),
@@ -2361,25 +2478,25 @@ function updateHospitalTrendChart(instance, snapshot, state, deps, palette, amou
       ],
       series: [
         {
-          name: "销售金额",
+          name: chartMetric.seriesName,
           type: "bar",
           barMaxWidth: 24,
           yAxisIndex: 0,
-          data: amountData,
+          data: metricData,
           label: labelEnabled
             ? {
                 ...buildChartDataLabelStyle(palette, labelMode, "top"),
-                formatter: (params) => formatMoneyForLabel(params.value, deps),
+                formatter: (params) => chartMetric.formatLabelValue(params.value),
               }
             : { show: false },
         },
         {
-          name: "金额同比增长率",
+          name: chartMetric.growthSeriesName,
           type: "line",
           smooth: true,
           connectNulls: false,
           yAxisIndex: 1,
-          data: amountYoyData,
+          data: metricYoyData,
           lineStyle: {
             width: 2,
           },
@@ -2652,15 +2769,34 @@ function buildChartXlsxExportPayload(snapshot, chartKey, deps, state, amountUnit
     case CHART_KEYS.productPerformance:
       return buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.productPerformance));
     case CHART_KEYS.productMonthlyTrend:
-      return buildProductMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap);
+      return buildProductMonthlyTrendRows(
+        snapshot,
+        deps,
+        amountUnit,
+        selectedMap,
+        getReportTargetChartMetric(state, CHART_KEYS.productMonthlyTrend),
+      );
     case CHART_KEYS.productTop:
-      return buildProductTopPieRows(snapshot, deps, amountUnit, selectedMap);
+      return buildProductTopPieRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.productTop));
     case CHART_KEYS.hospitalTop:
-      return buildHospitalTopRows(snapshot, deps, amountUnit, selectedMap);
+      return buildHospitalTopRows(snapshot, deps, amountUnit, selectedMap, getReportTargetChartMetric(state, CHART_KEYS.hospitalTop));
     case CHART_KEYS.hospitalShare:
-      return buildHospitalSharePieRows(snapshot, deps, amountUnit, selectedMap);
+      return buildHospitalSharePieRows(
+        snapshot,
+        deps,
+        amountUnit,
+        selectedMap,
+        getReportTargetChartMetric(state, CHART_KEYS.hospitalShare),
+      );
     case CHART_KEYS.hospitalTrend:
-      return buildHospitalTrendRows(snapshot, deps, state, amountUnit, selectedMap);
+      return buildHospitalTrendRows(
+        snapshot,
+        deps,
+        state,
+        amountUnit,
+        selectedMap,
+        getReportTargetChartMetric(state, CHART_KEYS.hospitalTrend),
+      );
     default:
       return null;
   }
@@ -2703,6 +2839,8 @@ function buildMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap, metric) 
 
   return {
     title: "月度趋势",
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "月份", kind: "text" }].concat(
       visibleDefs.map((item) => ({
@@ -2751,6 +2889,8 @@ function buildQuarterlyTrendRows(snapshot, deps, amountUnit, selectedMap, metric
 
   return {
     title: "季度趋势",
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "季度", kind: "text" }].concat(
       visibleDefs.map((item) => ({
@@ -2802,6 +2942,8 @@ function buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap, me
 
   return {
     title: "产品达成与增长（Top10）",
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleDefs.map((item) => item.name),
     headers: [{ label: "产品/规格", kind: "text" }].concat(
       visibleDefs.map((item) => ({
@@ -2813,8 +2955,15 @@ function buildProductPerformanceRows(snapshot, deps, amountUnit, selectedMap, me
   };
 }
 
-function buildProductMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
-  const topRows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+function buildProductMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "产品金额趋势",
+    quantitySeriesName: "产品数量趋势",
+  });
+  const topRows = filterChartRowsByMetricValue(
+    getSortedProductChartRows(snapshot, chartMetric.metric, PRODUCT_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   const monthKeys = snapshot.monthRows.map((row) => row.ym);
   if (!topRows.length || !monthKeys.length) return null;
 
@@ -2824,111 +2973,163 @@ function buildProductMonthlyTrendRows(snapshot, deps, amountUnit, selectedMap) {
 
   return {
     title: "产品月度变化趋势（Top10）",
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleRows.map((row) => row.productName),
     headers: [{ label: "月份", kind: "text" }].concat(
       visibleRows.map((row) => ({
-        label: `${row.productName}（${amountUnit.label}）`,
-        kind: "money",
+        label: `${row.productName}（${chartMetric.unitLabel}）`,
+        kind: chartMetric.valueKind,
       })),
     ),
     rows: monthKeys.map((ym) => {
       const rowValues = [formatMonthLabel(ym)];
       for (const row of visibleRows) {
-        const monthlyMap = seriesMap[row.productKey];
+        const monthlySeriesEntry = seriesMap[row.productKey];
+        const monthlyMap =
+          monthlySeriesEntry && typeof monthlySeriesEntry === "object" ? monthlySeriesEntry[chartMetric.metric] : null;
         const rawValue = monthlyMap && typeof monthlyMap === "object" ? Number(monthlyMap[ym]) : 0;
-        rowValues.push(scaleAndRoundAmount(rawValue, deps, amountUnit) ?? 0);
+        rowValues.push(chartMetric.scaleValue(rawValue) ?? 0);
       }
       return rowValues;
     }),
   };
 }
 
-function buildProductTopPieRows(snapshot, deps, amountUnit, selectedMap) {
-  const topRows = snapshot.productRows.slice(0, PRODUCT_CHART_TOP_LIMIT);
+function buildProductTopPieRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "产品金额占比",
+    quantitySeriesName: "产品数量占比",
+  });
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const topRows = filterChartRowsByMetricValue(
+    getSortedProductChartRows(snapshot, chartMetric.metric, PRODUCT_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   const visibleRows = topRows.filter((row) => isSeriesVisible(row.productName, selectedMap));
   if (!visibleRows.length) return null;
 
-  const totalAmount = visibleRows.reduce((sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0), 0);
+  const totalMetric = visibleRows.reduce((sum, row) => {
+    const metricValue = Number(row?.[metricKey]);
+    return sum + (Number.isFinite(metricValue) ? metricValue : 0);
+  }, 0);
 
   return {
-    title: "产品 Top10 金额占比",
+    title: `产品 Top10 ${chartMetric.metricLabel}占比`,
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleRows.map((row) => row.productName),
     headers: [
       { label: "产品/规格", kind: "text" },
-      { label: `销售金额（${amountUnit.label}）`, kind: "money" },
+      { label: `销售${chartMetric.metricLabel}（${chartMetric.unitLabel}）`, kind: chartMetric.valueKind },
       { label: "占比", kind: "percent" },
     ],
     rows: visibleRows.map((row) => {
-      const amount = scaleAndRoundAmount(row.amount, deps, amountUnit);
-      const ratio = totalAmount > 0 ? normalizeRatioValue(row.amount / totalAmount) : null;
-      return [row.productName, amount, ratio];
+      const metricValue = Number(row?.[metricKey]);
+      const value = chartMetric.scaleValue(metricValue);
+      const ratio = totalMetric > 0 ? normalizeRatioValue(metricValue / totalMetric) : null;
+      return [row.productName, value, ratio];
     }),
   };
 }
 
-function buildHospitalTopRows(snapshot, deps, amountUnit, selectedMap) {
-  if (!isSeriesVisible("销售金额", selectedMap)) return null;
+function buildHospitalTopRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "销售金额",
+    quantitySeriesName: "销售数量",
+  });
+  if (!isSeriesVisible(chartMetric.seriesName, selectedMap)) return null;
 
-  const rows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const rows = filterChartRowsByMetricValue(
+    getSortedHospitalChartRows(snapshot, chartMetric.metric, HOSPITAL_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   if (!rows.length) return null;
 
   return {
-    title: "医院 Top10 销售金额",
-    visibleSeries: ["销售金额"],
+    title: `医院 Top10 销售${chartMetric.metricLabel}`,
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
+    visibleSeries: [chartMetric.seriesName],
     headers: [
       { label: "医院", kind: "text" },
-      { label: `销售金额（${amountUnit.label}）`, kind: "money" },
+      { label: `销售${chartMetric.metricLabel}（${chartMetric.unitLabel}）`, kind: chartMetric.valueKind },
     ],
-    rows: rows.map((row) => [row.hospitalName, scaleAndRoundAmount(row.amount, deps, amountUnit)]),
+    rows: rows.map((row) => [row.hospitalName, chartMetric.scaleValue(row[metricKey])]),
   };
 }
 
-function buildHospitalSharePieRows(snapshot, deps, amountUnit, selectedMap) {
-  const topRows = snapshot.hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT).filter((row) => Number.isFinite(row.amount) && row.amount > 0);
+function buildHospitalSharePieRows(snapshot, deps, amountUnit, selectedMap, metric) {
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "医院金额占比",
+    quantitySeriesName: "医院数量占比",
+  });
+  const metricKey = chartMetric.metric === "quantity" ? "quantity" : "amount";
+  const topRows = filterChartRowsByMetricValue(
+    getSortedHospitalChartRows(snapshot, chartMetric.metric, HOSPITAL_CHART_TOP_LIMIT),
+    chartMetric.metric,
+  );
   const visibleRows = topRows.filter((row) => isSeriesVisible(row.hospitalName, selectedMap));
   if (!visibleRows.length) return null;
 
-  const totalAmount = visibleRows.reduce((sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0), 0);
+  const totalMetric = visibleRows.reduce((sum, row) => {
+    const metricValue = Number(row?.[metricKey]);
+    return sum + (Number.isFinite(metricValue) ? metricValue : 0);
+  }, 0);
 
   return {
-    title: "TOP10医院销售金额占比",
+    title: `TOP10医院销售${chartMetric.metricLabel}占比`,
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleRows.map((row) => row.hospitalName),
     headers: [
       { label: "医院", kind: "text" },
-      { label: `销售金额（${amountUnit.label}）`, kind: "money" },
+      { label: `销售${chartMetric.metricLabel}（${chartMetric.unitLabel}）`, kind: chartMetric.valueKind },
       { label: "占比", kind: "percent" },
     ],
     rows: visibleRows.map((row) => {
-      const amount = scaleAndRoundAmount(row.amount, deps, amountUnit);
-      const ratio = totalAmount > 0 ? normalizeRatioValue(row.amount / totalAmount) : null;
-      return [row.hospitalName, amount, ratio];
+      const metricValue = Number(row?.[metricKey]);
+      const value = chartMetric.scaleValue(metricValue);
+      const ratio = totalMetric > 0 ? normalizeRatioValue(metricValue / totalMetric) : null;
+      return [row.hospitalName, value, ratio];
     }),
   };
 }
 
-function buildHospitalTrendRows(snapshot, deps, state, amountUnit, selectedMap) {
-  const rows = Array.isArray(snapshot.hospitalTopRows) ? snapshot.hospitalTopRows : [];
+function buildHospitalTrendRows(snapshot, deps, state, amountUnit, selectedMap, metric) {
+  const chartMetric = buildSimpleChartMetricPayload(metric, deps, amountUnit, {
+    amountSeriesName: "销售金额",
+    quantitySeriesName: "销售数量",
+    amountGrowthSeriesName: "金额同比增长率",
+    quantityGrowthSeriesName: "数量同比增长率",
+  });
+  const rows = getHospitalTrendCandidateRows(snapshot, chartMetric.metric);
   const monthKeys = snapshot.monthRows.map((row) => row.ym);
   if (!rows.length || !monthKeys.length) return null;
 
-  const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot);
+  const activeHospitalKey = resolveActiveHospitalChartKey(state, snapshot, chartMetric.metric);
   if (!activeHospitalKey) return null;
 
   const selectedHospital = rows.find((row) => row.hospitalKey === activeHospitalKey) || rows[0];
-  const seriesMap = snapshot.hospitalMonthlySeries && typeof snapshot.hospitalMonthlySeries === "object" ? snapshot.hospitalMonthlySeries[activeHospitalKey] : null;
+  const seriesEntry =
+    snapshot.hospitalMonthlySeries && typeof snapshot.hospitalMonthlySeries === "object"
+      ? snapshot.hospitalMonthlySeries[activeHospitalKey]
+      : null;
+  const seriesMap = seriesEntry && typeof seriesEntry === "object" ? seriesEntry[chartMetric.metric] : null;
   if (!seriesMap || typeof seriesMap !== "object") return null;
 
   const defs = [
     {
-      name: "销售金额",
-      kind: "money",
+      name: chartMetric.seriesName,
+      kind: chartMetric.valueKind,
       getter: (ym) => {
         const value = Number(seriesMap[ym]);
-        return scaleAndRoundAmount(Number.isFinite(value) ? value : 0, deps, amountUnit);
+        return chartMetric.scaleValue(Number.isFinite(value) ? value : 0);
       },
     },
     {
-      name: "金额同比增长率",
+      name: chartMetric.growthSeriesName,
       kind: "percent",
       getter: (ym) => {
         const current = Number(seriesMap[ym]);
@@ -2943,11 +3144,13 @@ function buildHospitalTrendRows(snapshot, deps, state, amountUnit, selectedMap) 
 
   return {
     title: "医院月度趋势与增长率（Top10可选）",
+    metricLabel: chartMetric.metricLabel,
+    valueUnitLabel: chartMetric.unitLabel,
     visibleSeries: visibleDefs.map((item) => item.name),
     metaEntries: [["选中医院", selectedHospital.hospitalName]],
     headers: [{ label: "月份", kind: "text" }].concat(
       visibleDefs.map((item) => ({
-        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.name,
+        label: item.kind === "money" ? `${item.name}（${amountUnit.label}）` : item.kind === "quantity" ? `${item.name}（盒）` : item.name,
         kind: item.kind,
       })),
     ),
@@ -2979,10 +3182,13 @@ function writeChartDataWorksheet(worksheet, payload, range, amountUnit) {
   }
 
   const visibleSeriesText = Array.isArray(payload.visibleSeries) && payload.visibleSeries.length ? payload.visibleSeries.join("、") : "全部";
+  const metricLabel = String(payload.metricLabel || "金额").trim() || "金额";
+  const valueUnitLabel = String(payload.valueUnitLabel || amountUnit.label).trim() || amountUnit.label;
   const metadataRows = [
     ["图表名称", payload.title],
     ["导出范围", `${range.startYm} ~ ${range.endYm}`],
-    ["金额单位", amountUnit.label],
+    ["当前口径", metricLabel],
+    ["数值单位", valueUnitLabel],
     ["可见系列", visibleSeriesText],
     ["导出时间", new Date().toLocaleString("zh-CN", { hour12: false })],
   ].concat(Array.isArray(payload.metaEntries) ? payload.metaEntries : []);
@@ -3451,6 +3657,98 @@ function formatQuantityLabelValue(value, deps) {
   return formatQuantityDisplay(value, deps);
 }
 
+function compareChartMetricRows(left, right, metric, nameKey) {
+  const safeMetric = normalizeReportTargetChartMetric(metric);
+  const primaryKey = safeMetric === "quantity" ? "quantity" : "amount";
+  const secondaryKey = safeMetric === "quantity" ? "amount" : "quantity";
+  const leftPrimary = Number(left?.[primaryKey]);
+  const rightPrimary = Number(right?.[primaryKey]);
+  if (Number.isFinite(leftPrimary) || Number.isFinite(rightPrimary)) {
+    const safeLeftPrimary = Number.isFinite(leftPrimary) ? leftPrimary : Number.NEGATIVE_INFINITY;
+    const safeRightPrimary = Number.isFinite(rightPrimary) ? rightPrimary : Number.NEGATIVE_INFINITY;
+    if (safeLeftPrimary !== safeRightPrimary) {
+      return safeRightPrimary - safeLeftPrimary;
+    }
+  }
+
+  const leftSecondary = Number(left?.[secondaryKey]);
+  const rightSecondary = Number(right?.[secondaryKey]);
+  if (Number.isFinite(leftSecondary) || Number.isFinite(rightSecondary)) {
+    const safeLeftSecondary = Number.isFinite(leftSecondary) ? leftSecondary : Number.NEGATIVE_INFINITY;
+    const safeRightSecondary = Number.isFinite(rightSecondary) ? rightSecondary : Number.NEGATIVE_INFINITY;
+    if (safeLeftSecondary !== safeRightSecondary) {
+      return safeRightSecondary - safeLeftSecondary;
+    }
+  }
+
+  const safeNameKey = String(nameKey || "productName");
+  return String(left?.[safeNameKey] || "").localeCompare(String(right?.[safeNameKey] || ""), "zh-Hans-CN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function getSortedProductChartRows(snapshot, metric, limit = PRODUCT_CHART_TOP_LIMIT) {
+  const rows = Array.isArray(snapshot?.productRows) ? snapshot.productRows.slice() : [];
+  rows.sort((left, right) => compareChartMetricRows(left, right, metric, "productName"));
+  return Number.isInteger(limit) && limit > 0 ? rows.slice(0, limit) : rows;
+}
+
+function getSortedHospitalChartRows(snapshot, metric, limit = HOSPITAL_CHART_TOP_LIMIT) {
+  const sourceRows = Array.isArray(snapshot?.hospitalChartRows) ? snapshot.hospitalChartRows : Array.isArray(snapshot?.hospitalRows) ? snapshot.hospitalRows : [];
+  const rows = sourceRows.slice();
+  rows.sort((left, right) => compareChartMetricRows(left, right, metric, "hospitalName"));
+  return Number.isInteger(limit) && limit > 0 ? rows.slice(0, limit) : rows;
+}
+
+function filterChartRowsByMetricValue(rows, metric) {
+  const safeMetric = normalizeReportTargetChartMetric(metric);
+  const metricKey = safeMetric === "quantity" ? "quantity" : "amount";
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const metricValue = Number(row?.[metricKey]);
+    return Number.isFinite(metricValue) && metricValue > 0;
+  });
+}
+
+function getHospitalTrendCandidateRows(snapshot, metric) {
+  return filterChartRowsByMetricValue(getSortedHospitalChartRows(snapshot, metric, HOSPITAL_CHART_TOP_LIMIT), metric);
+}
+
+function buildSimpleChartMetricPayload(metric, deps, amountUnit, options = {}) {
+  const safeMetric = normalizeReportTargetChartMetric(metric);
+  return {
+    metric: safeMetric,
+    metricLabel: safeMetric === "quantity" ? "数量" : "金额",
+    valueKind: safeMetric === "quantity" ? "quantity" : "money",
+    unitLabel: safeMetric === "quantity" ? "盒" : amountUnit.label,
+    seriesName: safeMetric === "quantity" ? String(options.quantitySeriesName || "销售数量") : String(options.amountSeriesName || "销售金额"),
+    shareSeriesName: safeMetric === "quantity" ? String(options.quantityShareSeriesName || "数量占比") : String(options.amountShareSeriesName || "金额占比"),
+    growthSeriesName:
+      safeMetric === "quantity"
+        ? String(options.quantityGrowthSeriesName || "数量同比增长率")
+        : String(options.amountGrowthSeriesName || "金额同比增长率"),
+    valueAxisName: safeMetric === "quantity" ? "数量（盒）" : `金额（${amountUnit.label}）`,
+    scaleValue(rawValue) {
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) return null;
+      if (safeMetric === "quantity") {
+        return deps.roundMoney(value);
+      }
+      const scaled = scaleAmount(value, amountUnit);
+      return Number.isFinite(scaled) ? scaled : null;
+    },
+    formatValue(value) {
+      return safeMetric === "quantity" ? `${formatQuantityDisplay(value, deps)}盒` : formatMoneyDisplay(value, deps);
+    },
+    formatAxisValue(value) {
+      return safeMetric === "quantity" ? formatQuantityDisplay(value, deps) : formatMoneyDisplay(value, deps);
+    },
+    formatLabelValue(value) {
+      return safeMetric === "quantity" ? formatQuantityLabelValue(value, deps) : formatMoneyForLabel(value, deps);
+    },
+  };
+}
+
 function buildTargetGapLabel(snapshot) {
   const parts = [];
   const amountYears = Array.isArray(snapshot?.amountTargetGapYears) ? snapshot.amountTargetGapYears : [];
@@ -3521,7 +3819,9 @@ function buildTargetChartMetricPayload(rows, metric, deps, amountUnit, options =
 
   return {
     metric: safeMetric,
+    metricLabel: safeMetric === "quantity" ? "数量" : "金额",
     valueKind: safeMetric === "quantity" ? "quantity" : "money",
+    unitLabel: safeMetric === "quantity" ? "盒" : amountUnit.label,
     valueAxisName: safeMetric === "quantity" ? "数量（盒）" : `金额（${amountUnit.label}）`,
     actualSeriesName,
     targetSeriesName,

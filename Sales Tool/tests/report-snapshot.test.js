@@ -147,3 +147,48 @@ test("buildReportSnapshot computes dual metric achievements and product quantity
   assert.equal(volux?.targetQuantity, 8);
   assert.equal(volux?.quantityAchievement, 0.75);
 });
+
+test("buildReportSnapshot exposes dual-metric product and hospital monthly series for charts", () => {
+  const snapshot = buildReportSnapshot(
+    {
+      records: [
+        { date: "2025-01-02", productId: "p1", productName: "Volux", hospital: "A院", amount: 100, quantity: 2 },
+        { date: "2025-01-10", productId: "p2", productName: "Botox", hospital: "B院", amount: 80, quantity: 4 },
+        { date: "2025-02-15", productId: "p1", productName: "Volux", hospital: "A院", amount: 160, quantity: 3 },
+        { date: "2024-01-08", productId: "p1", productName: "Volux", hospital: "A院", amount: 90, quantity: 1 },
+      ],
+    },
+    createDeps(),
+    {
+      startYm: "2025-01",
+      endYm: "2025-02",
+    },
+  );
+
+  assert.deepEqual(snapshot.productMonthlySeries["id:p1"], {
+    amount: {
+      "2025-01": 100,
+      "2025-02": 160,
+    },
+    quantity: {
+      "2025-01": 2,
+      "2025-02": 3,
+    },
+  });
+  assert.deepEqual(snapshot.hospitalMonthlySeries["a院"], {
+    amount: {
+      "2024-01": 90,
+      "2024-02": 0,
+      "2025-01": 100,
+      "2025-02": 160,
+    },
+    quantity: {
+      "2024-01": 1,
+      "2024-02": 0,
+      "2025-01": 2,
+      "2025-02": 3,
+    },
+  });
+  assert.equal(Array.isArray(snapshot.hospitalChartRows), true);
+  assert.equal(snapshot.hospitalChartRows[0]?.hospitalName, "A院");
+});

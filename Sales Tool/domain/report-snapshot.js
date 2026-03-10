@@ -454,32 +454,41 @@ export function buildReportSnapshot(state, deps, range) {
     const byMonthMap = productMonthlyTotals.get(safeProductKey);
     if (!(byMonthMap instanceof Map)) continue;
 
-    const series = {};
+    const series = {
+      amount: {},
+      quantity: {},
+    };
     for (const ym of monthKeys) {
       const monthMetric = readValue(byMonthMap, ym, deps);
-      series[ym] = monthMetric.amount;
+      series.amount[ym] = monthMetric.amount;
+      series.quantity[ym] = monthMetric.quantity;
     }
     productMonthlySeries[safeProductKey] = series;
   }
 
   const hospitalTopRows = hospitalRows.slice(0, HOSPITAL_CHART_TOP_LIMIT);
   const hospitalMonthlySeries = {};
-  for (const row of hospitalTopRows) {
+  for (const row of hospitalRows) {
     const safeHospitalKey = String(row.hospitalKey || "").trim();
     if (!safeHospitalKey) continue;
 
     const byMonthMap = hospitalMonthlyTotals.get(safeHospitalKey);
     if (!(byMonthMap instanceof Map)) continue;
 
-    const series = {};
+    const series = {
+      amount: {},
+      quantity: {},
+    };
     for (const ym of monthKeys) {
       const currentMetric = readValue(byMonthMap, ym, deps);
-      series[ym] = currentMetric.amount;
+      series.amount[ym] = currentMetric.amount;
+      series.quantity[ym] = currentMetric.quantity;
 
       const yoyYm = addYearsToYm(ym, -1);
-      if (yoyYm && !(yoyYm in series)) {
+      if (yoyYm && !(yoyYm in series.amount)) {
         const yoyMetric = readValue(byMonthMap, yoyYm, deps);
-        series[yoyYm] = yoyMetric.amount;
+        series.amount[yoyYm] = yoyMetric.amount;
+        series.quantity[yoyYm] = yoyMetric.quantity;
       }
     }
 
@@ -493,6 +502,7 @@ export function buildReportSnapshot(state, deps, range) {
     productMonthlySeries,
     hospitalTopRows,
     hospitalMonthlySeries,
+    hospitalChartRows: hospitalRows,
     hospitalRows: hospitalRows.slice(0, HOSPITAL_TOP_LIMIT),
     hospitalTotalCount: hospitalRows.length,
     rangeRecordCount,

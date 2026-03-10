@@ -365,13 +365,19 @@
                 <div class="report-chart-row-product">
                   <section class="report-chart-card report-chart-card-product-pie">
                     <header class="report-chart-card-head">
-                      <h4 class="report-chart-card-title">产品 Top10 金额占比</h4>
-                      <div class="report-chart-export-group">
-                        <button id="export-chart-product-top-btn" class="secondary-btn" type="button">导出 PNG</button>
-                        <button id="export-chart-product-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      <h4 class="report-chart-card-title">产品 Top10 金额/数量占比</h4>
+                      <div class="report-chart-card-tools">
+                        <div class="report-chart-metric-switch" role="group" aria-label="切换产品占比图口径">
+                          <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="product-top" data-chart-metric="amount" aria-pressed="true">金额</button>
+                          <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="product-top" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                        </div>
+                        <div class="report-chart-export-group">
+                          <button id="export-chart-product-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                          <button id="export-chart-product-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                        </div>
                       </div>
                     </header>
-                    <div id="chart-product-top" class="report-chart-canvas" aria-label="产品金额占比图"></div>
+                    <div id="chart-product-top" class="report-chart-canvas" aria-label="产品金额或数量占比图"></div>
                   </section>
 
                   <section class="report-chart-card report-chart-card-product-performance">
@@ -395,9 +401,15 @@
                 <section class="report-chart-card report-chart-card-wide">
                   <header class="report-chart-card-head">
                     <h4 class="report-chart-card-title">产品月度变化趋势（Top10）</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-product-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-product-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换产品月度趋势口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="product-monthly-trend" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="product-monthly-trend" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-product-monthly-trend-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-product-monthly-trend-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
                     </div>
                   </header>
                   <div id="chart-product-monthly-trend" class="report-chart-canvas" aria-label="产品月度变化趋势图"></div>
@@ -405,30 +417,46 @@
 
                 <section class="report-chart-card">
                   <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">医院 Top10 销售金额</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-hospital-top-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-hospital-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    <h4 class="report-chart-card-title">医院 Top10 销售金额/数量</h4>
+                    <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换医院Top10图口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-top" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-top" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-hospital-top-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-hospital-top-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
                     </div>
                   </header>
-                  <div id="chart-hospital-top" class="report-chart-canvas" aria-label="医院销售金额图"></div>
+                  <div id="chart-hospital-top" class="report-chart-canvas" aria-label="医院销售金额或数量图"></div>
                 </section>
 
                 <section class="report-chart-card">
                   <header class="report-chart-card-head">
-                    <h4 class="report-chart-card-title">TOP10医院销售金额占比</h4>
-                    <div class="report-chart-export-group">
-                      <button id="export-chart-hospital-share-btn" class="secondary-btn" type="button">导出 PNG</button>
-                      <button id="export-chart-hospital-share-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                    <h4 class="report-chart-card-title">TOP10 医院金额/数量占比</h4>
+                    <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换医院占比图口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-share" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-share" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
+                      <div class="report-chart-export-group">
+                        <button id="export-chart-hospital-share-btn" class="secondary-btn" type="button">导出 PNG</button>
+                        <button id="export-chart-hospital-share-xlsx-btn" class="secondary-btn" type="button">导出 XLSX</button>
+                      </div>
                     </div>
                   </header>
-                  <div id="chart-hospital-share" class="report-chart-canvas" aria-label="医院销售金额占比图"></div>
+                  <div id="chart-hospital-share" class="report-chart-canvas" aria-label="医院销售金额或数量占比图"></div>
                 </section>
 
                 <section class="report-chart-card report-chart-card-wide">
                   <header class="report-chart-card-head report-chart-card-head-with-tools">
                     <h4 class="report-chart-card-title">医院月度趋势与增长率（Top10可选）</h4>
                     <div class="report-chart-card-tools">
+                      <div class="report-chart-metric-switch" role="group" aria-label="切换医院月度趋势口径">
+                        <button class="report-chart-metric-btn is-active" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-trend" data-chart-metric="amount" aria-pressed="true">金额</button>
+                        <button class="report-chart-metric-btn" type="button" data-report-chart-metric-btn="true" data-chart-key="hospital-trend" data-chart-metric="quantity" aria-pressed="false">数量</button>
+                      </div>
                       <label class="inline-field report-hospital-trend-field" for="chart-hospital-trend-select">
                         医院
                         <select id="chart-hospital-trend-select" aria-label="选择医院趋势图医院">
