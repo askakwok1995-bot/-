@@ -365,3 +365,33 @@ test("renderReportSection 会为坐标轴图保留完整标签空间且仅压缩
     env.restore();
   }
 });
+
+test("renderReportSection 不会在环形图中心摘要里塞入完整医院或产品名称", () => {
+  const env = installFakeBrowserEnv();
+  try {
+    const dom = createReportDom();
+    const deps = createDeps();
+    const state = {
+      reportStartYm: "2025-01",
+      reportEndYm: "2025-03",
+      reportChartPaletteId: "harbor",
+      reportChartDataLabelMode: "compact",
+      reportAmountUnitId: "yuan",
+      activeHospitalChartKey: "",
+      records: createRecords(),
+    };
+
+    const summary = renderReportSection(state, dom, deps);
+    assert.equal(summary.reason, "");
+
+    const productDetail = env.charts.get("chart-product-top")?.option?.graphic?.[2]?.style?.text || "";
+    const hospitalDetail = env.charts.get("chart-hospital-share")?.option?.graphic?.[2]?.style?.text || "";
+
+    assert.match(productDetail, /^TOP1 占比 · /);
+    assert.match(hospitalDetail, /^TOP1 占比 · /);
+    assert.doesNotMatch(productDetail, /诺和盈|德谷门冬/);
+    assert.doesNotMatch(hospitalDetail, /南山医院|天河医院|海珠医院/);
+  } finally {
+    env.restore();
+  }
+});

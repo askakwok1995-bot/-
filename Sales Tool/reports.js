@@ -556,6 +556,11 @@ function buildCenterTextGraphic({ kicker = "", value = "", detail = "", palette,
   ];
 }
 
+function buildDonutCenterDetail(topShare) {
+  const shareText = String(topShare || "").trim() || "--";
+  return `TOP1 占比 · ${shareText}`;
+}
+
 function buildRankAxisLabel(index, name) {
   const safeRank = String(index + 1).padStart(2, "0");
   return `{rank${Math.min(index + 1, 4)}|${safeRank}}  {name|${String(name || "").trim()}}`;
@@ -2511,7 +2516,7 @@ function updateProductTopChart(instance, snapshot, deps, palette, amountUnit, la
       graphic: buildCenterTextGraphic({
         kicker: `TOP10 产品总${chartMetric.metricLabel}`,
         value: chartMetric.formatLabelValue(totalValue),
-        detail: `TOP1 ${topRow.productName} · ${topShare}`,
+        detail: buildDonutCenterDetail(topShare),
         palette,
       }),
       series: [
@@ -2786,7 +2791,7 @@ function updateHospitalShareChart(instance, snapshot, deps, palette, amountUnit,
       graphic: buildCenterTextGraphic({
         kicker: `TOP10 医院总${chartMetric.metricLabel}`,
         value: chartMetric.formatLabelValue(totalValue),
-        detail: `TOP1 ${topRow.hospitalName} · ${topShare}`,
+        detail: buildDonutCenterDetail(topShare),
         palette,
       }),
       series: [
