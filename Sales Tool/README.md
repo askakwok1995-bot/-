@@ -2,15 +2,17 @@
 
 一个基于原生 `HTML + CSS + JavaScript` 的前端项目，用于医药销售录入、产品维护、指标管理与报表分析。
 
-当前版本以 Supabase 为核心数据源，已接入认证与三张业务表：`products`、`sales_records`、`sales_targets`。
+当前版本以 Supabase 为核心数据源，已接入认证与三张业务表：`products`、`sales_records`、`sales_targets`，并新增邀请码与 entitlement 商业授权链路。
 
 ## 1. 模块能力总览
 
 ### auth
 - 强制登录门禁（未登录不可操作业务区）。
 - 认证方式：邮箱 + 密码（支持注册、登录、退出）。
+- 新注册必须填写有效邀请码；邀请码由 Supabase SQL 触发器最终核销。
 - 登录后显示当前邮箱，支持退出。
 - 检测到账号切换时自动刷新页面，避免串号状态。
+- 登录后会校验 entitlement；授权到期时工作台与聊天会被锁定。
 
 ### products
 - 产品主数据云端读写：新增、编辑、删除、初始化加载。
@@ -202,6 +204,30 @@ window.__APP_CONFIG__ = {
 - `config.js` 已在 `.gitignore` 中忽略，不应提交。
 - `SUPABASE_ANON_KEY` 可用于前端公开场景；不要使用 `service_role` key。
 - 若缺少配置，登录按钮会被禁用并提示配置错误。
+
+### 邀请码与授权 SQL 初始化
+
+首次接入邀请码系统时，请在 Supabase SQL Editor 执行：
+
+打开仓库中的 [supabase/invite-system.sql](/Users/askakwok/Documents/Vibe%20Coding/Sales%20Tool/supabase/invite-system.sql)，将全文粘贴到 SQL Editor 执行。
+
+这份脚本会完成：
+- 创建 `invite_codes` / `user_entitlements`
+- 注册前邀请码校验函数 `check_invite_code`
+- `auth.users` 上的邀请码核销触发器
+- entitlement 回填函数与老用户永久放行
+- `products` / `sales_records` / `sales_targets` 的 entitlement 版 RLS
+
+邀请码需要先写入 `invite_codes`。建议只保存 `code_hash`，插入时使用 `public.hash_invite_code('<明文邀请码>')`：
+
+```sql
+insert into public.invite_codes (code_hash, plan_type, duration_days, batch_label)
+values
+  (public.hash_invite_code('TRIAL-ABC-001'), 'trial_3d', 3, 'launch-batch'),
+  (public.hash_invite_code('HALF-ABC-001'), 'half_year', 183, 'launch-batch'),
+  (public.hash_invite_code('YEAR-ABC-001'), 'one_year', 365, 'launch-batch'),
+  (public.hash_invite_code('LIFE-ABC-001'), 'lifetime', null, 'launch-batch');
+```
 
 ## 7. Cloudflare Pages 建议配置
 

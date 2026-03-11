@@ -395,6 +395,7 @@ export function initAiChatUi(options = {}) {
   let cooldownUntilMs = 0;
   let cooldownTimerId = 0;
   let sessionVersion = 0;
+  let disabledMessage = "";
 
   const serviceUnavailableStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
@@ -565,10 +566,21 @@ export function initAiChatUi(options = {}) {
   function updateComposerState() {
     const hasHandler = typeof sendHandler === "function";
     const cooling = isInCooldown();
-    dom.sendBtn.disabled = !hasHandler || isSending || cooling;
-    dom.input.disabled = isSending;
+    const disabled = !hasHandler || isSending || cooling || Boolean(disabledMessage);
+    dom.sendBtn.disabled = disabled;
+    dom.input.disabled = isSending || Boolean(disabledMessage);
+    dom.promptButtons.forEach((button) => {
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = Boolean(disabledMessage);
+      }
+    });
+    dom.promptToggleBtn.disabled = Boolean(disabledMessage);
     if (cooling) {
       renderCooldownStatus();
+      return;
+    }
+    if (disabledMessage) {
+      showErrorStatus(disabledMessage);
       return;
     }
     clearStatus();
@@ -986,6 +998,13 @@ export function initAiChatUi(options = {}) {
       isSending = false;
       if (!sendHandler) {
         resetFailureState();
+      }
+      updateComposerState();
+    },
+    setAvailability: (options = {}) => {
+      disabledMessage = options?.disabled ? toText(options.message) || serviceUnavailableStatus : "";
+      if (!options?.disabled) {
+        disabledMessage = "";
       }
       updateComposerState();
     },

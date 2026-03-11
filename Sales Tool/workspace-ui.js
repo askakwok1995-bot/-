@@ -86,22 +86,35 @@ export function bindWorkspaceReadOnlyGuards(details, isReadOnly) {
 
 export function renderWorkspaceModeBanner(dom, state) {
   const bannerEl = dom?.workspaceModeBannerEl;
+  const kickerEl = dom?.workspaceModeBannerKickerEl;
   const titleEl = dom?.workspaceModeBannerTitleEl;
   const descEl = dom?.workspaceModeBannerDescEl;
-  if (!(bannerEl instanceof HTMLElement) || !(titleEl instanceof HTMLElement) || !(descEl instanceof HTMLElement)) {
+  if (
+    !(bannerEl instanceof HTMLElement) ||
+    !(kickerEl instanceof HTMLElement) ||
+    !(titleEl instanceof HTMLElement) ||
+    !(descEl instanceof HTMLElement)
+  ) {
     return;
   }
 
   const isDemoMode = Boolean(state?.isDemoMode);
-  bannerEl.hidden = !isDemoMode;
-  if (!isDemoMode) {
+  const banner = state?.workspaceBanner && typeof state.workspaceBanner === "object" ? state.workspaceBanner : {};
+  const shouldShow = isDemoMode || Boolean(state?.isWorkspaceReadOnly && (banner.title || banner.description));
+  bannerEl.hidden = !shouldShow;
+  if (!shouldShow) {
     return;
   }
 
-  const banner = state?.workspaceBanner && typeof state.workspaceBanner === "object" ? state.workspaceBanner : {};
-  titleEl.textContent = String(banner.title || "当前展示的是模拟经营数据").trim();
+  kickerEl.textContent = String(banner.kicker || (isDemoMode ? "演示工作台" : "使用授权")).trim();
+  titleEl.textContent = String(
+    banner.title || (isDemoMode ? "当前展示的是模拟经营数据" : "当前账号暂不可使用"),
+  ).trim();
   descEl.textContent = String(
-    banner.description || "未登录时可查看演示工作台，登录后即可编辑并保存你的真实业务数据。",
+    banner.description ||
+      (isDemoMode
+        ? "未登录时可查看演示工作台，登录后即可编辑并保存你的真实业务数据。"
+        : "当前账号授权不可用，请联系管理员处理。"),
   ).trim();
 }
 

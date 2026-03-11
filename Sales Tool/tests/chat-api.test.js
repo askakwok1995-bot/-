@@ -145,6 +145,32 @@ test("handleChatRequest returns error JSON when tool-first fails", async () => {
   assert.equal(payload.error?.details?.reason, "tool_execution_failed");
 });
 
+test("handleChatRequest blocks live chat when entitlement is inactive", async () => {
+  const response = await handleChatRequest(
+    buildContext({
+      message: "分析本月销售",
+    }),
+    "req-entitlement-expired",
+    {
+      verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token", userId: "user-1" }),
+      checkActiveEntitlement: async () => ({
+        ok: false,
+        code: CHAT_ERROR_CODES.UNAUTHORIZED,
+        message: "当前账号授权已到期，请联系管理员续费后再试。",
+        status: 403,
+      }),
+      runToolFirstChat: async () => {
+        throw new Error("expired entitlement should not call tool-first");
+      },
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 403);
+  assert.equal(payload.error?.code, CHAT_ERROR_CODES.UNAUTHORIZED);
+  assert.match(payload.error?.message || "", /授权已到期/u);
+});
+
 test("handleChatRequest returns success payload for bounded answer and error JSON for refuse", async () => {
   const boundedResponse = await handleChatRequest(
     buildContext({

@@ -109,13 +109,23 @@
                     <span>密码</span>
                     <input id="auth-password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required />
                   </label>
+                  <label for="auth-invite-code">
+                    <span>邀请码</span>
+                    <input
+                      id="auth-invite-code"
+                      name="inviteCode"
+                      type="text"
+                      placeholder="首次注册必填，登录无需填写"
+                      autocomplete="off"
+                    />
+                  </label>
                 </div>
                 </div>
                 <div class="auth-form-actions">
                   <button id="auth-login-btn" type="submit">登录</button>
                   <button id="auth-register-btn" class="secondary-btn" type="button">注册</button>
                 </div>
-                <p class="auth-form-footnote">首次使用可直接注册。</p>
+                <p class="auth-form-footnote">首次使用需填写有效邀请码；已注册用户登录时无需填写。</p>
                 <p id="auth-status" class="hint auth-status" aria-live="polite"></p>
                 <p id="auth-error" class="error auth-error" role="alert" aria-live="polite"></p>
               </form>
@@ -139,7 +149,7 @@
       <div class="workspace-grid">
       <section id="workspace-mode-banner" class="workspace-mode-banner" aria-live="polite" hidden>
         <div class="workspace-mode-banner-copy">
-          <span class="workspace-mode-banner-kicker">演示工作台</span>
+          <span id="workspace-mode-banner-kicker" class="workspace-mode-banner-kicker">演示工作台</span>
           <h3 id="workspace-mode-banner-title" class="workspace-mode-banner-title">当前展示的是模拟经营数据</h3>
           <p id="workspace-mode-banner-desc" class="workspace-mode-banner-desc">
             未登录时可完整浏览报表、录入、指标和列表示例；登录后即可切换为你的真实数据。

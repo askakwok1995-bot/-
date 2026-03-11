@@ -57,7 +57,11 @@ function isValidEmail(email) {
 }
 
 function readCredentialsFromDom() {
-  if (!(authDom?.emailInput instanceof HTMLInputElement) || !(authDom?.passwordInput instanceof HTMLInputElement)) {
+  if (
+    !(authDom?.emailInput instanceof HTMLInputElement) ||
+    !(authDom?.passwordInput instanceof HTMLInputElement) ||
+    !(authDom?.inviteCodeInput instanceof HTMLInputElement)
+  ) {
     return null;
   }
 
@@ -67,6 +71,7 @@ function readCredentialsFromDom() {
   return {
     email,
     password: String(authDom.passwordInput.value || ""),
+    inviteCode: String(authDom.inviteCodeInput.value || "").trim(),
   };
 }
 
@@ -83,6 +88,13 @@ function validateCredentials(email, password) {
     return `密码长度至少 ${MIN_PASSWORD_LENGTH} 位。`;
   }
 
+  return "";
+}
+
+function validateInviteCode(inviteCode) {
+  if (!String(inviteCode || "").trim()) {
+    return "首次注册需填写有效邀请码。";
+  }
   return "";
 }
 
@@ -240,12 +252,37 @@ async function signUpWithPassword() {
     return;
   }
 
+  const inviteValidationError = validateInviteCode(credentials.inviteCode);
+  if (inviteValidationError) {
+    showAuthError(inviteValidationError);
+    return;
+  }
+
   setAuthSubmitting(true, "register");
 
   try {
+    const invitePreview = await client.rpc("check_invite_code", {
+      candidate_code: credentials.inviteCode,
+    });
+    if (invitePreview.error) {
+      showAuthError(`邀请码校验失败：${invitePreview.error.message || "请稍后重试"}`);
+      return;
+    }
+
+    const invitePayload = invitePreview.data && typeof invitePreview.data === "object" ? invitePreview.data : {};
+    if (invitePayload.valid !== true) {
+      showAuthError(String(invitePayload.message || "邀请码无效或已失效。"));
+      return;
+    }
+
     const { data, error } = await client.auth.signUp({
       email: credentials.email,
       password: credentials.password,
+      options: {
+        data: {
+          invite_code: credentials.inviteCode,
+        },
+      },
     });
 
     if (error) {
@@ -258,6 +295,9 @@ async function signUpWithPassword() {
       if (authDom?.passwordInput instanceof HTMLInputElement) {
         authDom.passwordInput.value = "";
       }
+      if (authDom?.inviteCodeInput instanceof HTMLInputElement) {
+        authDom.inviteCodeInput.value = "";
+      }
 
       showAuthStatus("注册并登录成功。");
       setGateLocked(false);
@@ -265,6 +305,9 @@ async function signUpWithPassword() {
       return;
     }
 
+    if (authDom?.inviteCodeInput instanceof HTMLInputElement) {
+      authDom.inviteCodeInput.value = "";
+    }
     showAuthStatus("注册成功，请先验证邮箱后登录。");
   } catch (error) {
     showAuthError(`网络异常，注册失败：${error instanceof Error ? error.message : "请稍后再试"}`);
@@ -276,6 +319,9 @@ async function signUpWithPassword() {
 function setAuthFormStateForLoggedOut() {
   if (authDom?.passwordInput instanceof HTMLInputElement) {
     authDom.passwordInput.value = "";
+  }
+  if (authDom?.inviteCodeInput instanceof HTMLInputElement) {
+    authDom.inviteCodeInput.value = "";
   }
 
   setAuthSubmitting(false);
@@ -326,6 +372,7 @@ function cacheDomRefs(domRefs) {
     authForm: document.getElementById("auth-form"),
     emailInput: document.getElementById("auth-email"),
     passwordInput: document.getElementById("auth-password"),
+    inviteCodeInput: document.getElementById("auth-invite-code"),
     loginBtn: document.getElementById("auth-login-btn"),
     registerBtn: document.getElementById("auth-register-btn"),
     statusEl: document.getElementById("auth-status"),
@@ -342,6 +389,7 @@ function validateRequiredDom() {
     ["auth-form", authDom?.authForm],
     ["auth-email", authDom?.emailInput],
     ["auth-password", authDom?.passwordInput],
+    ["auth-invite-code", authDom?.inviteCodeInput],
     ["auth-login-btn", authDom?.loginBtn],
     ["auth-register-btn", authDom?.registerBtn],
     ["auth-status", authDom?.statusEl],

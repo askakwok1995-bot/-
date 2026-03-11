@@ -81,6 +81,7 @@ function installFakeBrowserEnv(client) {
     "auth-form": new FakeHtmlFormElement(),
     "auth-email": new FakeHtmlInputElement(),
     "auth-password": new FakeHtmlInputElement(),
+    "auth-invite-code": new FakeHtmlInputElement(),
     "auth-login-btn": new FakeHtmlButtonElement(),
     "auth-register-btn": new FakeHtmlButtonElement(),
     "auth-status": new FakeElement(),
@@ -196,6 +197,128 @@ test("bootstrapAuthGate only notifies real signed-in transitions", async () => {
 
     authStateChangeHandler("SIGNED_OUT", null);
     assert.deepEqual(authEvents, ["signed-in:user-1", "signed-out"]);
+  } finally {
+    env.restore();
+  }
+});
+
+test("register flow requires invite code and forwards it to signUp metadata", async () => {
+  let signUpPayload = null;
+  const client = {
+    rpcCalls: [],
+    async rpc(name, payload) {
+      this.rpcCalls.push({ name, payload });
+      return {
+        data: {
+          valid: true,
+          plan_type: "trial_3d",
+          duration_days: 3,
+          message: "",
+        },
+        error: null,
+      };
+    },
+    auth: {
+      onAuthStateChange() {
+        return { data: { subscription: { unsubscribe() {} } } };
+      },
+      async getSession() {
+        return {
+          data: { session: null },
+          error: null,
+        };
+      },
+      async signOut() {
+        return { error: null };
+      },
+      async signUp(payload) {
+        signUpPayload = payload;
+        return {
+          data: {
+            session: {
+              user: { id: "new-user", email: payload.email },
+            },
+            user: { id: "new-user", email: payload.email },
+          },
+          error: null,
+        };
+      },
+    },
+  };
+
+  const env = installFakeBrowserEnv(client);
+
+  try {
+    const { bootstrapAuthGate } = await loadFreshAuthModule();
+    await bootstrapAuthGate({
+      appRoot: new FakeElement(),
+      callbacks: {},
+    });
+
+    document.getElementById("auth-email").value = "new@example.com";
+    document.getElementById("auth-password").value = "123456";
+    document.getElementById("auth-invite-code").value = " trial-abc ";
+
+    await document.getElementById("auth-register-btn").listeners.click();
+
+    assert.equal(client.rpcCalls.length, 1);
+    assert.equal(client.rpcCalls[0].name, "check_invite_code");
+    assert.deepEqual(client.rpcCalls[0].payload, {
+      candidate_code: "trial-abc",
+    });
+    assert.equal(signUpPayload?.options?.data?.invite_code, "trial-abc");
+    assert.equal(document.getElementById("auth-status").textContent, "注册并登录成功。");
+  } finally {
+    env.restore();
+  }
+});
+
+test("register flow blocks empty invite code before calling Supabase", async () => {
+  let rpcCalled = false;
+  let signUpCalled = false;
+  const client = {
+    async rpc() {
+      rpcCalled = true;
+      return { data: null, error: null };
+    },
+    auth: {
+      onAuthStateChange() {
+        return { data: { subscription: { unsubscribe() {} } } };
+      },
+      async getSession() {
+        return {
+          data: { session: null },
+          error: null,
+        };
+      },
+      async signOut() {
+        return { error: null };
+      },
+      async signUp() {
+        signUpCalled = true;
+        return { data: null, error: null };
+      },
+    },
+  };
+
+  const env = installFakeBrowserEnv(client);
+
+  try {
+    const { bootstrapAuthGate } = await loadFreshAuthModule();
+    await bootstrapAuthGate({
+      appRoot: new FakeElement(),
+      callbacks: {},
+    });
+
+    document.getElementById("auth-email").value = "new@example.com";
+    document.getElementById("auth-password").value = "123456";
+    document.getElementById("auth-invite-code").value = "";
+
+    await document.getElementById("auth-register-btn").listeners.click();
+
+    assert.equal(rpcCalled, false);
+    assert.equal(signUpCalled, false);
+    assert.equal(document.getElementById("auth-error").textContent, "首次注册需填写有效邀请码。");
   } finally {
     env.restore();
   }

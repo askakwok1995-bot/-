@@ -58,6 +58,7 @@ import { shouldReloadLiveWorkspaceOnSignedIn } from "./app/auth-session-guards.j
 import { buildBusinessSnapshotPayload, createChatReplyRequester } from "./app/chat-client.js";
 import { attachSmokeWriteTool, runReadOnlyRecordsCountCheck } from "./app/smoke-tools.js";
 import { getSupabaseAuthContext, getSupabaseSessionAccessToken } from "./infra/supabase-auth-context.js";
+import { createEntitlementsRepository } from "./infra/entitlements-repository.js";
 import { createProductsRepository } from "./infra/products-repository.js";
 import { createRecordsRepository } from "./infra/records-repository.js";
 import { createTargetsRepository } from "./infra/targets-repository.js";
@@ -167,6 +168,7 @@ async function initializeApp(initialUser = null) {
   const dom = {
     workspaceGrid: document.querySelector(".workspace-grid"),
     workspaceModeBannerEl: document.getElementById("workspace-mode-banner"),
+    workspaceModeBannerKickerEl: document.getElementById("workspace-mode-banner-kicker"),
     workspaceModeBannerTitleEl: document.getElementById("workspace-mode-banner-title"),
     workspaceModeBannerDescEl: document.getElementById("workspace-mode-banner-desc"),
 
@@ -347,6 +349,15 @@ async function initializeApp(initialUser = null) {
     isDemoMode: false,
     isWorkspaceReadOnly: false,
     workspaceBanner: null,
+    entitlementStatus: {
+      isActive: false,
+      reason: "unknown",
+      status: "unknown",
+      planType: "",
+      startsAt: "",
+      endsAt: "",
+      message: "",
+    },
   };
 
   let listStatusTimer = null;
@@ -537,6 +548,9 @@ async function initializeApp(initialUser = null) {
     createDefaultTargetsPayload,
     normalizeTargetYearData,
   });
+  const entitlementsRepository = createEntitlementsRepository({
+    getAuthContext,
+  });
 
   function showProductError(message) {
     dom.productErrorEl.textContent = message;
@@ -722,11 +736,33 @@ async function initializeApp(initialUser = null) {
   });
 
   const aiChatApi = window.__SALES_TOOL_AI_CHAT__;
-  if (aiChatApi && typeof aiChatApi.setSendHandler === "function") {
-    aiChatApi.setSendHandler((message, options) => requestAiChatReply(message, options));
-  } else {
+  if (!aiChatApi || typeof aiChatApi.setSendHandler !== "function") {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象。");
   }
+
+  function syncAiChatAvailability() {
+    if (!aiChatApi || typeof aiChatApi.setSendHandler !== "function") {
+      return;
+    }
+
+    const shouldAllowChat = state.isDemoMode || state.entitlementStatus?.isActive === true;
+    if (shouldAllowChat) {
+      aiChatApi.setSendHandler((message, options) => requestAiChatReply(message, options));
+      if (typeof aiChatApi.setAvailability === "function") {
+        aiChatApi.setAvailability({ disabled: false });
+      }
+      return;
+    }
+
+    aiChatApi.setSendHandler(null);
+    if (typeof aiChatApi.setAvailability === "function") {
+      aiChatApi.setAvailability({
+        disabled: true,
+        message: state.entitlementStatus?.message || "当前账号授权不可用，聊天功能已禁用。",
+      });
+    }
+  }
+  syncAiChatAvailability();
 
   function resetAiChatSession() {
     if (aiChatApi && typeof aiChatApi.clearSessionHistory === "function") {
@@ -913,12 +949,62 @@ async function initializeApp(initialUser = null) {
     if (isWorkspaceReadOnly) {
       applyWorkspaceReadOnlyState(dom, state);
     }
+    syncAiChatAvailability();
+  }
+
+  function applyEntitlementLockedWorkspace(entitlementStatus) {
+    state.entitlementStatus = entitlementStatus && typeof entitlementStatus === "object" ? entitlementStatus : state.entitlementStatus;
+    const lockedTitle =
+      state.entitlementStatus?.reason === "expired"
+        ? "当前账号授权已到期"
+        : state.entitlementStatus?.reason === "missing"
+          ? "当前账号尚未开通授权"
+          : "当前账号授权暂不可用";
+    clearProductError();
+    clearListError();
+    showSalesTip(state.entitlementStatus?.message || "当前账号授权不可用，工作台已锁定。");
+    showListStatus("当前账号授权不可用，工作台已锁定。", "muted");
+    applyWorkspaceSnapshot(
+      {
+        products: [],
+        targets: createDefaultTargetsPayload(),
+        records: [],
+        reportRecords: [],
+        recordListItems: [],
+        recordListTotal: 0,
+        activeTargetYear: state.activeTargetYear,
+        activeTargetMetric: state.activeTargetMetric,
+        reportRange: {
+          startYm: state.reportStartYm,
+          endYm: state.reportEndYm,
+        },
+        banner: {
+          kicker: "使用授权",
+          title: lockedTitle,
+          description: state.entitlementStatus?.message || "当前账号授权不可用，请联系管理员处理。",
+        },
+      },
+      {
+        isDemoMode: false,
+        isWorkspaceReadOnly: true,
+      },
+    );
+    resetAiChatSession();
   }
 
   async function loadDemoWorkspace() {
     workspaceLoadToken += 1;
     const demoSnapshot = createDemoWorkspaceSnapshot(new Date());
     state.deferInitialCloudLoad = true;
+    state.entitlementStatus = {
+      isActive: false,
+      reason: "demo",
+      status: "demo",
+      planType: "",
+      startsAt: "",
+      endsAt: "",
+      message: "",
+    };
     applyWorkspaceSnapshot(demoSnapshot, {
       isDemoMode: true,
       isWorkspaceReadOnly: true,
@@ -938,10 +1024,19 @@ async function initializeApp(initialUser = null) {
     state.isWorkspaceReadOnly = false;
     state.workspaceBanner = null;
     applyWorkspaceReadOnlyState(dom, state);
+    syncAiChatAvailability();
 
     if (showStatus) {
       showListStatus("正在同步云端数据...", "syncing");
     }
+
+    const entitlementStatus = await entitlementsRepository.fetchCurrentEntitlementStatus();
+    state.entitlementStatus = entitlementStatus;
+    if (!entitlementStatus.isActive) {
+      applyEntitlementLockedWorkspace(entitlementStatus);
+      return;
+    }
+    clearSalesTip();
 
     let nextProducts = [];
     let nextTargets = createDefaultTargetsPayload();

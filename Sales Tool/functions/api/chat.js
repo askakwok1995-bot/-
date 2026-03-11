@@ -200,6 +200,39 @@ function extractBearerToken(request) {
   return matched ? trimString(matched[1]) : "";
 }
 
+function trimLowerString(value) {
+  return trimString(value).toLowerCase();
+}
+
+function parseTimeMs(value) {
+  const text = trimString(value);
+  if (!text) {
+    return Number.NaN;
+  }
+  return Date.parse(text);
+}
+
+function isEntitlementRecordActive(record, nowMs = Date.now()) {
+  if (!record || typeof record !== "object") {
+    return false;
+  }
+
+  const status = trimLowerString(record.status);
+  const startsAtMs = parseTimeMs(record.starts_at);
+  const endsAtMs = parseTimeMs(record.ends_at);
+
+  if (status === "revoked" || status === "expired") {
+    return false;
+  }
+  if (Number.isFinite(startsAtMs) && startsAtMs > nowMs) {
+    return false;
+  }
+  if (Number.isFinite(endsAtMs) && endsAtMs <= nowMs) {
+    return false;
+  }
+  return true;
+}
+
 async function verifySupabaseAccessToken(request, env) {
   const token = extractBearerToken(request);
   if (!token) {
@@ -254,9 +287,12 @@ async function verifySupabaseAccessToken(request, env) {
       };
     }
 
+    const payload = await response.json();
     return {
       ok: true,
       token,
+      userId: trimString(payload?.id),
+      user: payload && typeof payload === "object" ? payload : null,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -271,6 +307,97 @@ async function verifySupabaseAccessToken(request, env) {
       ok: false,
       code: CHAT_ERROR_CODES.AUTH_UPSTREAM_ERROR,
       message: `服务端登录态校验失败：${error instanceof Error ? error.message : "请稍后重试"}`,
+      status: 502,
+    };
+  }
+}
+
+async function checkActiveEntitlement(authResult, env) {
+  const token = trimString(authResult?.token);
+  const userId = trimString(authResult?.userId);
+  if (!token || !userId) {
+    return {
+      ok: false,
+      code: CHAT_ERROR_CODES.UNAUTHORIZED,
+      message: "登录状态已失效，请重新登录后再试。",
+      status: 401,
+    };
+  }
+
+  const supabaseUrl = getEnvString(env, "SUPABASE_URL");
+  const supabaseAnonKey = getEnvString(env, "SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return {
+      ok: false,
+      code: CHAT_ERROR_CODES.AUTH_CONFIG_MISSING,
+      message: "服务端缺少 Supabase 校验配置（SUPABASE_URL/SUPABASE_ANON_KEY）。",
+      status: 500,
+    };
+  }
+
+  const entitlementUrl =
+    `${supabaseUrl.replace(/\/+$/, "")}/rest/v1/user_entitlements` +
+    `?select=user_id,plan_type,status,starts_at,ends_at&user_id=eq.${encodeURIComponent(userId)}&limit=1`;
+
+  try {
+    const response = await fetchWithTimeout(
+      entitlementUrl,
+      {
+        method: "GET",
+        headers: {
+          apikey: supabaseAnonKey,
+          authorization: `Bearer ${token}`,
+        },
+      },
+      AUTH_UPSTREAM_TIMEOUT_MS,
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        ok: false,
+        code: CHAT_ERROR_CODES.UNAUTHORIZED,
+        message: "当前账号授权不可用，请联系管理员续费后再试。",
+        status: 403,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        code: CHAT_ERROR_CODES.AUTH_UPSTREAM_ERROR,
+        message: `服务端授权校验失败（HTTP ${response.status}）。`,
+        status: 502,
+      };
+    }
+
+    const payload = await response.json();
+    const record = Array.isArray(payload) ? payload[0] : payload;
+    if (!isEntitlementRecordActive(record)) {
+      return {
+        ok: false,
+        code: CHAT_ERROR_CODES.UNAUTHORIZED,
+        message: "当前账号授权已到期，请联系管理员续费后再试。",
+        status: 403,
+      };
+    }
+
+    return {
+      ok: true,
+      entitlement: record && typeof record === "object" ? record : null,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return {
+        ok: false,
+        code: CHAT_ERROR_CODES.AUTH_UPSTREAM_TIMEOUT,
+        message: "服务端授权校验超时，请稍后重试。",
+        status: 504,
+      };
+    }
+    return {
+      ok: false,
+      code: CHAT_ERROR_CODES.AUTH_UPSTREAM_ERROR,
+      message: `服务端授权校验失败：${error instanceof Error ? error.message : "请稍后重试"}`,
       status: 502,
     };
   }
@@ -832,6 +959,7 @@ async function requestDemoSnapshotChat({
 
 export async function handleChatRequest(context, requestId = crypto.randomUUID(), deps = {}) {
   const verifySupabaseAccessTokenImpl = deps.verifySupabaseAccessToken || verifySupabaseAccessToken;
+  const checkActiveEntitlementImpl = deps.checkActiveEntitlement || checkActiveEntitlement;
   const normalizeSessionHistoryWindowImpl = deps.normalizeSessionHistoryWindow || normalizeSessionHistoryWindow;
   const normalizeBusinessSnapshotImpl = deps.normalizeBusinessSnapshot || normalizeBusinessSnapshot;
   const runToolFirstChatImpl = deps.runToolFirstChat || runToolFirstChat;
@@ -929,6 +1057,17 @@ export async function handleChatRequest(context, requestId = crypto.randomUUID()
     const authResult = await verifySupabaseAccessTokenImpl(context.request, context.env);
     if (!authResult.ok) {
       return errorResponse(authResult.code, authResult.message, authResult.status, requestId);
+    }
+    if (trimString(authResult?.userId)) {
+      const entitlementResult = await checkActiveEntitlementImpl(authResult, context.env);
+      if (!entitlementResult?.ok) {
+        return errorResponse(
+          entitlementResult?.code || CHAT_ERROR_CODES.UNAUTHORIZED,
+          trimString(entitlementResult?.message) || "当前账号授权不可用。",
+          Number(entitlementResult?.status) || 403,
+          requestId,
+        );
+      }
     }
 
     const followupContext = buildEntityScopeFollowupContext(message, incomingConversationState);
