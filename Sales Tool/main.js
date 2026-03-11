@@ -59,6 +59,7 @@ import { buildBusinessSnapshotPayload, createChatReplyRequester } from "./app/ch
 import { attachSmokeWriteTool, runReadOnlyRecordsCountCheck } from "./app/smoke-tools.js";
 import { getSupabaseAuthContext, getSupabaseSessionAccessToken } from "./infra/supabase-auth-context.js";
 import { createEntitlementsRepository } from "./infra/entitlements-repository.js";
+import { createInviteAdminRepository } from "./infra/invite-admin-repository.js";
 import { createProductsRepository } from "./infra/products-repository.js";
 import { createRecordsRepository } from "./infra/records-repository.js";
 import { createTargetsRepository } from "./infra/targets-repository.js";
@@ -281,6 +282,25 @@ async function initializeApp(initialUser = null) {
     heroAchievementProgressEl: document.getElementById("hero-achievement-progress"),
     heroAchievementProgressFillEl: document.getElementById("hero-achievement-progress-fill"),
     heroStatusLineEl: document.getElementById("hero-status-line"),
+    inviteAdminDeckEl: document.getElementById("invite-admin-deck"),
+    inviteAdminStatusEl: document.getElementById("invite-admin-status"),
+    inviteAdminErrorEl: document.getElementById("invite-admin-error"),
+    inviteAdminAccessNoteEl: document.getElementById("invite-admin-access-note"),
+    inviteAdminBootstrapSqlEl: document.getElementById("invite-admin-bootstrap-sql"),
+    inviteAdminForm: document.getElementById("invite-admin-form"),
+    inviteAdminPlanSelect: document.getElementById("invite-admin-plan"),
+    inviteAdminQuantityInput: document.getElementById("invite-admin-quantity"),
+    inviteAdminBatchLabelInput: document.getElementById("invite-admin-batch-label"),
+    inviteAdminGenerateBtn: document.getElementById("invite-admin-generate-btn"),
+    inviteAdminRefreshBtn: document.getElementById("invite-admin-refresh-btn"),
+    inviteAdminGeneratedEl: document.getElementById("invite-admin-generated"),
+    inviteAdminGeneratedOutputEl: document.getElementById("invite-admin-generated-output"),
+    inviteAdminCopyBtn: document.getElementById("invite-admin-copy-btn"),
+    inviteAdminSummaryTotalEl: document.getElementById("invite-admin-summary-total"),
+    inviteAdminSummaryActiveEl: document.getElementById("invite-admin-summary-active"),
+    inviteAdminSummaryRedeemedEl: document.getElementById("invite-admin-summary-redeemed"),
+    inviteAdminSummaryDisabledEl: document.getElementById("invite-admin-summary-disabled"),
+    inviteAdminBody: document.getElementById("invite-admin-body"),
   };
 
   dom.workspaceDetails = [
@@ -357,6 +377,26 @@ async function initializeApp(initialUser = null) {
       startsAt: "",
       endsAt: "",
       message: "",
+    },
+    inviteAdmin: {
+      profile: {
+        isAuthenticated: false,
+        isAdmin: false,
+        email: "",
+        message: "",
+      },
+      rows: [],
+      summary: {
+        total: 0,
+        active: 0,
+        redeemed: 0,
+        disabled: 0,
+      },
+      generatedItems: [],
+      statusMessage: "",
+      errorMessage: "",
+      isLoading: false,
+      isSubmitting: false,
     },
   };
 
@@ -531,6 +571,147 @@ async function initializeApp(initialUser = null) {
     }
   }
 
+  function escapeSqlLiteral(value) {
+    return String(value || "").replaceAll("'", "''");
+  }
+
+  function formatInviteAdminDateTime(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return "--";
+    }
+
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+      return text;
+    }
+
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    const hours = String(parsed.getHours()).padStart(2, "0");
+    const minutes = String(parsed.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  }
+
+  function setInviteAdminLoadingState(loading) {
+    state.inviteAdmin.isLoading = Boolean(loading);
+
+    if (dom.inviteAdminGenerateBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminGenerateBtn.disabled = state.inviteAdmin.isSubmitting || state.inviteAdmin.isLoading;
+    }
+
+    if (dom.inviteAdminRefreshBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminRefreshBtn.disabled = state.inviteAdmin.isSubmitting || state.inviteAdmin.isLoading;
+    }
+  }
+
+  function setInviteAdminSubmittingState(submitting) {
+    state.inviteAdmin.isSubmitting = Boolean(submitting);
+
+    if (dom.inviteAdminGenerateBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminGenerateBtn.disabled = state.inviteAdmin.isSubmitting || state.inviteAdmin.isLoading;
+    }
+
+    if (dom.inviteAdminRefreshBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminRefreshBtn.disabled = state.inviteAdmin.isSubmitting || state.inviteAdmin.isLoading;
+    }
+  }
+
+  function renderInviteAdminSection() {
+    if (
+      !(dom.inviteAdminDeckEl instanceof HTMLElement) ||
+      !(dom.inviteAdminStatusEl instanceof HTMLElement) ||
+      !(dom.inviteAdminErrorEl instanceof HTMLElement) ||
+      !(dom.inviteAdminAccessNoteEl instanceof HTMLElement) ||
+      !(dom.inviteAdminBootstrapSqlEl instanceof HTMLElement) ||
+      !(dom.inviteAdminGeneratedEl instanceof HTMLElement) ||
+      !(dom.inviteAdminGeneratedOutputEl instanceof HTMLElement) ||
+      !(dom.inviteAdminBody instanceof HTMLElement)
+    ) {
+      return;
+    }
+
+    const profile = state.inviteAdmin.profile || {};
+    const isSignedIn = Boolean(profile.isAuthenticated);
+    const isAdmin = Boolean(profile.isAdmin);
+    const email = String(profile.email || "").trim();
+    const bootstrapSql = email
+      ? `insert into public.invite_admins (email, note)\nvalues ('${escapeSqlLiteral(email)}', 'owner')\non conflict do nothing;`
+      : "";
+
+    dom.inviteAdminDeckEl.hidden = !isSignedIn;
+    if (!isSignedIn) {
+      return;
+    }
+
+    dom.inviteAdminStatusEl.textContent = state.inviteAdmin.statusMessage || profile.message || "";
+    dom.inviteAdminErrorEl.textContent = state.inviteAdmin.errorMessage || "";
+    dom.inviteAdminAccessNoteEl.hidden = isAdmin;
+    dom.inviteAdminBootstrapSqlEl.textContent = bootstrapSql;
+
+    if (dom.inviteAdminForm instanceof HTMLFormElement) {
+      dom.inviteAdminForm.hidden = !isAdmin;
+    }
+
+    dom.inviteAdminGeneratedEl.hidden = !isAdmin || state.inviteAdmin.generatedItems.length === 0;
+    if (!dom.inviteAdminGeneratedEl.hidden) {
+      const generatedText = state.inviteAdmin.generatedItems
+        .map((item) => `${item.code}  ·  ${item.planLabel}  ·  ${item.batchLabel}`)
+        .join("\n");
+      dom.inviteAdminGeneratedOutputEl.textContent = generatedText;
+    } else {
+      dom.inviteAdminGeneratedOutputEl.textContent = "";
+    }
+
+    if (dom.inviteAdminSummaryTotalEl instanceof HTMLElement) {
+      dom.inviteAdminSummaryTotalEl.textContent = String(state.inviteAdmin.summary.total || 0);
+    }
+    if (dom.inviteAdminSummaryActiveEl instanceof HTMLElement) {
+      dom.inviteAdminSummaryActiveEl.textContent = String(state.inviteAdmin.summary.active || 0);
+    }
+    if (dom.inviteAdminSummaryRedeemedEl instanceof HTMLElement) {
+      dom.inviteAdminSummaryRedeemedEl.textContent = String(state.inviteAdmin.summary.redeemed || 0);
+    }
+    if (dom.inviteAdminSummaryDisabledEl instanceof HTMLElement) {
+      dom.inviteAdminSummaryDisabledEl.textContent = String(state.inviteAdmin.summary.disabled || 0);
+    }
+
+    if (!isAdmin) {
+      dom.inviteAdminBody.innerHTML = `<tr><td colspan="9" class="empty">当前账号尚未加入邀请码管理员名单。</td></tr>`;
+      return;
+    }
+
+    if (state.inviteAdmin.rows.length === 0) {
+      dom.inviteAdminBody.innerHTML = `<tr><td colspan="9" class="empty">${state.inviteAdmin.isLoading ? "邀请码列表加载中..." : "当前还没有邀请码记录。"}</td></tr>`;
+      return;
+    }
+
+    dom.inviteAdminBody.innerHTML = state.inviteAdmin.rows
+      .map((row) => {
+        const actionButton = row.canDisable
+          ? `<button class="secondary-btn" type="button" data-invite-admin-action="disable" data-invite-id="${escapeHtml(row.id)}">停用</button>`
+          : row.canEnable
+            ? `<button class="secondary-btn" type="button" data-invite-admin-action="activate" data-invite-id="${escapeHtml(row.id)}">启用</button>`
+            : `<span class="hint">--</span>`;
+
+        return `
+          <tr>
+            <td>${escapeHtml(row.codeHint)}</td>
+            <td>${escapeHtml(row.planLabel)}</td>
+            <td>${escapeHtml(row.durationLabel)}</td>
+            <td><span class="invite-admin-status-pill" data-status="${escapeHtml(row.status)}">${escapeHtml(row.statusLabel)}</span></td>
+            <td class="is-wrap">${escapeHtml(row.batchLabel)}</td>
+            <td class="is-wrap">${escapeHtml(row.redeemedEmail || "--")}</td>
+            <td>${escapeHtml(formatInviteAdminDateTime(row.createdAt))}</td>
+            <td>${escapeHtml(formatInviteAdminDateTime(row.redeemedAt))}</td>
+            <td><div class="invite-admin-row-actions">${actionButton}</div></td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
   const productsRepository = createProductsRepository({
     getAuthContext,
     roundMoney,
@@ -549,6 +730,9 @@ async function initializeApp(initialUser = null) {
     normalizeTargetYearData,
   });
   const entitlementsRepository = createEntitlementsRepository({
+    getAuthContext,
+  });
+  const inviteAdminRepository = createInviteAdminRepository({
     getAuthContext,
   });
 
@@ -593,6 +777,208 @@ async function initializeApp(initialUser = null) {
 
   function clearListError() {
     dom.listErrorEl.textContent = "";
+  }
+
+  async function refreshInviteAdminConsole({ preserveGenerated = true } = {}) {
+    const currentUser = getCurrentAuthUser();
+    if (!currentUser?.id) {
+      state.inviteAdmin.profile = {
+        isAuthenticated: false,
+        isAdmin: false,
+        email: "",
+        message: "",
+      };
+      state.inviteAdmin.rows = [];
+      state.inviteAdmin.summary = {
+        total: 0,
+        active: 0,
+        redeemed: 0,
+        disabled: 0,
+      };
+      state.inviteAdmin.statusMessage = "";
+      state.inviteAdmin.errorMessage = "";
+      state.inviteAdmin.generatedItems = [];
+      renderInviteAdminSection();
+      return;
+    }
+
+    if (!preserveGenerated) {
+      state.inviteAdmin.generatedItems = [];
+    }
+
+    setInviteAdminLoadingState(true);
+    state.inviteAdmin.errorMessage = "";
+    state.inviteAdmin.statusMessage = "正在同步邀请码管理台...";
+    renderInviteAdminSection();
+
+    try {
+      const profile = await inviteAdminRepository.fetchInviteAdminProfile();
+      state.inviteAdmin.profile = profile;
+
+      if (!profile.isAdmin) {
+        state.inviteAdmin.rows = [];
+        state.inviteAdmin.summary = {
+          total: 0,
+          active: 0,
+          redeemed: 0,
+          disabled: 0,
+        };
+        state.inviteAdmin.statusMessage = profile.message || "";
+        renderInviteAdminSection();
+        return;
+      }
+
+      const result = await inviteAdminRepository.listInviteCodes({ limit: 250 });
+      state.inviteAdmin.rows = result.items;
+      state.inviteAdmin.summary = result.summary;
+      state.inviteAdmin.statusMessage = `已同步 ${result.summary.total} 个邀请码。`;
+      renderInviteAdminSection();
+    } catch (error) {
+      state.inviteAdmin.rows = [];
+      state.inviteAdmin.summary = {
+        total: 0,
+        active: 0,
+        redeemed: 0,
+        disabled: 0,
+      };
+      state.inviteAdmin.errorMessage = `邀请码管理台加载失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+      renderInviteAdminSection();
+    } finally {
+      setInviteAdminLoadingState(false);
+      renderInviteAdminSection();
+    }
+  }
+
+  async function handleInviteAdminGenerate() {
+    if (!(dom.inviteAdminPlanSelect instanceof HTMLSelectElement) || !(dom.inviteAdminQuantityInput instanceof HTMLInputElement)) {
+      return;
+    }
+
+    const planType = String(dom.inviteAdminPlanSelect.value || "").trim();
+    const quantity = Number(dom.inviteAdminQuantityInput.value);
+    const batchLabel =
+      dom.inviteAdminBatchLabelInput instanceof HTMLInputElement ? String(dom.inviteAdminBatchLabelInput.value || "").trim() : "";
+
+    if (!planType) {
+      state.inviteAdmin.errorMessage = "请选择邀请码套餐类型。";
+      renderInviteAdminSection();
+      return;
+    }
+
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
+      state.inviteAdmin.errorMessage = "生成数量需在 1 到 100 之间。";
+      renderInviteAdminSection();
+      return;
+    }
+
+    setInviteAdminSubmittingState(true);
+    state.inviteAdmin.errorMessage = "";
+    state.inviteAdmin.statusMessage = "正在生成邀请码...";
+    renderInviteAdminSection();
+
+    try {
+      const result = await inviteAdminRepository.createInviteCodes({
+        planType,
+        quantity,
+        batchLabel,
+      });
+      state.inviteAdmin.generatedItems = result.items;
+      state.inviteAdmin.statusMessage = `已生成 ${result.count} 个邀请码。`;
+      if (dom.inviteAdminBatchLabelInput instanceof HTMLInputElement) {
+        dom.inviteAdminBatchLabelInput.value = result.batchLabel || batchLabel;
+      }
+      await refreshInviteAdminConsole({ preserveGenerated: true });
+    } catch (error) {
+      state.inviteAdmin.errorMessage = `邀请码生成失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+      renderInviteAdminSection();
+    } finally {
+      setInviteAdminSubmittingState(false);
+      renderInviteAdminSection();
+    }
+  }
+
+  async function handleInviteAdminStatusChange(inviteId, nextStatus) {
+    if (!inviteId || !nextStatus) {
+      return;
+    }
+
+    setInviteAdminSubmittingState(true);
+    state.inviteAdmin.errorMessage = "";
+    state.inviteAdmin.statusMessage = "正在更新邀请码状态...";
+    renderInviteAdminSection();
+
+    try {
+      await inviteAdminRepository.updateInviteCodeStatus({
+        inviteId,
+        status: nextStatus,
+      });
+      state.inviteAdmin.statusMessage = nextStatus === "disabled" ? "邀请码已停用。" : "邀请码已重新启用。";
+      await refreshInviteAdminConsole({ preserveGenerated: true });
+    } catch (error) {
+      state.inviteAdmin.errorMessage = `邀请码状态更新失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+      renderInviteAdminSection();
+    } finally {
+      setInviteAdminSubmittingState(false);
+      renderInviteAdminSection();
+    }
+  }
+
+  function bindInviteAdminEvents() {
+    if (dom.inviteAdminDeckEl?.dataset.bound === "true") {
+      return;
+    }
+
+    if (dom.inviteAdminForm instanceof HTMLFormElement) {
+      dom.inviteAdminForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await handleInviteAdminGenerate();
+      });
+    }
+
+    if (dom.inviteAdminRefreshBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminRefreshBtn.addEventListener("click", async () => {
+        await refreshInviteAdminConsole({ preserveGenerated: true });
+      });
+    }
+
+    if (dom.inviteAdminCopyBtn instanceof HTMLButtonElement) {
+      dom.inviteAdminCopyBtn.addEventListener("click", async () => {
+        const text = state.inviteAdmin.generatedItems.map((item) => item.code).filter(Boolean).join("\n");
+        if (!text) {
+          return;
+        }
+
+        try {
+          await navigator.clipboard.writeText(text);
+          state.inviteAdmin.statusMessage = "本次生成的邀请码已复制到剪贴板。";
+          state.inviteAdmin.errorMessage = "";
+        } catch (error) {
+          state.inviteAdmin.errorMessage = `复制失败：${error instanceof Error ? error.message : "请手动复制"}`;
+        }
+        renderInviteAdminSection();
+      });
+    }
+
+    if (dom.inviteAdminBody instanceof HTMLElement) {
+      dom.inviteAdminBody.addEventListener("click", async (event) => {
+        const trigger = event.target instanceof HTMLElement ? event.target.closest("button[data-invite-admin-action]") : null;
+        if (!(trigger instanceof HTMLButtonElement)) {
+          return;
+        }
+
+        const inviteId = String(trigger.dataset.inviteId || "").trim();
+        const action = String(trigger.dataset.inviteAdminAction || "").trim();
+        if (!inviteId || !action) {
+          return;
+        }
+
+        await handleInviteAdminStatusChange(inviteId, action === "disable" ? "disabled" : "active");
+      });
+    }
+
+    if (dom.inviteAdminDeckEl instanceof HTMLElement) {
+      dom.inviteAdminDeckEl.dataset.bound = "true";
+    }
   }
 
   function clearListStatus() {
@@ -1195,12 +1581,16 @@ async function initializeApp(initialUser = null) {
   bindReportEvents(state, dom, deps);
   bindProductEvents(state, dom, deps);
   bindRecordEvents(state, dom, deps);
+  bindInviteAdminEvents();
+  renderInviteAdminSection();
 
   if (initialUser?.id) {
     await loadLiveWorkspace({ showStatus: true });
+    await refreshInviteAdminConsole({ preserveGenerated: false });
     activeWorkspaceUserId = String(initialUser.id || "").trim();
   } else {
     await loadDemoWorkspace();
+    await refreshInviteAdminConsole({ preserveGenerated: false });
     activeWorkspaceUserId = "";
   }
 
@@ -1217,11 +1607,13 @@ async function initializeApp(initialUser = null) {
         return;
       }
       await loadLiveWorkspace({ showStatus: true });
+      await refreshInviteAdminConsole({ preserveGenerated: false });
       activeWorkspaceUserId = nextUserId;
     },
     async handleSignedOut() {
       activeWorkspaceUserId = "";
       await loadDemoWorkspace();
+      await refreshInviteAdminConsole({ preserveGenerated: false });
     },
   };
 }

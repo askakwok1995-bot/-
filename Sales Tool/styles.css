@@ -3399,6 +3399,244 @@ body.workspace-readonly .report-chart-export-group {
   padding-top: 12px;
 }
 
+.invite-admin-deck {
+  margin-top: 18px;
+  border-color: rgb(170 196 212 / 55%);
+  background:
+    radial-gradient(circle at top left, rgb(233 243 249 / 88%), transparent 34%),
+    linear-gradient(180deg, rgb(249 252 254 / 96%) 0%, rgb(237 243 247 / 94%) 100%);
+}
+
+.invite-admin-head {
+  margin-bottom: 16px;
+}
+
+.invite-admin-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.invite-admin-panel {
+  border: 1px solid rgb(98 132 154 / 12%);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 94%) 0%, rgb(242 247 250 / 92%) 100%);
+  box-shadow: 0 16px 30px rgb(19 53 71 / 5%);
+  padding: 16px;
+}
+
+.invite-admin-panel-primary {
+  background:
+    radial-gradient(circle at top right, rgb(226 239 247 / 92%), transparent 38%),
+    linear-gradient(180deg, rgb(255 255 255 / 96%) 0%, rgb(241 246 249 / 92%) 100%);
+}
+
+.invite-admin-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.invite-admin-panel-kicker {
+  margin: 0 0 4px;
+  color: #658195;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.invite-admin-panel-title {
+  margin: 0;
+  color: #102636;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.invite-admin-status,
+.invite-admin-error {
+  margin: 0 0 12px;
+}
+
+.invite-admin-access-note {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px dashed rgb(109 139 159 / 26%);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgb(250 252 253 / 94%) 0%, rgb(240 246 249 / 92%) 100%);
+}
+
+.invite-admin-access-title {
+  margin: 0;
+  color: #173347;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.invite-admin-access-desc {
+  margin: 8px 0 0;
+  color: #637a8c;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.invite-admin-bootstrap-sql {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #102636;
+  color: #e8f5fb;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.invite-admin-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.invite-admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #365265;
+  font-size: 13px;
+}
+
+.invite-admin-field-wide,
+.invite-admin-actions {
+  grid-column: 1 / -1;
+}
+
+.invite-admin-field input,
+.invite-admin-field select {
+  width: 100%;
+}
+
+.invite-admin-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.invite-admin-generated {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid rgb(103 133 154 / 14%);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgb(248 251 253 / 94%) 0%, rgb(237 244 248 / 94%) 100%);
+}
+
+.invite-admin-generated-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.invite-admin-generated-output {
+  margin: 12px 0 0;
+  max-height: 300px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 18px;
+  background: #0f2433;
+  color: #dff3fb;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.invite-admin-generated-note {
+  margin: 10px 0 0;
+  color: #6b8192;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.invite-admin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.invite-admin-summary-card {
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid rgb(99 130 150 / 12%);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 98%) 0%, rgb(239 245 248 / 96%) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 86%);
+}
+
+.invite-admin-summary-label {
+  display: block;
+  color: #698092;
+  font-size: 12px;
+}
+
+.invite-admin-summary-value {
+  display: block;
+  margin-top: 10px;
+  color: #102636;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.invite-admin-table-wrap {
+  max-height: 620px;
+}
+
+.invite-admin-table td,
+.invite-admin-table th {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.invite-admin-table .is-wrap {
+  white-space: normal;
+}
+
+.invite-admin-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(92 122 142 / 14%);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.invite-admin-status-pill[data-status="active"] {
+  color: #12603d;
+  background: rgb(229 246 237 / 95%);
+}
+
+.invite-admin-status-pill[data-status="redeemed"] {
+  color: #1c4964;
+  background: rgb(231 241 248 / 95%);
+}
+
+.invite-admin-status-pill[data-status="disabled"] {
+  color: #7e4d16;
+  background: rgb(249 239 222 / 95%);
+}
+
+.invite-admin-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .operation-card-primary {
   background: linear-gradient(180deg, rgb(252 253 254 / 96%) 0%, rgb(237 244 248 / 94%) 100%);
 }
@@ -3971,6 +4209,10 @@ body.ai-chat-open .ai-chat-fab {
   .product-form-pane {
     position: static;
   }
+
+  .invite-admin-shell {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
@@ -4049,6 +4291,17 @@ body.ai-chat-open .ai-chat-fab {
     grid-template-columns: 1fr;
   }
 
+  .invite-admin-form,
+  .invite-admin-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .invite-admin-panel-head,
+  .invite-admin-generated-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .sub-card-sales .form-grid {
     grid-template-columns: 1fr;
   }
@@ -4117,6 +4370,10 @@ body.ai-chat-open .ai-chat-fab {
 
   .ai-chat-send-btn {
     width: 100%;
+  }
+
+  .invite-admin-table-wrap {
+    max-height: none;
   }
 }
 

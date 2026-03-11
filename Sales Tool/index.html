@@ -858,6 +858,123 @@
         </details>
       </section>
       </div>
+
+      <section id="invite-admin-deck" class="card section-card invite-admin-deck" hidden>
+        <header class="section-head invite-admin-head">
+          <div>
+            <p class="section-kicker">商业化配置</p>
+            <h2>邀请码管理台</h2>
+          </div>
+          <p class="section-desc">在这里批量生成体验版、半年版、一年版、永久版邀请码，并跟踪兑换进度。</p>
+        </header>
+
+        <div class="invite-admin-shell">
+          <section class="invite-admin-panel invite-admin-panel-primary">
+            <div class="invite-admin-panel-head">
+              <div>
+                <p class="invite-admin-panel-kicker">控制台</p>
+                <h3 class="invite-admin-panel-title">发码与权限状态</h3>
+              </div>
+              <button id="invite-admin-refresh-btn" class="secondary-btn" type="button">刷新列表</button>
+            </div>
+
+            <p id="invite-admin-status" class="hint invite-admin-status" aria-live="polite"></p>
+            <p id="invite-admin-error" class="error invite-admin-error" role="alert" aria-live="polite"></p>
+
+            <div id="invite-admin-access-note" class="invite-admin-access-note" hidden>
+              <p class="invite-admin-access-title">当前账号还没有邀请码管理权限</p>
+              <p class="invite-admin-access-desc">请在 Supabase SQL Editor 执行下面这条 SQL，把当前邮箱加入管理员名单。</p>
+              <pre id="invite-admin-bootstrap-sql" class="invite-admin-bootstrap-sql"></pre>
+            </div>
+
+            <form id="invite-admin-form" class="invite-admin-form" hidden>
+              <label class="invite-admin-field" for="invite-admin-plan">
+                套餐类型
+                <select id="invite-admin-plan" name="planType">
+                  <option value="trial_3d">体验版（3天）</option>
+                  <option value="half_year">半年版</option>
+                  <option value="one_year">一年版</option>
+                  <option value="lifetime">永久版</option>
+                </select>
+              </label>
+              <label class="invite-admin-field" for="invite-admin-quantity">
+                生成数量
+                <input id="invite-admin-quantity" name="quantity" type="number" min="1" max="100" step="1" value="10" />
+              </label>
+              <label class="invite-admin-field invite-admin-field-wide" for="invite-admin-batch-label">
+                批次标记
+                <input id="invite-admin-batch-label" name="batchLabel" type="text" maxlength="80" placeholder="例如：launch_20260311" />
+              </label>
+              <div class="invite-admin-actions">
+                <button id="invite-admin-generate-btn" type="submit">批量生成邀请码</button>
+              </div>
+            </form>
+
+            <div id="invite-admin-generated" class="invite-admin-generated" hidden>
+              <div class="invite-admin-generated-head">
+                <div>
+                  <p class="invite-admin-panel-kicker">本次结果</p>
+                  <h3 class="invite-admin-panel-title">刚生成的邀请码</h3>
+                </div>
+                <button id="invite-admin-copy-btn" class="secondary-btn" type="button">复制本次邀请码</button>
+              </div>
+              <pre id="invite-admin-generated-output" class="invite-admin-generated-output"></pre>
+              <p class="invite-admin-generated-note">明文邀请码只会在生成时返回一次，离开页面前请及时保存。</p>
+            </div>
+          </section>
+
+          <section class="invite-admin-panel invite-admin-panel-secondary">
+            <div class="invite-admin-panel-head">
+              <div>
+                <p class="invite-admin-panel-kicker">库存概况</p>
+                <h3 class="invite-admin-panel-title">当前邀请码池</h3>
+              </div>
+            </div>
+
+            <div class="invite-admin-summary-grid">
+              <article class="invite-admin-summary-card">
+                <span class="invite-admin-summary-label">总量</span>
+                <strong id="invite-admin-summary-total" class="invite-admin-summary-value">0</strong>
+              </article>
+              <article class="invite-admin-summary-card">
+                <span class="invite-admin-summary-label">可用</span>
+                <strong id="invite-admin-summary-active" class="invite-admin-summary-value">0</strong>
+              </article>
+              <article class="invite-admin-summary-card">
+                <span class="invite-admin-summary-label">已兑换</span>
+                <strong id="invite-admin-summary-redeemed" class="invite-admin-summary-value">0</strong>
+              </article>
+              <article class="invite-admin-summary-card">
+                <span class="invite-admin-summary-label">已停用</span>
+                <strong id="invite-admin-summary-disabled" class="invite-admin-summary-value">0</strong>
+              </article>
+            </div>
+
+            <div class="table-wrap invite-admin-table-wrap">
+              <table class="invite-admin-table">
+                <thead>
+                  <tr>
+                    <th>标识</th>
+                    <th>套餐</th>
+                    <th>有效期</th>
+                    <th>状态</th>
+                    <th>批次</th>
+                    <th>兑换邮箱</th>
+                    <th>创建时间</th>
+                    <th>兑换时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="invite-admin-body">
+                  <tr>
+                    <td colspan="9" class="empty">登录后可查看邀请码管理台。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
     <button
       id="ai-chat-fab"

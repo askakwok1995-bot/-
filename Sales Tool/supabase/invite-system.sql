@@ -3,6 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.invite_codes (
   id uuid primary key default gen_random_uuid(),
   code_hash text not null unique,
+  code_hint text not null default '',
   plan_type text not null check (plan_type in ('trial_3d', 'half_year', 'one_year', 'lifetime')),
   duration_days integer check (duration_days is null or duration_days > 0),
   status text not null default 'active' check (status in ('active', 'redeemed', 'disabled')),
@@ -26,6 +27,22 @@ create table if not exists public.user_entitlements (
     check ((plan_type = 'lifetime' and ends_at is null) or (plan_type <> 'lifetime'))
 );
 
+alter table public.invite_codes
+  add column if not exists code_hint text not null default '';
+
+create table if not exists public.invite_admins (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  user_id uuid unique references auth.users (id) on delete set null,
+  note text not null default '',
+  created_by uuid references auth.users (id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create unique index if not exists invite_admins_email_lower_uidx
+on public.invite_admins ((lower(email)));
+
 create or replace function public.set_updated_at_timestamp()
 returns trigger
 language plpgsql
@@ -45,6 +62,12 @@ execute function public.set_updated_at_timestamp();
 drop trigger if exists set_user_entitlements_updated_at on public.user_entitlements;
 create trigger set_user_entitlements_updated_at
 before update on public.user_entitlements
+for each row
+execute function public.set_updated_at_timestamp();
+
+drop trigger if exists set_invite_admins_updated_at on public.invite_admins;
+create trigger set_invite_admins_updated_at
+before update on public.invite_admins
 for each row
 execute function public.set_updated_at_timestamp();
 
@@ -149,6 +172,253 @@ as $$
 $$;
 
 grant execute on function public.has_active_entitlement(uuid) to authenticated;
+
+create or replace function public.is_invite_admin(target_user_id uuid default auth.uid())
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public, auth
+as $$
+declare
+  current_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if target_user_id is null and current_email = '' then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.invite_admins
+    where (target_user_id is not null and user_id = target_user_id)
+       or (current_email <> '' and lower(email) = current_email)
+  );
+end;
+$$;
+
+revoke execute on function public.is_invite_admin(uuid) from public, anon;
+grant execute on function public.is_invite_admin(uuid) to authenticated;
+
+create or replace function public.get_invite_admin_profile()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, auth
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  current_email text := trim(coalesce(auth.jwt() ->> 'email', ''));
+  admin_enabled boolean := public.is_invite_admin(current_user_id);
+begin
+  return jsonb_build_object(
+    'is_authenticated', current_user_id is not null,
+    'is_admin', admin_enabled,
+    'email', current_email,
+    'message', case
+      when current_user_id is null then '请先登录后再使用邀请码管理功能。'
+      when admin_enabled then ''
+      else '当前账号还没有邀请码管理权限，请在 Supabase SQL Editor 中把你的邮箱加入 public.invite_admins。'
+    end
+  );
+end;
+$$;
+
+revoke execute on function public.get_invite_admin_profile() from public, anon;
+grant execute on function public.get_invite_admin_profile() to authenticated;
+
+create or replace function public.list_invite_code_admin_rows(limit_count integer default 200)
+returns table (
+  id uuid,
+  code_hint text,
+  plan_type text,
+  duration_days integer,
+  status text,
+  batch_label text,
+  redeemed_email text,
+  redeemed_at timestamptz,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, auth
+as $$
+declare
+  safe_limit integer := greatest(1, least(coalesce(limit_count, 200), 500));
+begin
+  if not public.is_invite_admin() then
+    raise exception '当前账号没有邀请码管理权限。';
+  end if;
+
+  return query
+  select
+    invite_codes.id,
+    coalesce(nullif(trim(invite_codes.code_hint), ''), '历史批次') as code_hint,
+    invite_codes.plan_type,
+    invite_codes.duration_days,
+    invite_codes.status,
+    invite_codes.batch_label,
+    auth_users.email::text as redeemed_email,
+    invite_codes.redeemed_at,
+    invite_codes.created_at
+  from public.invite_codes
+  left join auth.users auth_users on auth_users.id = invite_codes.redeemed_by
+  order by invite_codes.created_at desc
+  limit safe_limit;
+end;
+$$;
+
+revoke execute on function public.list_invite_code_admin_rows(integer) from public, anon;
+grant execute on function public.list_invite_code_admin_rows(integer) to authenticated;
+
+create or replace function public.create_invite_codes_batch(
+  plan_type_input text,
+  quantity_input integer default 1,
+  batch_label_input text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  normalized_plan text := trim(coalesce(plan_type_input, ''));
+  normalized_batch text := left(trim(coalesce(batch_label_input, '')), 80);
+  safe_quantity integer := greatest(1, least(coalesce(quantity_input, 1), 100));
+  plan_key text;
+  plan_days integer;
+  created_items jsonb := '[]'::jsonb;
+  candidate_code text;
+  candidate_hint text;
+  random_suffix text;
+begin
+  if not public.is_invite_admin() then
+    raise exception '当前账号没有邀请码管理权限。';
+  end if;
+
+  case normalized_plan
+    when 'trial_3d' then
+      plan_key := 'TRIAL';
+      plan_days := 3;
+    when 'half_year' then
+      plan_key := 'HALF';
+      plan_days := 183;
+    when 'one_year' then
+      plan_key := 'YEAR';
+      plan_days := 365;
+    when 'lifetime' then
+      plan_key := 'LIFE';
+      plan_days := null;
+    else
+      raise exception '邀请码套餐类型无效。';
+  end case;
+
+  if normalized_batch = '' then
+    normalized_batch := format('admin_%s', to_char(timezone('utc', now()), 'YYYYMMDD'));
+  end if;
+
+  while jsonb_array_length(created_items) < safe_quantity loop
+    random_suffix := upper(replace(gen_random_uuid()::text, '-', ''));
+    candidate_code := format('SALES-%s-%s-%s', plan_key, to_char(timezone('utc', now()), 'YYYYMMDD'), random_suffix);
+    candidate_hint := right(candidate_code, 8);
+
+    insert into public.invite_codes (
+      code_hash,
+      code_hint,
+      plan_type,
+      duration_days,
+      status,
+      batch_label
+    )
+    values (
+      public.hash_invite_code(candidate_code),
+      candidate_hint,
+      normalized_plan,
+      plan_days,
+      'active',
+      normalized_batch
+    )
+    on conflict (code_hash) do nothing;
+
+    if found then
+      created_items := created_items || jsonb_build_array(
+        jsonb_build_object(
+          'code', candidate_code,
+          'code_hint', candidate_hint,
+          'plan_type', normalized_plan,
+          'duration_days', plan_days,
+          'status', 'active',
+          'batch_label', normalized_batch
+        )
+      );
+    end if;
+  end loop;
+
+  return jsonb_build_object(
+    'items', created_items,
+    'count', jsonb_array_length(created_items),
+    'batch_label', normalized_batch,
+    'plan_type', normalized_plan
+  );
+end;
+$$;
+
+revoke execute on function public.create_invite_codes_batch(text, integer, text) from public, anon;
+grant execute on function public.create_invite_codes_batch(text, integer, text) to authenticated;
+
+create or replace function public.set_invite_code_status(target_invite_id uuid, next_status text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  normalized_status text := trim(coalesce(next_status, ''));
+  invite_row public.invite_codes%rowtype;
+begin
+  if not public.is_invite_admin() then
+    raise exception '当前账号没有邀请码管理权限。';
+  end if;
+
+  if normalized_status not in ('active', 'disabled') then
+    raise exception '邀请码状态仅支持 active 或 disabled。';
+  end if;
+
+  select *
+    into invite_row
+  from public.invite_codes
+  where id = target_invite_id
+  for update;
+
+  if not found then
+    raise exception '邀请码不存在。';
+  end if;
+
+  if invite_row.status = 'redeemed' or invite_row.redeemed_by is not null then
+    raise exception '已兑换邀请码不能再修改状态。';
+  end if;
+
+  update public.invite_codes
+  set status = normalized_status
+  where id = target_invite_id
+  returning * into invite_row;
+
+  return jsonb_build_object(
+    'id', invite_row.id,
+    'code_hint', coalesce(nullif(trim(invite_row.code_hint), ''), '历史批次'),
+    'plan_type', invite_row.plan_type,
+    'duration_days', invite_row.duration_days,
+    'status', invite_row.status,
+    'batch_label', invite_row.batch_label,
+    'redeemed_at', invite_row.redeemed_at,
+    'created_at', invite_row.created_at
+  );
+end;
+$$;
+
+revoke execute on function public.set_invite_code_status(uuid, text) from public, anon;
+grant execute on function public.set_invite_code_status(uuid, text) to authenticated;
 
 create or replace function public.get_current_entitlement_status()
 returns jsonb
@@ -375,9 +645,11 @@ end;
 $$;
 
 alter table public.invite_codes enable row level security;
+alter table public.invite_admins enable row level security;
 alter table public.user_entitlements enable row level security;
 
 revoke all on public.invite_codes from anon, authenticated;
+revoke all on public.invite_admins from anon, authenticated;
 grant select on public.user_entitlements to authenticated;
 
 drop policy if exists user_entitlements_select_own on public.user_entitlements;
