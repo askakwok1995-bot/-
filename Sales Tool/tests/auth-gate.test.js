@@ -87,6 +87,9 @@ function installFakeBrowserEnv(client) {
     "auth-status": new FakeElement(),
     "auth-error": new FakeElement(),
     "auth-user-email": new FakeElement(),
+    "auth-subscription": new FakeElement(),
+    "auth-subscription-primary": new FakeElement(),
+    "auth-subscription-secondary": new FakeElement(),
     "auth-signout-btn": new FakeHtmlButtonElement(),
     "auth-bootstrap-state": new FakeElement(),
   };
@@ -319,6 +322,98 @@ test("register flow blocks empty invite code before calling Supabase", async () 
     assert.equal(rpcCalled, false);
     assert.equal(signUpCalled, false);
     assert.equal(document.getElementById("auth-error").textContent, "首次注册需填写有效邀请码。");
+  } finally {
+    env.restore();
+  }
+});
+
+test("subscription panel shows loading first and then renders entitlement summary", async () => {
+  let authStateChangeHandler = null;
+  const client = {
+    auth: {
+      onAuthStateChange(handler) {
+        authStateChangeHandler = handler;
+        return { data: { subscription: { unsubscribe() {} } } };
+      },
+      async getSession() {
+        return {
+          data: { session: null },
+          error: null,
+        };
+      },
+      async signOut() {
+        return { error: null };
+      },
+    },
+  };
+
+  const env = installFakeBrowserEnv(client);
+
+  try {
+    const { bootstrapAuthGate, setAuthSubscriptionPanel } = await loadFreshAuthModule();
+    await bootstrapAuthGate({
+      appRoot: new FakeElement(),
+      callbacks: {},
+    });
+
+    authStateChangeHandler("SIGNED_IN", {
+      user: { id: "trial-user", email: "trial@example.com" },
+    });
+
+    assert.equal(document.getElementById("auth-subscription").hidden, false);
+    assert.equal(document.getElementById("auth-subscription-primary").textContent, "订阅状态读取中...");
+    assert.equal(document.getElementById("auth-subscription-secondary").hidden, true);
+
+    setAuthSubscriptionPanel({
+      isActive: false,
+      reason: "expired",
+      status: "expired",
+      planType: "trial_3d",
+      startsAt: "2026-03-11T00:00:00.000Z",
+      endsAt: "2026-03-14T00:00:00.000Z",
+      message: "当前账号授权已到期。",
+    });
+
+    assert.equal(document.getElementById("auth-subscription-primary").textContent, "订阅：体验版 · 已到期");
+    assert.equal(document.getElementById("auth-subscription-secondary").textContent, "到期：2026-03-14");
+    assert.equal(document.getElementById("auth-subscription-secondary").hidden, false);
+  } finally {
+    env.restore();
+  }
+});
+
+test("subscription view model formats grandfathered lifetime users", async () => {
+  const env = installFakeBrowserEnv({
+    auth: {
+      onAuthStateChange() {
+        return { data: { subscription: { unsubscribe() {} } } };
+      },
+      async getSession() {
+        return { data: { session: null }, error: null };
+      },
+      async signOut() {
+        return { error: null };
+      },
+    },
+  });
+
+  try {
+    const { createAuthSubscriptionViewModel } = await loadFreshAuthModule();
+    const viewModel = createAuthSubscriptionViewModel({
+      isActive: true,
+      reason: "grandfathered",
+      status: "grandfathered",
+      planType: "lifetime",
+      startsAt: "2026-03-11T00:00:00.000Z",
+      endsAt: "",
+      message: "",
+    });
+
+    assert.deepEqual(viewModel, {
+      primaryText: "订阅：老用户永久 · 有效",
+      secondaryText: "到期：永久有效",
+      showSecondary: true,
+    });
   } finally {
     env.restore();
   }

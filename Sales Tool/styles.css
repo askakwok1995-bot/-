@@ -118,7 +118,9 @@ h1 {
 .auth-user-panel {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   min-height: 28px;
 }
 
@@ -129,6 +131,28 @@ h1 {
   border: 1px solid #aed0e2;
   border-radius: 999px;
   padding: 4px 10px;
+}
+
+.auth-subscription {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: min(280px, 100%);
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid #aed0e2;
+  background: linear-gradient(180deg, #eef9ff 0%, #dceef9 100%);
+  color: #1f4e65;
+}
+
+.auth-subscription-line {
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.auth-subscription-line-secondary {
+  color: #44687d;
 }
 
 .auth-signout-btn {
@@ -2476,6 +2500,16 @@ h1,
   background: rgb(255 255 255 / 8%);
   border: 1px solid rgb(255 255 255 / 12%);
   padding: 7px 14px;
+}
+
+.auth-subscription {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 8%);
+  color: #ecf7fd;
+}
+
+.auth-subscription-line-secondary {
+  color: #d3e7f5;
 }
 
 .auth-signout-btn.secondary-btn {

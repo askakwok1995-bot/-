@@ -51,7 +51,7 @@ import {
   parseReportYmParts,
   renderReportSection,
 } from "./reports.js";
-import { bootstrapAuthGate, getCurrentAuthUser, getSupabaseClient } from "./auth.js";
+import { bootstrapAuthGate, getCurrentAuthUser, getSupabaseClient, setAuthSubscriptionPanel } from "./auth.js";
 import { initAiChatUi } from "./ai-chat-ui.js";
 import { createAppDeps } from "./app/create-app-deps.js";
 import { shouldReloadLiveWorkspaceOnSignedIn } from "./app/auth-session-guards.js";
@@ -1032,6 +1032,7 @@ async function initializeApp(initialUser = null) {
 
     const entitlementStatus = await entitlementsRepository.fetchCurrentEntitlementStatus();
     state.entitlementStatus = entitlementStatus;
+    setAuthSubscriptionPanel(entitlementStatus);
     if (!entitlementStatus.isActive) {
       applyEntitlementLockedWorkspace(entitlementStatus);
       return;

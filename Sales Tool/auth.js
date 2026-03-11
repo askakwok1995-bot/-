@@ -7,11 +7,111 @@ let lastNotifiedSignedInUserId = "";
 let authDom = null;
 let authReadyResolved = false;
 let authCallbacks = {};
+let subscriptionViewModel = null;
+
+const PLAN_LABELS = {
+  trial_3d: "体验版",
+  half_year: "半年版",
+  one_year: "一年版",
+  lifetime: "永久版",
+};
+
+const STATUS_LABELS = {
+  active: "有效",
+  grandfathered: "有效",
+  expired: "已到期",
+  revoked: "已停用",
+  lookup_failed: "状态读取失败",
+  missing: "未开通",
+  not_started: "未生效",
+  signed_out: "",
+};
 
 function setAuthBootstrapStateVisible(visible) {
   if (authDom?.bootstrapStateEl instanceof HTMLElement) {
     authDom.bootstrapStateEl.hidden = !visible;
   }
+}
+
+function trimString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function padNumber(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatSubscriptionDate(value) {
+  const text = trimString(value);
+  if (!text) {
+    return "永久有效";
+  }
+
+  const parsedMs = Date.parse(text);
+  if (!Number.isFinite(parsedMs)) {
+    return text.slice(0, 10) || text;
+  }
+
+  const parsedDate = new Date(parsedMs);
+  return `${parsedDate.getFullYear()}-${padNumber(parsedDate.getMonth() + 1)}-${padNumber(parsedDate.getDate())}`;
+}
+
+function getSubscriptionPlanLabel(entitlementStatus) {
+  if (trimString(entitlementStatus?.status) === "grandfathered" && trimString(entitlementStatus?.planType) === "lifetime") {
+    return "老用户永久";
+  }
+
+  return PLAN_LABELS[trimString(entitlementStatus?.planType)] || "未开通";
+}
+
+function getSubscriptionStatusLabel(entitlementStatus) {
+  const status = trimString(entitlementStatus?.status);
+  const reason = trimString(entitlementStatus?.reason);
+  return STATUS_LABELS[status] || STATUS_LABELS[reason] || "有效";
+}
+
+function createLoadingSubscriptionViewModel() {
+  return {
+    primaryText: "订阅状态读取中...",
+    secondaryText: "",
+    showSecondary: false,
+  };
+}
+
+export function createAuthSubscriptionViewModel(entitlementStatus) {
+  if (!entitlementStatus || typeof entitlementStatus !== "object") {
+    return createLoadingSubscriptionViewModel();
+  }
+
+  const planLabel = getSubscriptionPlanLabel(entitlementStatus);
+  const statusLabel = getSubscriptionStatusLabel(entitlementStatus);
+  const hasKnownExpiry = Boolean(trimString(entitlementStatus?.endsAt));
+  const secondaryText =
+    trimString(entitlementStatus?.planType) === "lifetime" || !hasKnownExpiry
+      ? "到期：永久有效"
+      : `到期：${formatSubscriptionDate(entitlementStatus.endsAt)}`;
+
+  if (trimString(entitlementStatus?.status) === "lookup_failed" || trimString(entitlementStatus?.reason) === "lookup_failed") {
+    return {
+      primaryText: "订阅：状态读取失败",
+      secondaryText: "到期：--",
+      showSecondary: true,
+    };
+  }
+
+  if (planLabel === "未开通" && !hasKnownExpiry) {
+    return {
+      primaryText: statusLabel ? `订阅：未开通 · ${statusLabel}` : "订阅：未开通",
+      secondaryText: "到期：--",
+      showSecondary: true,
+    };
+  }
+
+  return {
+    primaryText: statusLabel ? `订阅：${planLabel} · ${statusLabel}` : `订阅：${planLabel}`,
+    secondaryText,
+    showSecondary: true,
+  };
 }
 
 function getConfigValue(key) {
@@ -46,6 +146,30 @@ function clearAuthStatus() {
   if (authDom?.statusEl instanceof HTMLElement) {
     authDom.statusEl.textContent = "";
   }
+}
+
+function renderSubscriptionPanel(user) {
+  if (
+    !(authDom?.subscriptionEl instanceof HTMLElement) ||
+    !(authDom?.subscriptionPrimaryEl instanceof HTMLElement) ||
+    !(authDom?.subscriptionSecondaryEl instanceof HTMLElement)
+  ) {
+    return;
+  }
+
+  if (!user?.email) {
+    authDom.subscriptionEl.hidden = true;
+    authDom.subscriptionPrimaryEl.textContent = "";
+    authDom.subscriptionSecondaryEl.textContent = "";
+    authDom.subscriptionSecondaryEl.hidden = true;
+    return;
+  }
+
+  const viewModel = subscriptionViewModel && typeof subscriptionViewModel === "object" ? subscriptionViewModel : createLoadingSubscriptionViewModel();
+  authDom.subscriptionEl.hidden = false;
+  authDom.subscriptionPrimaryEl.textContent = viewModel.primaryText;
+  authDom.subscriptionSecondaryEl.textContent = viewModel.secondaryText;
+  authDom.subscriptionSecondaryEl.hidden = viewModel.showSecondary !== true;
 }
 
 function normalizeEmail(value) {
@@ -141,7 +265,11 @@ function setGateLocked(locked, options = {}) {
 }
 
 function updateUserPanel(user) {
-  if (!(authDom?.userEmailEl instanceof HTMLElement) || !(authDom?.signOutBtn instanceof HTMLButtonElement)) {
+  if (
+    !(authDom?.userEmailEl instanceof HTMLElement) ||
+    !(authDom?.signOutBtn instanceof HTMLButtonElement) ||
+    !(authDom?.subscriptionEl instanceof HTMLElement)
+  ) {
     return;
   }
 
@@ -150,12 +278,14 @@ function updateUserPanel(user) {
   if (user?.email) {
     authDom.userEmailEl.hidden = false;
     authDom.userEmailEl.textContent = `已登录：${user.email}`;
+    renderSubscriptionPanel(user);
     authDom.signOutBtn.hidden = false;
     return;
   }
 
   authDom.userEmailEl.hidden = true;
   authDom.userEmailEl.textContent = "";
+  renderSubscriptionPanel(null);
   authDom.signOutBtn.hidden = true;
 }
 
@@ -378,6 +508,9 @@ function cacheDomRefs(domRefs) {
     statusEl: document.getElementById("auth-status"),
     errorEl: document.getElementById("auth-error"),
     userEmailEl: document.getElementById("auth-user-email"),
+    subscriptionEl: document.getElementById("auth-subscription"),
+    subscriptionPrimaryEl: document.getElementById("auth-subscription-primary"),
+    subscriptionSecondaryEl: document.getElementById("auth-subscription-secondary"),
     signOutBtn: document.getElementById("auth-signout-btn"),
     bootstrapStateEl: document.getElementById("auth-bootstrap-state"),
   };
@@ -395,6 +528,9 @@ function validateRequiredDom() {
     ["auth-status", authDom?.statusEl],
     ["auth-error", authDom?.errorEl],
     ["auth-user-email", authDom?.userEmailEl],
+    ["auth-subscription", authDom?.subscriptionEl],
+    ["auth-subscription-primary", authDom?.subscriptionPrimaryEl],
+    ["auth-subscription-secondary", authDom?.subscriptionSecondaryEl],
     ["auth-signout-btn", authDom?.signOutBtn],
     ["auth-bootstrap-state", authDom?.bootstrapStateEl],
   ];
@@ -414,6 +550,12 @@ export function getSupabaseClient() {
   return ensureSupabaseClient();
 }
 
+export function setAuthSubscriptionPanel(entitlementStatus) {
+  subscriptionViewModel =
+    entitlementStatus && typeof entitlementStatus === "object" ? createAuthSubscriptionViewModel(entitlementStatus) : null;
+  updateUserPanel(currentUser);
+}
+
 export async function signOutAuth() {
   const client = ensureSupabaseClient();
 
@@ -427,6 +569,7 @@ export async function signOutAuth() {
 
   currentUser = null;
   lastNotifiedSignedInUserId = "";
+  subscriptionViewModel = null;
   setAuthBootstrapStateVisible(false);
   updateUserPanel(null);
   setAuthFormStateForLoggedOut();
@@ -438,6 +581,7 @@ export async function signOutAuth() {
 export async function bootstrapAuthGate(domRefs = {}) {
   authReadyResolved = false;
   lastNotifiedSignedInUserId = "";
+  subscriptionViewModel = null;
   authCallbacks = domRefs?.callbacks && typeof domRefs.callbacks === "object" ? domRefs.callbacks : {};
   authDom = cacheDomRefs(domRefs);
   validateRequiredDom();
