@@ -42,6 +42,16 @@ export function normalizeInviteAdminRow(row) {
   };
   const codeHint = trimString(row?.code_hint) || "历史批次";
   const redeemedEmail = trimString(row?.redeemed_email);
+  const entitlementEndsAt = trimString(row?.entitlement_ends_at);
+  let expiryLabel = "未设置";
+
+  if (planType === "lifetime") {
+    expiryLabel = "永久有效";
+  } else if (entitlementEndsAt) {
+    expiryLabel = entitlementEndsAt;
+  } else if (durationDays) {
+    expiryLabel = `兑换后 + ${durationDays} 天`;
+  }
 
   return {
     id: trimString(row?.id),
@@ -55,6 +65,8 @@ export function normalizeInviteAdminRow(row) {
     batchLabel: trimString(row?.batch_label) || "未分组",
     redeemedEmail,
     redeemedAt: trimString(row?.redeemed_at),
+    entitlementEndsAt,
+    expiryLabel,
     createdAt: trimString(row?.created_at),
     canDisable: status === "active" && !redeemedEmail,
     canEnable: status === "disabled" && !redeemedEmail,

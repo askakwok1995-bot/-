@@ -234,6 +234,7 @@ returns table (
   plan_type text,
   duration_days integer,
   status text,
+  entitlement_ends_at timestamptz,
   batch_label text,
   redeemed_email text,
   redeemed_at timestamptz,
@@ -258,12 +259,14 @@ begin
     invite_codes.plan_type,
     invite_codes.duration_days,
     invite_codes.status,
+    user_entitlements.ends_at as entitlement_ends_at,
     invite_codes.batch_label,
     auth_users.email::text as redeemed_email,
     invite_codes.redeemed_at,
     invite_codes.created_at
   from public.invite_codes
   left join auth.users auth_users on auth_users.id = invite_codes.redeemed_by
+  left join public.user_entitlements user_entitlements on user_entitlements.source_invite_id = invite_codes.id
   order by invite_codes.created_at desc
   limit safe_limit;
 end;
@@ -410,6 +413,7 @@ begin
     'plan_type', invite_row.plan_type,
     'duration_days', invite_row.duration_days,
     'status', invite_row.status,
+    'entitlement_ends_at', null,
     'batch_label', invite_row.batch_label,
     'redeemed_at', invite_row.redeemed_at,
     'created_at', invite_row.created_at

@@ -594,6 +594,19 @@ async function initializeApp(initialUser = null) {
     return `${year}-${month}-${day} ${hours}:${minutes}`;
   }
 
+  function formatInviteAdminExpiry(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return "--";
+    }
+
+    if (/^兑换后 \+/u.test(text) || text === "永久有效" || text === "未设置") {
+      return text;
+    }
+
+    return formatInviteAdminDateTime(text);
+  }
+
   function setInviteAdminLoadingState(loading) {
     state.inviteAdmin.isLoading = Boolean(loading);
 
@@ -678,12 +691,12 @@ async function initializeApp(initialUser = null) {
     }
 
     if (!isAdmin) {
-      dom.inviteAdminBody.innerHTML = `<tr><td colspan="9" class="empty">当前账号尚未加入邀请码管理员名单。</td></tr>`;
+      dom.inviteAdminBody.innerHTML = `<tr><td colspan="10" class="empty">当前账号尚未加入邀请码管理员名单。</td></tr>`;
       return;
     }
 
     if (state.inviteAdmin.rows.length === 0) {
-      dom.inviteAdminBody.innerHTML = `<tr><td colspan="9" class="empty">${state.inviteAdmin.isLoading ? "邀请码列表加载中..." : "当前还没有邀请码记录。"}</td></tr>`;
+      dom.inviteAdminBody.innerHTML = `<tr><td colspan="10" class="empty">${state.inviteAdmin.isLoading ? "邀请码列表加载中..." : "当前还没有邀请码记录。"}</td></tr>`;
       return;
     }
 
@@ -701,6 +714,7 @@ async function initializeApp(initialUser = null) {
             <td>${escapeHtml(row.planLabel)}</td>
             <td>${escapeHtml(row.durationLabel)}</td>
             <td><span class="invite-admin-status-pill" data-status="${escapeHtml(row.status)}">${escapeHtml(row.statusLabel)}</span></td>
+            <td>${escapeHtml(formatInviteAdminExpiry(row.expiryLabel))}</td>
             <td class="is-wrap">${escapeHtml(row.batchLabel)}</td>
             <td class="is-wrap">${escapeHtml(row.redeemedEmail || "--")}</td>
             <td>${escapeHtml(formatInviteAdminDateTime(row.createdAt))}</td>

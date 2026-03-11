@@ -23,6 +23,7 @@ test("normalizeInviteAdminRow maps invite fields into readable labels", () => {
   assert.equal(row.planLabel, "体验版");
   assert.equal(row.durationLabel, "3 天");
   assert.equal(row.statusLabel, "可用");
+  assert.equal(row.expiryLabel, "兑换后 + 3 天");
   assert.equal(row.canDisable, true);
   assert.equal(row.canEnable, false);
 });
@@ -77,6 +78,7 @@ test("createInviteAdminRepository fetches admin profile and list via rpc", async
                     redeemed_email: "user@example.com",
                     created_at: "2026-03-11T00:00:00.000Z",
                     redeemed_at: "2026-03-12T00:00:00.000Z",
+                    entitlement_ends_at: "2026-03-15T00:00:00.000Z",
                   },
                 ],
                 error: null,
@@ -96,6 +98,7 @@ test("createInviteAdminRepository fetches admin profile and list via rpc", async
   assert.equal(profile.isAdmin, true);
   assert.equal(listResult.items.length, 1);
   assert.equal(listResult.items[0].planLabel, "一年版");
+  assert.equal(listResult.items[0].expiryLabel, "2026-03-15T00:00:00.000Z");
   assert.equal(listResult.summary.redeemed, 1);
   assert.deepEqual(calls, [
     {
