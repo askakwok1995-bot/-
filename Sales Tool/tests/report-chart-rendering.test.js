@@ -312,6 +312,8 @@ test("renderReportSection 在缺少指标且切换到数量口径时仍能完成
 
     const firstSummary = renderReportSection(state, dom, deps);
     assert.equal(firstSummary.reason, "");
+    assert.equal(dom.reportEmptyEl.hidden, true);
+    assert.equal(dom.reportEmptyEl.innerHTML, "");
 
     state.reportTargetChartMetrics = {
       "monthly-trend": "quantity",

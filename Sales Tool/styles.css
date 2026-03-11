@@ -916,6 +916,11 @@ tbody tr:hover td {
     0 8px 20px rgb(18 58 78 / 5%);
 }
 
+.report-empty[hidden],
+.report-empty:empty {
+  display: none !important;
+}
+
 .report-empty-kicker {
   font-size: 11px;
   font-weight: 700;
