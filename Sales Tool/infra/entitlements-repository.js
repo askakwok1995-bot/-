@@ -107,18 +107,23 @@ export function createEntitlementsRepository({ getAuthContext, nowProvider = () 
       };
     }
 
-    const { client, user } = context;
+    const { client } = context;
     try {
-      const { data, error } = await client
-        .from("user_entitlements")
-        .select("user_id,plan_type,status,starts_at,ends_at,source_invite_id,updated_at")
-        .eq("user_id", user.id)
-        .limit(1)
-        .maybeSingle();
+      const { data, error } = await client.rpc("get_current_entitlement_status");
       if (error) {
         throw error;
       }
-      return evaluateEntitlementRecord(data, nowProvider());
+
+      const payload = data && typeof data === "object" ? data : {};
+      return {
+        isActive: payload.is_active === true,
+        reason: trimString(payload.reason) || "lookup_failed",
+        status: trimString(payload.status) || "lookup_failed",
+        planType: trimString(payload.plan_type),
+        startsAt: trimString(payload.starts_at),
+        endsAt: trimString(payload.ends_at),
+        message: trimString(payload.message),
+      };
     } catch (error) {
       return {
         isActive: false,
@@ -132,45 +137,7 @@ export function createEntitlementsRepository({ getAuthContext, nowProvider = () 
     }
   }
 
-  async function previewInviteCode(candidateCode) {
-    const context = typeof getAuthContext === "function" ? getAuthContext() : null;
-    const client = context?.client;
-    if (!client) {
-      return {
-        valid: false,
-        planType: "",
-        durationDays: null,
-        message: "Supabase 客户端未初始化，暂时无法校验邀请码。",
-      };
-    }
-
-    try {
-      const { data, error } = await client.rpc("check_invite_code", {
-        candidate_code: trimString(candidateCode),
-      });
-      if (error) {
-        throw error;
-      }
-
-      const payload = data && typeof data === "object" ? data : {};
-      return {
-        valid: payload.valid === true,
-        planType: trimString(payload.plan_type),
-        durationDays: Number.isInteger(Number(payload.duration_days)) ? Number(payload.duration_days) : null,
-        message: trimString(payload.message),
-      };
-    } catch (error) {
-      return {
-        valid: false,
-        planType: "",
-        durationDays: null,
-        message: `邀请码校验失败：${error instanceof Error ? error.message : "请稍后重试"}`,
-      };
-    }
-  }
-
   return {
     fetchCurrentEntitlementStatus,
-    previewInviteCode,
   };
 }

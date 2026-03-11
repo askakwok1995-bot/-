@@ -129,7 +129,7 @@ begin
 end;
 $$;
 
-grant execute on function public.check_invite_code(text) to anon, authenticated;
+revoke execute on function public.check_invite_code(text) from public, anon, authenticated;
 
 create or replace function public.has_active_entitlement(target_user_id uuid default auth.uid())
 returns boolean
@@ -149,6 +149,89 @@ as $$
 $$;
 
 grant execute on function public.has_active_entitlement(uuid) to authenticated;
+
+create or replace function public.get_current_entitlement_status()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  entitlement_row public.user_entitlements%rowtype;
+  now_utc timestamptz := timezone('utc', now());
+begin
+  select *
+    into entitlement_row
+  from public.user_entitlements
+  where user_id = auth.uid()
+  limit 1;
+
+  if not found then
+    return jsonb_build_object(
+      'is_active', false,
+      'reason', 'missing',
+      'status', 'missing',
+      'plan_type', null,
+      'starts_at', null,
+      'ends_at', null,
+      'message', '当前账号未开通可用授权，请联系管理员处理。'
+    );
+  end if;
+
+  if entitlement_row.status = 'revoked' then
+    return jsonb_build_object(
+      'is_active', false,
+      'reason', 'revoked',
+      'status', entitlement_row.status,
+      'plan_type', entitlement_row.plan_type,
+      'starts_at', entitlement_row.starts_at,
+      'ends_at', entitlement_row.ends_at,
+      'message', '当前账号授权已停用，请联系管理员处理。'
+    );
+  end if;
+
+  if entitlement_row.starts_at > now_utc then
+    return jsonb_build_object(
+      'is_active', false,
+      'reason', 'not_started',
+      'status', entitlement_row.status,
+      'plan_type', entitlement_row.plan_type,
+      'starts_at', entitlement_row.starts_at,
+      'ends_at', entitlement_row.ends_at,
+      'message', '当前账号授权尚未生效，请稍后再试。'
+    );
+  end if;
+
+  if entitlement_row.status = 'expired' or (entitlement_row.ends_at is not null and entitlement_row.ends_at <= now_utc) then
+    return jsonb_build_object(
+      'is_active', false,
+      'reason', 'expired',
+      'status', 'expired',
+      'plan_type', entitlement_row.plan_type,
+      'starts_at', entitlement_row.starts_at,
+      'ends_at', entitlement_row.ends_at,
+      'message', case
+        when entitlement_row.ends_at is not null then format('当前账号授权已于 %s 到期，请联系管理员续费。', entitlement_row.ends_at)
+        else '当前账号授权已到期，请联系管理员续费。'
+      end
+    );
+  end if;
+
+  return jsonb_build_object(
+    'is_active', true,
+    'reason', case when entitlement_row.status = 'grandfathered' then 'grandfathered' else 'active' end,
+    'status', entitlement_row.status,
+    'plan_type', entitlement_row.plan_type,
+    'starts_at', entitlement_row.starts_at,
+    'ends_at', entitlement_row.ends_at,
+    'message', ''
+  );
+end;
+$$;
+
+revoke execute on function public.get_current_entitlement_status() from public, anon;
+grant execute on function public.get_current_entitlement_status() to authenticated;
 
 create or replace function public.redeem_invite_code_for_new_user()
 returns trigger
@@ -230,6 +313,32 @@ create trigger redeem_invite_code_for_new_user
 after insert on auth.users
 for each row
 execute function public.redeem_invite_code_for_new_user();
+
+create or replace function public.strip_consumed_invite_code_metadata()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if coalesce(new.raw_user_meta_data, '{}'::jsonb) ? 'invite_code'
+    and exists (select 1 from public.user_entitlements where user_id = new.id) then
+    update auth.users
+    set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - 'invite_code'
+    where id = new.id
+      and coalesce(raw_user_meta_data, '{}'::jsonb) ? 'invite_code';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists strip_consumed_invite_code_metadata on auth.users;
+create trigger strip_consumed_invite_code_metadata
+after update of raw_user_meta_data on auth.users
+for each row
+when (coalesce(new.raw_user_meta_data, '{}'::jsonb) ? 'invite_code')
+execute function public.strip_consumed_invite_code_metadata();
 
 create or replace function public.backfill_grandfathered_entitlements()
 returns integer
@@ -378,3 +487,12 @@ to authenticated
 using (auth.uid() = user_id and public.has_active_entitlement(auth.uid()));
 
 select public.backfill_grandfathered_entitlements();
+
+update auth.users
+set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - 'invite_code'
+where coalesce(raw_user_meta_data, '{}'::jsonb) ? 'invite_code'
+  and exists (
+    select 1
+    from public.user_entitlements
+    where user_id = auth.users.id
+  );

@@ -222,6 +222,23 @@ function validateInviteCode(inviteCode) {
   return "";
 }
 
+function mapSignUpErrorMessage(error) {
+  const rawMessage = error instanceof Error ? trimString(error.message) : trimString(error?.message);
+  if (!rawMessage) {
+    return "注册失败：请稍后重试。";
+  }
+
+  if (/database error saving new user/i.test(rawMessage)) {
+    return "注册失败：邀请码不可用，或注册信息未通过校验。";
+  }
+
+  if (/user already registered|already been registered/i.test(rawMessage)) {
+    return "注册失败：该邮箱已注册，请直接登录。";
+  }
+
+  return `注册失败：${rawMessage}`;
+}
+
 function setAuthSubmitting(isSubmitting, mode = "") {
   if (authDom?.loginBtn instanceof HTMLButtonElement) {
     authDom.loginBtn.disabled = isSubmitting;
@@ -391,20 +408,6 @@ async function signUpWithPassword() {
   setAuthSubmitting(true, "register");
 
   try {
-    const invitePreview = await client.rpc("check_invite_code", {
-      candidate_code: credentials.inviteCode,
-    });
-    if (invitePreview.error) {
-      showAuthError(`邀请码校验失败：${invitePreview.error.message || "请稍后重试"}`);
-      return;
-    }
-
-    const invitePayload = invitePreview.data && typeof invitePreview.data === "object" ? invitePreview.data : {};
-    if (invitePayload.valid !== true) {
-      showAuthError(String(invitePayload.message || "邀请码无效或已失效。"));
-      return;
-    }
-
     const { data, error } = await client.auth.signUp({
       email: credentials.email,
       password: credentials.password,
@@ -416,7 +419,7 @@ async function signUpWithPassword() {
     });
 
     if (error) {
-      showAuthError(`注册失败：${error.message || "请稍后重试"}`);
+      showAuthError(mapSignUpErrorMessage(error));
       return;
     }
 
