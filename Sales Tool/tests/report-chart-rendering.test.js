@@ -280,6 +280,13 @@ test("renderReportSection 在无数据时降级为空态图表而不抛错", () 
     );
 
     assert.equal(summary.reason, "no-records");
+    assert.equal(dom.reportEmptyEl.hidden, false);
+    assert.match(dom.reportEmptyEl.innerHTML, /录入销售记录后，这里会自动生成月度、季度、产品和医院四类分析视图/);
+    assert.match(dom.reportMonthBody.innerHTML, /月度总览/);
+    assert.match(dom.reportMonthBody.innerHTML, /录入销售记录后，这里会自动生成按月趋势/);
+    assert.match(dom.reportQuarterBody.innerHTML, /季度总览/);
+    assert.match(dom.reportProductBody.innerHTML, /产品分析/);
+    assert.match(dom.reportHospitalBody.innerHTML, /医院分析/);
     assert.equal(dom.reportChartsHintEl.textContent, "暂无可视化数据");
     assert.equal(env.charts.size, 8);
     assert.equal(dom.reportChartPaletteSelect.value, DEFAULT_REPORT_CHART_PALETTE_ID);

@@ -56,6 +56,7 @@ const TARGET_CHART_KEYS = Object.freeze([
   CHART_KEYS.hospitalTrend,
 ]);
 const DEFAULT_REPORT_TARGET_CHART_METRIC = "amount";
+const REPORT_EMPTY_TITLE = "暂无可分析数据";
 export const DEFAULT_REPORT_CHART_PALETTE_ID = "harbor";
 export const REPORT_CHART_PALETTES = [
   {
@@ -811,8 +812,11 @@ export function renderReportSection(state, dom, deps) {
       dom.reportHintEl.textContent = range.error;
       dom.reportHintEl.classList.add("report-hint-error");
 
-      dom.reportEmptyEl.hidden = false;
-      dom.reportEmptyEl.textContent = "暂无可分析数据";
+      renderReportEmptyState(dom, {
+        kicker: "销售分析",
+        title: REPORT_EMPTY_TITLE,
+        detail: "请先确认起始月和结束月，系统才能生成当前区间的销售分析。",
+      });
       renderEmptyRows(dom);
       setChartsUnavailableState(dom, range.error || CHART_EMPTY_TEXT);
       return emitSummary({ snapshot: null, range, reason: "invalid-range" });
@@ -823,14 +827,17 @@ export function renderReportSection(state, dom, deps) {
       dom.reportHintEl.textContent = `报表由销售记录自动生成，当前范围暂无销售数据。金额单位：${activeAmountUnit.label}。`;
       dom.reportHintEl.classList.remove("report-hint-error");
 
-      dom.reportEmptyEl.hidden = false;
-      dom.reportEmptyEl.textContent = "暂无可分析数据";
+      renderReportEmptyState(dom, {
+        kicker: "销售分析",
+        title: REPORT_EMPTY_TITLE,
+        detail: "录入销售记录后，这里会自动生成月度、季度、产品和医院四类分析视图。",
+      });
       renderEmptyRows(dom);
       setChartsUnavailableState(dom, CHART_EMPTY_TEXT);
       return emitSummary({ snapshot, range, reason: "no-records" });
     }
 
-    dom.reportEmptyEl.hidden = true;
+    clearReportEmptyState(dom);
     dom.reportHintEl.classList.remove("report-hint-error");
 
     if (snapshot.hasTargetGap) {
@@ -881,9 +888,12 @@ export function renderReportSection(state, dom, deps) {
           )
           .join("")
       : `
-      <tr>
-        <td colspan="11" class="empty">当前范围不包含完整季度</td>
-      </tr>
+      ${buildReportTableEmptyRow({
+        sectionLabel: "季度总览",
+        title: "当前范围不含完整季度",
+        detail: "调整报表区间后，可自动生成季度汇总。",
+        colspan: 11,
+      })}
     `;
 
     dom.reportProductBody.innerHTML = snapshot.productRows.length
@@ -907,9 +917,12 @@ export function renderReportSection(state, dom, deps) {
           )
           .join("")
       : `
-      <tr>
-        <td colspan="11" class="empty">当前范围无产品销售数据</td>
-      </tr>
+      ${buildReportTableEmptyRow({
+        sectionLabel: "产品分析",
+        title: "当前范围暂无产品销售数据",
+        detail: "录入产品销量后，这里会自动汇总产品表现。",
+        colspan: 11,
+      })}
     `;
 
     dom.reportHospitalBody.innerHTML = snapshot.hospitalRows.length
@@ -929,9 +942,12 @@ export function renderReportSection(state, dom, deps) {
           )
           .join("")
       : `
-      <tr>
-        <td colspan="7" class="empty">当前范围无医院销售数据</td>
-      </tr>
+      ${buildReportTableEmptyRow({
+        sectionLabel: "医院分析",
+        title: "当前范围暂无医院销售数据",
+        detail: "录入医院销售记录后，这里会自动生成医院排行。",
+        colspan: 7,
+      })}
     `;
 
     renderReportCharts(state, dom, deps, snapshot, range, activeAmountUnit);
@@ -940,8 +956,11 @@ export function renderReportSection(state, dom, deps) {
     console.error("[Sales Tool] 报表渲染失败，已降级为空态。", error);
     dom.reportHintEl.textContent = "报表计算异常，请刷新页面后重试。";
     dom.reportHintEl.classList.add("report-hint-error");
-    dom.reportEmptyEl.hidden = false;
-    dom.reportEmptyEl.textContent = "暂无可分析数据";
+    renderReportEmptyState(dom, {
+      kicker: "销售分析",
+      title: REPORT_EMPTY_TITLE,
+      detail: "当前分析暂时不可用，请刷新页面后重试。",
+    });
     renderEmptyRows(dom);
     setChartsUnavailableState(dom, "图表计算异常，请刷新页面后重试。");
     return emitSummary({
@@ -4437,27 +4456,68 @@ function buildTargetChartMetricPayload(rows, metric, deps, amountUnit, options =
 }
 
 function renderEmptyRows(dom) {
-  dom.reportMonthBody.innerHTML = `
-    <tr>
-      <td colspan="11" class="empty">暂无可分析数据</td>
-    </tr>
-  `;
+  dom.reportMonthBody.innerHTML = buildReportTableEmptyRow({
+    sectionLabel: "月度总览",
+    title: REPORT_EMPTY_TITLE,
+    detail: "录入销售记录后，这里会自动生成按月趋势。",
+    colspan: 11,
+  });
 
-  dom.reportQuarterBody.innerHTML = `
-    <tr>
-      <td colspan="11" class="empty">暂无可分析数据</td>
-    </tr>
-  `;
+  dom.reportQuarterBody.innerHTML = buildReportTableEmptyRow({
+    sectionLabel: "季度总览",
+    title: REPORT_EMPTY_TITLE,
+    detail: "录入销售记录后，这里会自动生成季度汇总。",
+    colspan: 11,
+  });
 
-  dom.reportProductBody.innerHTML = `
-    <tr>
-      <td colspan="11" class="empty">暂无可分析数据</td>
-    </tr>
-  `;
+  dom.reportProductBody.innerHTML = buildReportTableEmptyRow({
+    sectionLabel: "产品分析",
+    title: REPORT_EMPTY_TITLE,
+    detail: "录入产品销量后，这里会自动生成产品表现。",
+    colspan: 11,
+  });
 
-  dom.reportHospitalBody.innerHTML = `
+  dom.reportHospitalBody.innerHTML = buildReportTableEmptyRow({
+    sectionLabel: "医院分析",
+    title: REPORT_EMPTY_TITLE,
+    detail: "录入医院销售记录后，这里会自动生成医院排行。",
+    colspan: 7,
+  });
+}
+
+function renderReportEmptyState(dom, { kicker = "", title = REPORT_EMPTY_TITLE, detail = "" } = {}) {
+  if (!(dom.reportEmptyEl instanceof HTMLElement)) {
+    return;
+  }
+
+  dom.reportEmptyEl.hidden = false;
+  dom.reportEmptyEl.innerHTML = `
+    <span class="report-empty-kicker">${kicker}</span>
+    <strong class="report-empty-title">${title}</strong>
+    <span class="report-empty-desc">${detail}</span>
+  `;
+}
+
+function clearReportEmptyState(dom) {
+  if (!(dom.reportEmptyEl instanceof HTMLElement)) {
+    return;
+  }
+
+  dom.reportEmptyEl.hidden = true;
+  dom.reportEmptyEl.innerHTML = "";
+}
+
+function buildReportTableEmptyRow({ sectionLabel = "", title = REPORT_EMPTY_TITLE, detail = "", colspan = 1 } = {}) {
+  const safeColspan = Number.isInteger(Number(colspan)) && Number(colspan) > 0 ? Number(colspan) : 1;
+  return `
     <tr>
-      <td colspan="7" class="empty">暂无可分析数据</td>
+      <td colspan="${safeColspan}" class="empty report-table-empty-cell">
+        <div class="report-table-empty">
+          <span class="report-table-empty-kicker">${sectionLabel}</span>
+          <strong class="report-table-empty-title">${title}</strong>
+          <span class="report-table-empty-desc">${detail}</span>
+        </div>
+      </td>
     </tr>
   `;
 }
