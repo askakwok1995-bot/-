@@ -54,6 +54,7 @@ import {
 import { bootstrapAuthGate, getCurrentAuthUser, getSupabaseClient } from "./auth.js";
 import { initAiChatUi } from "./ai-chat-ui.js";
 import { createAppDeps } from "./app/create-app-deps.js";
+import { shouldReloadLiveWorkspaceOnSignedIn } from "./app/auth-session-guards.js";
 import { buildBusinessSnapshotPayload, createChatReplyRequester } from "./app/chat-client.js";
 import { attachSmokeWriteTool, runReadOnlyRecordsCountCheck } from "./app/smoke-tools.js";
 import { getSupabaseAuthContext, getSupabaseSessionAccessToken } from "./infra/supabase-auth-context.js";
@@ -351,6 +352,7 @@ async function initializeApp(initialUser = null) {
   let listStatusTimer = null;
   let currentReportSummary = null;
   let workspaceLoadToken = 0;
+  let activeWorkspaceUserId = initialUser?.id ? String(initialUser.id).trim() : "";
 
   function populateSelectOptions(selectEl, options, placeholder) {
     if (!(selectEl instanceof HTMLSelectElement)) {
@@ -1100,15 +1102,29 @@ async function initializeApp(initialUser = null) {
 
   if (initialUser?.id) {
     await loadLiveWorkspace({ showStatus: true });
+    activeWorkspaceUserId = String(initialUser.id || "").trim();
   } else {
     await loadDemoWorkspace();
+    activeWorkspaceUserId = "";
   }
 
   return {
     async handleSignedIn() {
+      const nextUserId = String(getCurrentAuthUser()?.id || "").trim();
+      if (
+        !shouldReloadLiveWorkspaceOnSignedIn({
+          isDemoMode: state.isDemoMode,
+          activeWorkspaceUserId,
+          nextUserId,
+        })
+      ) {
+        return;
+      }
       await loadLiveWorkspace({ showStatus: true });
+      activeWorkspaceUserId = nextUserId;
     },
     async handleSignedOut() {
+      activeWorkspaceUserId = "";
       await loadDemoWorkspace();
     },
   };

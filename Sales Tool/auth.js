@@ -3,6 +3,7 @@ const MIN_PASSWORD_LENGTH = 6;
 let supabaseClient = null;
 let currentUser = null;
 let lastSignedInUserId = "";
+let lastNotifiedSignedInUserId = "";
 let authDom = null;
 let authReadyResolved = false;
 let authCallbacks = {};
@@ -377,6 +378,7 @@ export async function signOutAuth() {
   }
 
   currentUser = null;
+  lastNotifiedSignedInUserId = "";
   setAuthBootstrapStateVisible(false);
   updateUserPanel(null);
   setAuthFormStateForLoggedOut();
@@ -387,6 +389,7 @@ export async function signOutAuth() {
 
 export async function bootstrapAuthGate(domRefs = {}) {
   authReadyResolved = false;
+  lastNotifiedSignedInUserId = "";
   authCallbacks = domRefs?.callbacks && typeof domRefs.callbacks === "object" ? domRefs.callbacks : {};
   authDom = cacheDomRefs(domRefs);
   validateRequiredDom();
@@ -407,6 +410,7 @@ export async function bootstrapAuthGate(domRefs = {}) {
     client.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         currentUser = null;
+        lastNotifiedSignedInUserId = "";
         setAuthBootstrapStateVisible(false);
         updateUserPanel(null);
         setAuthFormStateForLoggedOut();
@@ -438,7 +442,12 @@ export async function bootstrapAuthGate(domRefs = {}) {
           setAuthBootstrapStateVisible(false);
           clearAuthError();
           setGateLocked(false);
-          if (typeof authCallbacks.onSignedIn === "function") {
+          const shouldNotifySignedIn =
+            event === "SIGNED_IN" &&
+            nextUserId &&
+            nextUserId !== lastNotifiedSignedInUserId;
+          if (shouldNotifySignedIn && typeof authCallbacks.onSignedIn === "function") {
+            lastNotifiedSignedInUserId = nextUserId;
             authCallbacks.onSignedIn(currentUser);
           }
           resolveAuthReady(currentUser, resolve);
