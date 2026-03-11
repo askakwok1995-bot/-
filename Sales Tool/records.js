@@ -2,15 +2,15 @@ const IMPORT_HEADERS = ["日期", "产品/规格", "医院", "采购数量（盒
 const IMPORT_TEMPLATE_VERSION = "v2";
 const IMPORT_GUIDE_ROW = [
   `格式：YYYY-MM-DD（模板${IMPORT_TEMPLATE_VERSION}）`,
-  "必填，建议与产品配置一致",
-  "必填，填写医院全称",
+  "必填，建议使用代号并与产品配置一致",
+  "必填，建议使用代号，避免填写真实全称",
   "必填，非 0 整数（可为负数）",
   "必填，填写配送公司",
 ];
 const IMPORT_DATA_START_ROW = 3;
 const IMPORT_DATA_START_INDEX = IMPORT_DATA_START_ROW - 1;
 const TEMPLATE_INPUT_AREA_ROW_COUNT = 500;
-const TEMPLATE_SAMPLE_ROW = ["2026-01-01", "阿莫西林 0.25g*24粒", "XX人民医院", 12, "国控"];
+const TEMPLATE_SAMPLE_ROW = ["2026-01-01", "产品代号 P-001", "医院代号 H-001", 12, "国控"];
 const TEMPLATE_COL_CONFIG = [
   { wch: 18, align: "center", numFmt: "yyyy-mm-dd" },
   { wch: 34, align: "left" },

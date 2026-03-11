@@ -516,6 +516,10 @@
               <span class="entry-flow-step">4 确认配送并提交</span>
             </div>
             <p class="operation-note">当天成交建议优先补在这里，系统会按产品资料自动算出考核金额，减少重复填写。</p>
+            <p class="security-hint" role="note" aria-label="销售录入安全提醒">
+              <span class="security-hint-kicker">隐私提醒</span>
+              <span>涉及医院名称时，建议使用代号输入，避免因漏洞问题泄漏数据。</span>
+            </p>
             <form id="sales-form" novalidate>
               <div class="form-grid">
                 <label>
@@ -532,7 +536,8 @@
 
                 <label>
                   医院
-                  <input id="hospital" name="hospital" type="text" placeholder="如：XX 人民医院" required />
+                  <input id="hospital" name="hospital" type="text" placeholder="如：医院代号 H-001" required />
+                  <span class="field-security-note">建议使用代号输入，避免因漏洞问题泄漏数据。</span>
                 </label>
 
                 <label>
@@ -571,6 +576,10 @@
           </summary>
           <div class="sub-card-body">
             <p class="operation-note">左侧新增或修正产品与单价，右侧立即核对当前清单，适合一次性整理主数据。</p>
+            <p class="security-hint" role="note" aria-label="产品配置安全提醒">
+              <span class="security-hint-kicker">隐私提醒</span>
+              <span>产品名称建议优先使用代号维护，避免因漏洞问题泄漏数据。</span>
+            </p>
             <div class="product-layout">
               <form id="product-form" class="product-form-pane" novalidate>
                 <div class="product-form-stack">
@@ -580,7 +589,8 @@
                   </div>
                   <label>
                     产品/规格
-                    <input id="product-name" name="productName" type="text" placeholder="如：阿莫西林 0.25g*24粒" required />
+                    <input id="product-name" name="productName" type="text" placeholder="如：产品代号 P-001" required />
+                    <span class="field-security-note">建议使用代号输入，避免因漏洞问题泄漏数据。</span>
                   </label>
 
                   <label>
@@ -790,6 +800,10 @@
                 <input id="import-file-input" type="file" accept=".xlsx" hidden />
               </div>
             </div>
+            <p class="security-hint security-hint--import" role="note" aria-label="导入表格安全提醒">
+              <span class="security-hint-kicker">导入提醒</span>
+              <span>导入表格中的“产品/规格”“医院”列建议使用代号输入，避免因漏洞问题泄漏数据。</span>
+            </p>
             <div class="table-wrap">
               <table>
                 <thead id="records-head">
