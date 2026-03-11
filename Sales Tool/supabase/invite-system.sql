@@ -164,7 +164,9 @@ declare
   entitlement_ends_at timestamptz;
 begin
   if exists (select 1 from public.user_entitlements where user_id = new.id) then
-    new.raw_user_meta_data := coalesce(new.raw_user_meta_data, '{}'::jsonb) - 'invite_code';
+    update auth.users
+    set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - 'invite_code'
+    where id = new.id;
     return new;
   end if;
 
@@ -216,14 +218,16 @@ begin
     redeemed_at = entitlement_starts_at
   where id = invite_row.id;
 
-  new.raw_user_meta_data := coalesce(new.raw_user_meta_data, '{}'::jsonb) - 'invite_code';
+  update auth.users
+  set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - 'invite_code'
+  where id = new.id;
   return new;
 end;
 $$;
 
 drop trigger if exists redeem_invite_code_for_new_user on auth.users;
 create trigger redeem_invite_code_for_new_user
-before insert on auth.users
+after insert on auth.users
 for each row
 execute function public.redeem_invite_code_for_new_user();
 
