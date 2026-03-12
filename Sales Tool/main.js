@@ -653,8 +653,8 @@ async function initializeApp(initialUser = null) {
       ? `insert into public.invite_admins (email, note)\nvalues ('${escapeSqlLiteral(email)}', 'owner')\non conflict do nothing;`
       : "";
 
-    dom.inviteAdminDeckEl.hidden = !isSignedIn;
-    if (!isSignedIn) {
+    dom.inviteAdminDeckEl.hidden = !isSignedIn || !isAdmin;
+    if (!isSignedIn || !isAdmin) {
       return;
     }
 
