@@ -1096,29 +1096,20 @@ async function initializeApp(initialUser = null) {
     updateHeroOverview(currentReportSummary);
   };
 
-  const originalRenderProductMaster = deps.renderProductMaster;
-  deps.renderProductMaster = () => {
-    originalRenderProductMaster();
+  const syncHeroOverview = () => {
     updateHeroOverview();
   };
 
-  const originalRenderRecords = deps.renderRecords;
-  deps.renderRecords = () => {
-    originalRenderRecords();
-    updateHeroOverview();
-  };
+  function wrapRenderWithHeroSync(renderFn) {
+    return () => {
+      renderFn();
+      syncHeroOverview();
+    };
+  }
 
-  const originalRenderTargets = deps.renderTargets;
-  deps.renderTargets = () => {
-    originalRenderTargets();
-    updateHeroOverview();
-  };
-
-  const originalRenderReports = deps.renderReports;
-  deps.renderReports = () => {
-    originalRenderReports();
-    updateHeroOverview();
-  };
+  deps.renderProductMaster = wrapRenderWithHeroSync(deps.renderProductMaster);
+  deps.renderRecords = wrapRenderWithHeroSync(deps.renderRecords);
+  deps.renderTargets = wrapRenderWithHeroSync(deps.renderTargets);
 
   const requestAiChatReply = createChatReplyRequester({
     getAccessToken: () => getSupabaseSessionAccessToken({ getSupabaseClient }),
@@ -1140,10 +1131,21 @@ async function initializeApp(initialUser = null) {
     console.warn("[Sales Tool] 未检测到 AI Chat UI 桥接对象。");
   }
 
+  function syncAiChatWorkspaceContext() {
+    if (!aiChatApi || typeof aiChatApi.setWorkspaceContext !== "function") {
+      return;
+    }
+    aiChatApi.setWorkspaceContext({
+      workspaceMode: state.isDemoMode ? "demo" : "live",
+    });
+  }
+
   function syncAiChatAvailability() {
     if (!aiChatApi || typeof aiChatApi.setSendHandler !== "function") {
       return;
     }
+
+    syncAiChatWorkspaceContext();
 
     const shouldAllowChat = state.isDemoMode || state.entitlementStatus?.isActive === true;
     if (shouldAllowChat) {
@@ -1274,7 +1276,6 @@ async function initializeApp(initialUser = null) {
     deps.renderTargets();
     deps.renderReports();
     deps.renderRecords();
-    updateHeroOverview();
   }
 
   async function fetchLiveRecordPage() {
@@ -1535,17 +1536,14 @@ async function initializeApp(initialUser = null) {
     dom.pageSizeSelect.value = String(state.pageSize);
   }
   hydrateReportRangeInputs(dom, state);
+  syncAiChatWorkspaceContext();
   updateHeroOverview();
   bindHeroCardNavigation();
   bindWorkspaceReadOnlyGuards(dom.workspaceDetails, () => state.isWorkspaceReadOnly);
 
-  const syncHeroOverviewFromReportControls = () => {
-    updateHeroOverview();
-  };
-
   if (dom.reportStartMonthInput instanceof HTMLInputElement) {
-    dom.reportStartMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
-    dom.reportStartMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+    dom.reportStartMonthInput.addEventListener("input", syncHeroOverview);
+    dom.reportStartMonthInput.addEventListener("change", syncHeroOverview);
   }
 
   const syncReportRangeFromStartSelects = () => {
@@ -1556,7 +1554,7 @@ async function initializeApp(initialUser = null) {
       dom.reportStartYearSelect instanceof HTMLSelectElement ? dom.reportStartYearSelect.value : "",
       dom.reportStartMonthSelect instanceof HTMLSelectElement ? dom.reportStartMonthSelect.value : "",
     );
-    syncHeroOverviewFromReportControls();
+    syncHeroOverview();
   };
 
   if (dom.reportStartYearSelect instanceof HTMLSelectElement) {
@@ -1568,8 +1566,8 @@ async function initializeApp(initialUser = null) {
   }
 
   if (dom.reportEndMonthInput instanceof HTMLInputElement) {
-    dom.reportEndMonthInput.addEventListener("input", syncHeroOverviewFromReportControls);
-    dom.reportEndMonthInput.addEventListener("change", syncHeroOverviewFromReportControls);
+    dom.reportEndMonthInput.addEventListener("input", syncHeroOverview);
+    dom.reportEndMonthInput.addEventListener("change", syncHeroOverview);
   }
 
   const syncReportRangeFromEndSelects = () => {
@@ -1580,7 +1578,7 @@ async function initializeApp(initialUser = null) {
       dom.reportEndYearSelect instanceof HTMLSelectElement ? dom.reportEndYearSelect.value : "",
       dom.reportEndMonthSelect instanceof HTMLSelectElement ? dom.reportEndMonthSelect.value : "",
     );
-    syncHeroOverviewFromReportControls();
+    syncHeroOverview();
   };
 
   if (dom.reportEndYearSelect instanceof HTMLSelectElement) {

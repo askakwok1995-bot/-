@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildChatSuccessPayload } from "../functions/chat/render.js";
+import { buildChatSuccessPayload, normalizeEvidenceBundle } from "../functions/chat/render.js";
 
 test("buildChatSuccessPayload returns minimal text-first contract", () => {
   const payload = buildChatSuccessPayload({
@@ -42,4 +42,53 @@ test("buildChatSuccessPayload returns minimal text-first contract", () => {
   assert.equal("output_shape" in payload.answer, false);
   assert.equal("route_code" in payload.answer, false);
   assert.equal("boundaries" in payload.answer, false);
+});
+
+test("buildChatSuccessPayload normalizes response contract fields", () => {
+  const payload = buildChatSuccessPayload({
+    replyText: "整体稳定。",
+    evidenceBundle: {
+      source_period: " 2025-01~2025-03 ",
+      question_type: "",
+      evidence_types: ["aggregate", "", " timeseries "],
+      missing_evidence_types: ["", "breakdown"],
+      analysis_confidence: "",
+      evidence: [
+        { label: " 销售额 ", value: " 100万元 ", insight: " 当前区间 " },
+        { label: "", value: "无效项" },
+      ],
+      actions: [
+        { title: " 跟进重点医院 ", timeline: " 下周 ", metric: " 销售额 " },
+        { title: "" },
+      ],
+    },
+    model: "demo-model",
+    requestId: "req-normalized-answer",
+    conversationState: {
+      primary_dimension_code: "",
+      entity_scope: { products: [], hospitals: [] },
+      source_period: "",
+    },
+  });
+
+  assert.equal(payload.answer.source_period, "2025-01~2025-03");
+  assert.equal(payload.answer.question_type, "overview");
+  assert.deepEqual(payload.answer.evidence_types, ["aggregate", "timeseries"]);
+  assert.deepEqual(payload.answer.missing_evidence_types, ["breakdown"]);
+  assert.equal(payload.answer.analysis_confidence, "medium");
+  assert.deepEqual(payload.answer.evidence, [{ label: "销售额", value: "100万元", insight: "当前区间" }]);
+  assert.deepEqual(payload.answer.actions, [{ title: "跟进重点医院", timeline: "下周", metric: "销售额" }]);
+  assert.equal(payload.answer.conversation_state, null);
+});
+
+test("normalizeEvidenceBundle returns stable defaults", () => {
+  assert.deepEqual(normalizeEvidenceBundle(null), {
+    source_period: "",
+    question_type: "overview",
+    evidence_types: [],
+    missing_evidence_types: [],
+    analysis_confidence: "medium",
+    evidence: [],
+    actions: [],
+  });
 });

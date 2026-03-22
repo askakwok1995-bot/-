@@ -181,6 +181,16 @@ function unionSortedValues(...sets) {
   return Array.from(merged).sort((left, right) => left - right);
 }
 
+function getReportSourceRecords(state) {
+  if (Array.isArray(state?.reportRecords)) {
+    return state.reportRecords;
+  }
+  if (Array.isArray(state?.records)) {
+    return state.records;
+  }
+  return [];
+}
+
 export function buildReportSnapshot(state, deps, range) {
   const monthKeys = listYmRange(range.startYm, range.endYm);
   const monthSet = new Set(monthKeys);
@@ -191,7 +201,7 @@ export function buildReportSnapshot(state, deps, range) {
   const hospitalMonthlyTotals = new Map();
   const hospitalNames = new Map();
 
-  for (const record of state.records) {
+  for (const record of getReportSourceRecords(state)) {
     const parsed = parseRecordDate(record.date, deps);
     if (!parsed) continue;
 

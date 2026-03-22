@@ -1,4 +1,5 @@
 import { trimString } from "./shared.js";
+import { normalizeConversationState } from "./conversation-state.js";
 
 function getReplySummary(replyText) {
   const normalized = trimString(replyText);
@@ -28,6 +29,58 @@ function createEvidenceItem(label, value, insight = "") {
     value: safeValue,
     insight: safeInsight,
   };
+}
+
+function normalizeEvidenceItems(items, limit = 8) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => createEvidenceItem(item?.label, item?.value, item?.insight))
+    .filter((item) => item !== null)
+    .slice(0, limit);
+}
+
+function normalizeActionItems(items, limit = 4) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const safeItem = item && typeof item === "object" ? item : {};
+      const title = trimString(safeItem.title);
+      if (!title) {
+        return null;
+      }
+      return {
+        title,
+        timeline: trimString(safeItem.timeline),
+        metric: trimString(safeItem.metric),
+      };
+    })
+    .filter((item) => item !== null)
+    .slice(0, limit);
+}
+
+export function normalizeEvidenceBundle(evidenceBundle) {
+  const safeBundle = evidenceBundle && typeof evidenceBundle === "object" ? evidenceBundle : {};
+  return {
+    source_period: trimString(safeBundle.source_period),
+    question_type: trimString(safeBundle.question_type) || "overview",
+    evidence_types: Array.isArray(safeBundle.evidence_types)
+      ? safeBundle.evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
+    missing_evidence_types: Array.isArray(safeBundle.missing_evidence_types)
+      ? safeBundle.missing_evidence_types.map((item) => trimString(item)).filter((item) => item)
+      : [],
+    analysis_confidence: trimString(safeBundle.analysis_confidence) || "medium",
+    evidence: normalizeEvidenceItems(safeBundle.evidence),
+    actions: normalizeActionItems(safeBundle.actions),
+  };
+}
+
+export function normalizeChatConversationState(conversationState) {
+  const normalizedState = normalizeConversationState(conversationState);
+  const hasConversationState =
+    trimString(normalizedState.primary_dimension_code) ||
+    trimString(normalizedState.source_period) ||
+    normalizedState.entity_scope.products.length > 0 ||
+    normalizedState.entity_scope.hospitals.length > 0;
+  return hasConversationState ? normalizedState : null;
 }
 
 function pushEvidenceItem(bucket, label, value, insight = "") {
@@ -188,23 +241,19 @@ export function buildChatSuccessPayload({
   requestId,
   conversationState,
 } = {}) {
-  const safeBundle = evidenceBundle && typeof evidenceBundle === "object" ? evidenceBundle : {};
+  const normalizedBundle = normalizeEvidenceBundle(evidenceBundle);
   return {
     reply: trimString(replyText),
     answer: {
       summary: getReplySummary(replyText) || trimString(replyText),
-      evidence: Array.isArray(safeBundle.evidence) ? safeBundle.evidence.slice(0, 8) : [],
-      actions: Array.isArray(safeBundle.actions) ? safeBundle.actions.slice(0, 4) : [],
-      source_period: trimString(safeBundle.source_period),
-      question_type: trimString(safeBundle.question_type) || "overview",
-      evidence_types: Array.isArray(safeBundle.evidence_types)
-        ? safeBundle.evidence_types.map((item) => trimString(item)).filter((item) => item)
-        : [],
-      missing_evidence_types: Array.isArray(safeBundle.missing_evidence_types)
-        ? safeBundle.missing_evidence_types.map((item) => trimString(item)).filter((item) => item)
-        : [],
-      analysis_confidence: trimString(safeBundle.analysis_confidence) || "medium",
-      conversation_state: conversationState && typeof conversationState === "object" ? conversationState : null,
+      evidence: normalizedBundle.evidence,
+      actions: normalizedBundle.actions,
+      source_period: normalizedBundle.source_period,
+      question_type: normalizedBundle.question_type,
+      evidence_types: normalizedBundle.evidence_types,
+      missing_evidence_types: normalizedBundle.missing_evidence_types,
+      analysis_confidence: normalizedBundle.analysis_confidence,
+      conversation_state: normalizeChatConversationState(conversationState),
     },
     model: trimString(model),
     requestId: trimString(requestId),

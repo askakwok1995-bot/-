@@ -85,7 +85,12 @@ test("createAppDeps preserves repository contract and UI wrappers", async () => 
     updateComputedAmount: () => calls.push(["updateComputedAmount"]),
     renderRecords: () => calls.push(["renderRecords"]),
     renderTargetInputSection: () => calls.push(["renderTargetInputSection"]),
-    renderReportSection: (nextState) => calls.push(["renderReportSection", nextState.records.map((item) => item.id).join(",")]),
+    renderReportSection: (nextState) =>
+      calls.push([
+        "renderReportSection",
+        nextState.records.map((item) => item.id).join(","),
+        nextState.reportRecords.map((item) => item.id).join(","),
+      ]),
     getEffectiveMonthlyTargetMap: () => ({ "2026-01": 10 }),
     getProductMonthlyAllocationMap: () => ({ p1: 1 }),
   };
@@ -134,6 +139,6 @@ test("createAppDeps preserves repository contract and UI wrappers", async () => 
   await deps.saveTargets(state);
 
   assert.deepEqual(calls[0], ["validateSalesInput", true, { amount: 100 }, { id: "p1" }]);
-  assert.deepEqual(calls[1], ["renderReportSection", "rr1"]);
+  assert.deepEqual(calls[1], ["renderReportSection", "r1", "rr1"]);
   assert.equal(state.records[0].id, "r1");
 });

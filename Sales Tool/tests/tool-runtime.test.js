@@ -60,6 +60,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   const toolCalls = [];
   let firstRoundDeclarationNames = [];
   let firstRoundSystemInstruction = "";
+  let firstRoundUserPrompt = "";
   let firstRoundGenerationConfig = null;
   let geminiCallCount = 0;
   const result = await runToolFirstChat({
@@ -80,6 +81,7 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
             ? payload.tools[0].functionDeclarations.map((item) => item?.name)
             : [];
           firstRoundSystemInstruction = String(payload?.systemInstruction?.parts?.[0]?.text || "");
+          firstRoundUserPrompt = String(payload?.contents?.[payload.contents.length - 1]?.parts?.[0]?.text || "");
           firstRoundGenerationConfig = payload?.generationConfig || null;
         }
         if (geminiCallCount === 1) {
@@ -167,6 +169,10 @@ test("runToolFirstChat accepts macro tool plan for broad trend question", async 
   assert.match(firstRoundSystemInstruction, /绝对禁止跳过此工具直接调用其他数据获取工具/u);
   assert.match(firstRoundSystemInstruction, /策略 A：Direct Answer/u);
   assert.match(firstRoundSystemInstruction, /策略 B：Bounded Answer/u);
+  assert.match(firstRoundSystemInstruction, /business_snapshot 只用于提供 analysis_range、会话背景和首轮 seed context/u);
+  assert.match(firstRoundSystemInstruction, /只要工具已返回结果，最终结论、数值、coverage 和对象命中一律以工具结果为准/u);
+  assert.match(firstRoundUserPrompt, /seed context/u);
+  assert.match(firstRoundUserPrompt, /一旦工具返回结果，后续结论、数值、coverage 和对象范围必须以工具结果为准/u);
   assert.equal((firstRoundSystemInstruction.match(/角色定位：/g) || []).length, 1);
   assert.equal(firstRoundGenerationConfig?.temperature, 0.7);
   assert.equal(firstRoundGenerationConfig?.maxOutputTokens, 1800);

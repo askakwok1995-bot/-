@@ -63,6 +63,13 @@ export function buildAiChatSystemIntroText({ workspaceMode, startYm, endYm } = {
   ].join("");
 }
 
+export function normalizeAiChatWorkspaceContext(value = {}) {
+  const context = value && typeof value === "object" ? value : {};
+  return {
+    workspaceMode: normalizeAiChatWorkspaceMode(context.workspaceMode),
+  };
+}
+
 function appendInlineMarkdown(container, content) {
   const safeContent = String(content || "");
   if (!safeContent) {
@@ -396,6 +403,7 @@ export function initAiChatUi(options = {}) {
   let cooldownTimerId = 0;
   let sessionVersion = 0;
   let disabledMessage = "";
+  let workspaceContext = normalizeAiChatWorkspaceContext();
 
   const serviceUnavailableStatus =
     typeof options.placeholderStatus === "string" && options.placeholderStatus.trim()
@@ -656,6 +664,9 @@ export function initAiChatUi(options = {}) {
   }
 
   function getCurrentWorkspaceMode() {
+    if (workspaceContext?.workspaceMode) {
+      return workspaceContext.workspaceMode;
+    }
     return normalizeAiChatWorkspaceMode(
       document.body?.classList.contains("workspace-demo-mode") ? AI_CHAT_WORKSPACE_MODES.DEMO : AI_CHAT_WORKSPACE_MODES.LIVE,
     );
@@ -1007,6 +1018,13 @@ export function initAiChatUi(options = {}) {
         disabledMessage = "";
       }
       updateComposerState();
+    },
+    setWorkspaceContext: (nextContext = {}) => {
+      workspaceContext = normalizeAiChatWorkspaceContext({
+        ...workspaceContext,
+        ...(nextContext && typeof nextContext === "object" ? nextContext : {}),
+      });
+      refreshSystemIntro();
     },
   };
 

@@ -148,6 +148,24 @@ test("buildReportSnapshot computes dual metric achievements and product quantity
   assert.equal(volux?.quantityAchievement, 0.75);
 });
 
+test("buildReportSnapshot prefers reportRecords over records when report dataset is provided", () => {
+  const snapshot = buildReportSnapshot(
+    {
+      records: [{ date: "2025-01-02", productId: "p-raw", productName: "旧数据", hospital: "旧院", amount: 999, quantity: 9 }],
+      reportRecords: [{ date: "2025-01-08", productId: "p1", productName: "Volux", hospital: "A院", amount: 120, quantity: 3 }],
+    },
+    createDeps(),
+    {
+      startYm: "2025-01",
+      endYm: "2025-01",
+    },
+  );
+
+  assert.equal(snapshot.rangeRecordCount, 1);
+  assert.equal(snapshot.rangeAmountTotal, 120);
+  assert.equal(snapshot.productRows[0]?.productName, "Volux");
+});
+
 test("buildReportSnapshot exposes dual-metric product and hospital monthly series for charts", () => {
   const snapshot = buildReportSnapshot(
     {

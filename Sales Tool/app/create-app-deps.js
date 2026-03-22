@@ -62,15 +62,7 @@ export function createAppDeps({ state, dom, repos, ui, shared, feedback }) {
   deps.updateComputedAmount = () => ui.updateComputedAmount(state, dom, deps);
   deps.renderRecords = () => ui.renderRecords(state, dom, deps);
   deps.renderTargets = () => ui.renderTargetInputSection(state, dom, deps);
-  deps.renderReports = () => {
-    const originalRecords = state.records;
-    state.records = Array.isArray(state.reportRecords) ? state.reportRecords : [];
-    try {
-      ui.renderReportSection(state, dom, deps);
-    } finally {
-      state.records = originalRecords;
-    }
-  };
+  deps.renderReports = () => ui.renderReportSection(state, dom, deps);
 
   return deps;
 }

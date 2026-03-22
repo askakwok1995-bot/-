@@ -345,6 +345,70 @@ test("handleChatRequest writes matched hospitals into conversation_state entity_
   assert.equal(payload.answer.conversation_state?.primary_dimension_code, "hospital");
 });
 
+test("handleChatRequest aligns live conversation_state source_period to current business_snapshot range", async () => {
+  const response = await handleChatRequest(
+    buildContext({
+      message: "继续分析这两家医院",
+      conversation_state: {
+        primary_dimension_code: "hospital",
+        entity_scope: { products: [], hospitals: ["上海华美医院", "北京美莱医院"] },
+        source_period: "2025-01~2025-03",
+      },
+      business_snapshot: {
+        analysis_range: { start_month: "2025-04", end_month: "2025-06", period: "2025-04~2025-06" },
+      },
+    }),
+    "req-live-sync-source-period",
+    {
+      verifySupabaseAccessToken: async () => ({ ok: true, token: "test-token" }),
+      runToolFirstChat: async ({ businessSnapshot, conversationState }) => {
+        assert.equal(businessSnapshot?.analysis_range?.period, "2025-04~2025-06");
+        assert.equal(conversationState?.source_period, "2025-04~2025-06");
+        assert.deepEqual(conversationState?.entity_scope?.hospitals, ["上海华美医院", "北京美莱医院"]);
+        return {
+          ok: true,
+          reply: "在当前报表区间 2025-04~2025-06 内，这两家医院表现延续分化。",
+          model: "tool-model",
+          outputContext: {
+            route_code: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+          },
+          plannerState: {
+            relevance: QUESTION_JUDGMENT_CODES.relevance.RELEVANT,
+            route_intent: ROUTE_DECISION_CODES.DIRECT_ANSWER,
+            question_type: "overview",
+            required_evidence: ["aggregate"],
+            requested_views: ["get_hospital_summary"],
+            missing_evidence_types: [],
+            analysis_confidence: "high",
+          },
+          questionJudgment: {
+            primary_dimension: { code: QUESTION_JUDGMENT_CODES.primary_dimension.HOSPITAL, label: "医院" },
+            granularity: { code: QUESTION_JUDGMENT_CODES.granularity.SUMMARY, label: "摘要级" },
+            relevance: { code: QUESTION_JUDGMENT_CODES.relevance.RELEVANT, label: "医药销售相关" },
+          },
+          toolRuntimeState: {
+            evidence_types_completed: ["aggregate"],
+          },
+          toolResult: {
+            range: { period: "2025-04~2025-06" },
+            matched_entities: { products: [], hospitals: ["上海华美医院", "北京美莱医院"] },
+            unmatched_entities: { products: [], hospitals: [] },
+            coverage: { code: "full", message: "当前请求范围已完整覆盖。" },
+            summary: {
+              sales_amount: "120.00万元",
+            },
+            rows: [{ hospital_name: "上海华美医院", sales_amount: "70.00万元" }],
+          },
+        };
+      },
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer.conversation_state?.source_period, "2025-04~2025-06");
+});
+
 test("handleChatRequest forwards narrow referential follow-up context into tool-first", async () => {
   const context = buildContext({
     message: "是这两家，我要看具体产品规格和数量",
@@ -497,6 +561,55 @@ test("handleChatRequest supports demo mode without authorization and skips tool-
   assert.equal(verifyCalled, false);
   assert.equal(toolCalled, false);
   assert.equal(demoCalled, true);
+});
+
+test("handleChatRequest demo response preserves entity scope while syncing source_period", async () => {
+  const response = await handleChatRequest(
+    buildContext(
+      {
+        message: "继续分析这两家医院",
+        workspace_mode: "demo",
+        conversation_state: {
+          primary_dimension_code: "hospital",
+          entity_scope: { products: [], hospitals: ["上海华美医院", "北京美莱医院"] },
+          source_period: "2025-01~2025-03",
+        },
+        business_snapshot: {
+          analysis_range: { start_month: "2026-01", end_month: "2026-03", period: "2026-01~2026-03" },
+        },
+      },
+      {
+        includeAuthorization: false,
+        headers: {
+          "x-forwarded-for": "203.0.113.13",
+        },
+      },
+    ),
+    "req-demo-conversation-state-sync",
+    {
+      requestDemoSnapshotChat: async ({ conversationState }) => ({
+        ok: true,
+        replyText: "基于当前演示报表，这两家医院在当前区间内表现稳定。",
+        model: "demo-model",
+        evidenceBundle: {
+          source_period: "2026-01~2026-03",
+          question_type: "overview",
+          evidence_types: ["aggregate"],
+          missing_evidence_types: [],
+          analysis_confidence: "medium",
+          evidence: [],
+          actions: [],
+        },
+        conversationState,
+      }),
+    },
+  );
+
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer.conversation_state?.primary_dimension_code, "hospital");
+  assert.deepEqual(payload.answer.conversation_state?.entity_scope?.hospitals, ["上海华美医院", "北京美莱医院"]);
+  assert.equal(payload.answer.conversation_state?.source_period, "2026-01~2026-03");
 });
 
 test("handleChatRequest supports demo term explain without authorization", async () => {

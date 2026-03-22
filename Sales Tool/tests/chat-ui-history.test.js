@@ -5,6 +5,7 @@ import {
   buildAiChatHeadDescription,
   buildAiChatSystemIntroText,
   buildAssistantHistoryText,
+  normalizeAiChatWorkspaceContext,
   rollbackFailedUserHistory,
 } from "../ai-chat-ui.js";
 
@@ -64,4 +65,13 @@ test("buildAiChatHeadDescription switches between demo and live", () => {
   assert.match(buildAiChatHeadDescription("demo"), /演示数据分析/u);
   assert.match(buildAiChatHeadDescription("demo"), /模拟报表/u);
   assert.match(buildAiChatHeadDescription("live"), /当前账号/u);
+});
+
+test("normalizeAiChatWorkspaceContext normalizes workspace mode", () => {
+  assert.deepEqual(normalizeAiChatWorkspaceContext({ workspaceMode: "demo" }), {
+    workspaceMode: "demo",
+  });
+  assert.deepEqual(normalizeAiChatWorkspaceContext({ workspaceMode: "other" }), {
+    workspaceMode: "live",
+  });
 });
